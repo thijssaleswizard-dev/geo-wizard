@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "nodemon server/index.js",
+    "server": "nodemon server.js",
+    "start": "concurrently \"npm run dev\" \"npm run server\"",
     "db:migrate": "knex migrate:latest",
     "db:seed": "knex seed:run",
     "build": "vite build",
-    "lint": "eslint .",
+    "lint": "oxlint",
     "preview": "vite preview"
   },
   "dependencies": {

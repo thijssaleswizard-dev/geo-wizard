@@ -29,7 +29,7 @@ export default function Login({ onLogin }) {
     setLoading(true);
 
     const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-    const payload = isRegister 
+    const payload = isRegister
       ? { username: name, company_name: companyName, email, password }
       : { email, password };
 
@@ -54,7 +54,7 @@ export default function Login({ onLogin }) {
       onLogin(data.user);
     } catch (err) {
       console.error('Auth network error:', err);
-      setError('Kan geen verbinding maken met de server. Controleer of de backend draait op poort 5001.');
+      setError('Kan geen verbinding maken met de server. Controleer of de backend draait op poort 5002.'.err);
       setLoading(false);
     }
   };
@@ -70,7 +70,7 @@ export default function Login({ onLogin }) {
       padding: '20px',
       overflowY: 'auto'
     }}>
-      
+
       <div className="fade-in" style={{
         width: '100%',
         maxWidth: '440px',
@@ -84,7 +84,7 @@ export default function Login({ onLogin }) {
         flexDirection: 'column',
         gap: '24px'
       }}>
-        
+
         {/* Logo and Header */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', textAlign: 'center' }}>
           <div style={{
@@ -103,7 +103,7 @@ export default function Login({ onLogin }) {
           }}>
             S
           </div>
-          
+
           <h2 style={{
             color: 'white',
             fontSize: '24px',
@@ -113,7 +113,7 @@ export default function Login({ onLogin }) {
           }}>
             GEO-Wizard Portaal
           </h2>
-          
+
           <p style={{ color: 'rgba(255, 255, 255, 0.6)', fontSize: '13px' }}>
             {isRegister ? 'Meld uw organisatie aan voor GEO campagnes.' : 'Beheer uw AI zoekmachine-vindbaarheid & GEO campagnes.'}
           </p>
@@ -181,7 +181,7 @@ export default function Login({ onLogin }) {
 
         {/* Form */}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          
+
           {isRegister && (
             <>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
