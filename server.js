@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import db from './db.js';
 
 const app = express();
-const PORT = 5001;
+const PORT = 5002;
 
 app.use(cors());
 app.use(express.json());
@@ -137,7 +137,7 @@ app.post('/api/auth/register', async (req, res) => {
 // Simulated ScrapingBee Proxy Crawler endpoint fetching from Knex Database
 app.get('/api/citations', async (req, res) => {
   const query = (req.query.query || '').toLowerCase();
-  
+
   console.log(`[ScrapingBee] Directing search request to ScrapingBee API tunnel...`);
   console.log(`[ScrapingBee] Target URL: https://www.google.com/search?q=${encodeURIComponent(req.query.query || 'Saleswizard')}`);
   console.log(`[ScrapingBee] Routing via premium residential proxy network (NL egress)...`);
