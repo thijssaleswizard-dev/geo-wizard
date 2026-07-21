@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
 import Prompts from './components/Prompts';
@@ -23,21 +23,36 @@ function App() {
   const [showNotifications, setShowNotifications] = useState(false);
 
   // Clients database (Workspaces list)
-  const [clients, setClients] = useState([
-    { company: 'Saleswizard.nl', name: 'Frank Krepel', email: 'frank@saleswizard.nl', subscription: 'AI Pro', promptsCount: 15, visibilityIndex: 23 },
-    { company: 'DoubleSmart.nl', name: 'Jan de Vries', email: 'jan@doublesmart.nl', subscription: 'AI Starter', promptsCount: 8, visibilityIndex: 24 },
-    { company: 'Inoma.nl', name: 'Sophie van Dijk', email: 'sophie@inoma.nl', subscription: 'AI Starter', promptsCount: 5, visibilityIndex: 21 },
-    { company: 'Aanpoters.nl', name: 'Daan Janssen', email: 'daan@aanpoters.nl', subscription: 'AI Starter', promptsCount: 4, visibilityIndex: 13 },
-    { company: 'Traffic Builders', name: 'Bram Bakker', email: 'bram@trafficbuilders.nl', subscription: 'AI Pro', promptsCount: 2, visibilityIndex: 5 },
-    { company: 'Follo', name: 'Lisa Visser', email: 'lisa@follo.nl', subscription: 'AI Enterprise', promptsCount: 1, visibilityIndex: 4 }
-  ]);
+  const [clients, setClients] = useState([]);
+  const [notifications, setNotifications] = useState([]);
 
-  // Notifications database
-  const notifications = [
-    { id: 1, text: 'Nieuwe citation gevonden op Frankwatching.nl', time: '1 uur geleden' },
-    { id: 2, text: 'Gemini heeft uw website opnieuw gecrawld', time: '4 uur geleden' },
-    { id: 3, text: 'Zichtbaarheidsscore in Perplexity AI stijgt naar 45%', time: '1 dag geleden' }
-  ];
+  // Fetch clients and notifications from database
+  useEffect(() => {
+    fetch('/api/clients')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.clients) {
+          setClients(data.clients.map(c => ({
+            company: c.company,
+            name: c.name,
+            email: c.email,
+            subscription: c.subscription,
+            promptsCount: c.prompts_count,
+            visibilityIndex: c.visibility_index
+          })));
+        }
+      })
+      .catch(console.error);
+
+    fetch('/api/notifications')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.notifications) {
+          setNotifications(data.notifications);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   // Callback: User logs in
   const handleLogin = (user) => {

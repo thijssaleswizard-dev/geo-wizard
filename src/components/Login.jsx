@@ -1,42 +1,62 @@
 import React, { useState } from 'react';
-import { ShieldCheck, User, Lock, ArrowRight, Sparkles } from 'lucide-react';
+import { ShieldCheck, User, Lock, ArrowRight, Building, Loader2 } from 'lucide-react';
 
 export default function Login({ onLogin }) {
+  const [isRegister, setIsRegister] = useState(false);
+  const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError('Vul alstublieft alle velden in.');
-      return;
-    }
 
-    // Default manual login check
-    if (email === 'klant@saleswizard.nl' && password === 'klant123') {
-      handleQuickLogin('klant', 'Saleswizard.nl', 'Saleswizard', 'AI Pro');
-    } else if (email === 'klant@doublesmart.nl' && password === 'klant123') {
-      handleQuickLogin('klant', 'DoubleSmart.nl', 'DoubleSmart', 'AI Starter');
-    } else if (email === 'medewerker@saleswizard.nl' && password === 'sales123') {
-      handleQuickLogin('medewerker', 'Saleswizard Employee', 'Saleswizard', 'None');
+    if (isRegister) {
+      if (!name || !companyName || !email || !password) {
+        setError('Vul alstublieft alle velden in om te registreren.');
+        return;
+      }
     } else {
-      setError('Ongeldige inloggegevens. Gebruik de Quick Login knoppen hieronder om direct in te loggen!');
+      if (!email || !password) {
+        setError('Vul alstublieft alle velden in om in te loggen.');
+        return;
+      }
     }
-  };
 
-  const handleQuickLogin = (role, name, company, subscription) => {
     setError('');
-    const mockUser = {
-      role,
-      name,
-      company: role === 'klant' ? company : 'Saleswizard B.V.',
-      email: role === 'klant' ? `info@${company.toLowerCase().replace('.nl', '')}.nl` : 'marketeer@saleswizard.nl',
-      subscription,
-      addonPrompts: 0,
-      avatar: company[0].toUpperCase()
-    };
-    onLogin(mockUser);
+    setLoading(true);
+
+    const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+    const payload = isRegister 
+      ? { username: name, company_name: companyName, email, password }
+      : { email, password };
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setError(data.error || (isRegister ? 'Registratie mislukt.' : 'Ongeldige inloggegevens.'));
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
+      onLogin(data.user);
+    } catch (err) {
+      console.error('Auth network error:', err);
+      setError('Kan geen verbinding maken met de server. Controleer of de backend draait op poort 5001.');
+      setLoading(false);
+    }
   };
 
   return (
@@ -95,8 +115,54 @@ export default function Login({ onLogin }) {
           </h2>
           
           <p style={{ color: 'rgba(255, 255, 255, 0.6)', fontSize: '13px' }}>
-            Beheer uw AI zoekmachine-vindbaarheid & GEO campagnes.
+            {isRegister ? 'Meld uw organisatie aan voor GEO campagnes.' : 'Beheer uw AI zoekmachine-vindbaarheid & GEO campagnes.'}
           </p>
+        </div>
+
+        {/* Tab Toggle (Inloggen / Registreren) */}
+        <div style={{
+          display: 'flex',
+          backgroundColor: 'rgba(0, 0, 0, 0.3)',
+          padding: '4px',
+          borderRadius: 'var(--border-radius-sm)',
+          border: '1px solid rgba(255, 255, 255, 0.08)'
+        }}>
+          <button
+            type="button"
+            onClick={() => { setIsRegister(false); setError(''); }}
+            style={{
+              flex: 1,
+              padding: '8px',
+              borderRadius: '6px',
+              border: 'none',
+              backgroundColor: !isRegister ? 'var(--brand-primary)' : 'transparent',
+              color: !isRegister ? 'white' : 'rgba(255,255,255,0.6)',
+              fontWeight: 700,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            Inloggen
+          </button>
+          <button
+            type="button"
+            onClick={() => { setIsRegister(true); setError(''); }}
+            style={{
+              flex: 1,
+              padding: '8px',
+              borderRadius: '6px',
+              border: 'none',
+              backgroundColor: isRegister ? 'var(--brand-primary)' : 'transparent',
+              color: isRegister ? 'white' : 'rgba(255,255,255,0.6)',
+              fontWeight: 700,
+              fontSize: '13px',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            Registreren
+          </button>
         </div>
 
         {/* Error alert */}
@@ -113,9 +179,61 @@ export default function Login({ onLogin }) {
           </div>
         )}
 
-        {/* Login Form */}
+        {/* Form */}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
+          {isRegister && (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Uw Naam
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <User size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.4)' }} />
+                  <input
+                    type="text"
+                    placeholder="Jan de Vries"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    disabled={loading}
+                    style={{
+                      width: '100%',
+                      paddingLeft: '38px',
+                      backgroundColor: 'rgba(0,0,0,0.2)',
+                      borderColor: 'rgba(255,255,255,0.1)',
+                      color: 'white',
+                      borderRadius: 'var(--border-radius-sm)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Bedrijfsnaam
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <Building size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.4)' }} />
+                  <input
+                    type="text"
+                    placeholder="Uw Bedrijf B.V."
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    disabled={loading}
+                    style={{
+                      width: '100%',
+                      paddingLeft: '38px',
+                      backgroundColor: 'rgba(0,0,0,0.2)',
+                      borderColor: 'rgba(255,255,255,0.1)',
+                      color: 'white',
+                      borderRadius: 'var(--border-radius-sm)'
+                    }}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               E-mailadres
@@ -127,6 +245,7 @@ export default function Login({ onLogin }) {
                 placeholder="naam@bedrijf.nl"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={loading}
                 style={{
                   width: '100%',
                   paddingLeft: '38px',
@@ -150,6 +269,7 @@ export default function Login({ onLogin }) {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
                 style={{
                   width: '100%',
                   paddingLeft: '38px',
@@ -164,6 +284,7 @@ export default function Login({ onLogin }) {
 
           <button
             type="submit"
+            disabled={loading}
             style={{
               marginTop: '8px',
               backgroundColor: 'var(--brand-primary)',
@@ -175,99 +296,49 @@ export default function Login({ onLogin }) {
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              boxShadow: '0 4px 12px rgba(68, 0, 153, 0.3)'
+              boxShadow: '0 4px 12px rgba(68, 0, 153, 0.3)',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.7 : 1
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--brand-primary-hover)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--brand-primary)'}
+            onMouseEnter={(e) => !loading && (e.currentTarget.style.backgroundColor = 'var(--brand-primary-hover)')}
+            onMouseLeave={(e) => !loading && (e.currentTarget.style.backgroundColor = 'var(--brand-primary)')}
           >
-            Inloggen
-            <ArrowRight size={16} />
+            {loading ? (
+              <>
+                <Loader2 size={16} className="spin" />
+                {isRegister ? 'Bezig met registreren...' : 'Bezig met inloggen...'}
+              </>
+            ) : (
+              <>
+                {isRegister ? 'Account Aanmaken' : 'Inloggen'}
+                <ArrowRight size={16} />
+              </>
+            )}
           </button>
         </form>
 
-        {/* Divider */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}></div>
-          <span style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>Quick Login</span>
-          <div style={{ flex: 1, height: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}></div>
-        </div>
-
-        {/* Quick Testing Shortcuts */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          
-          <button
-            onClick={() => handleQuickLogin('klant', 'Saleswizard.nl', 'Saleswizard', 'AI Pro')}
-            style={{
-              padding: '10px 14px',
-              backgroundColor: 'rgba(167, 139, 250, 0.1)',
-              border: '1px solid rgba(167, 139, 250, 0.25)',
-              borderRadius: 'var(--border-radius-sm)',
-              color: 'white',
-              fontSize: '12px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.2)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.1)'}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <User size={14} style={{ color: '#a78bfa' }} />
-              Inloggen als Klant (Saleswizard)
-            </span>
-            <span style={{ fontSize: '10px', color: '#c084fc', backgroundColor: 'rgba(192, 132, 252, 0.2)', padding: '2px 6px', borderRadius: '4px' }}>AI Pro</span>
-          </button>
-
-          <button
-            onClick={() => handleQuickLogin('klant', 'DoubleSmart.nl', 'DoubleSmart', 'AI Starter')}
-            style={{
-              padding: '10px 14px',
-              backgroundColor: 'rgba(6, 182, 212, 0.1)',
-              border: '1px solid rgba(6, 182, 212, 0.25)',
-              borderRadius: 'var(--border-radius-sm)',
-              color: 'white',
-              fontSize: '12px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(6, 182, 212, 0.2)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(6, 182, 212, 0.1)'}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <User size={14} style={{ color: '#22d3ee' }} />
-              Inloggen als Klant (DoubleSmart)
-            </span>
-            <span style={{ fontSize: '10px', color: '#22d3ee', backgroundColor: 'rgba(34, 211, 238, 0.2)', padding: '2px 6px', borderRadius: '4px' }}>AI Starter</span>
-          </button>
-
-          <button
-            onClick={() => handleQuickLogin('medewerker', 'Saleswizard Marketeer', 'Saleswizard', 'None')}
-            style={{
-              padding: '10px 14px',
-              backgroundColor: 'rgba(236, 72, 153, 0.1)',
-              border: '1px solid rgba(236, 72, 153, 0.25)',
-              borderRadius: 'var(--border-radius-sm)',
-              color: 'white',
-              fontSize: '12px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(236, 72, 153, 0.2)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(236, 72, 153, 0.1)'}
-          >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ShieldCheck size={14} style={{ color: '#f472b6' }} />
-              Inloggen als Saleswizard Medewerker
-            </span>
-            <span style={{ fontSize: '10px', color: '#f472b6', backgroundColor: 'rgba(244, 114, 182, 0.2)', padding: '2px 6px', borderRadius: '4px' }}>Admin</span>
-          </button>
-
-        </div>
+        {/* Demo Credentials Info Box */}
+        {!isRegister && (
+          <div style={{
+            backgroundColor: 'rgba(167, 139, 250, 0.08)',
+            border: '1px solid rgba(167, 139, 250, 0.2)',
+            borderRadius: 'var(--border-radius-sm)',
+            padding: '14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#a78bfa', fontSize: '12px', fontWeight: 700 }}>
+              <ShieldCheck size={15} />
+              Test Accounts (Database Authenticated)
+            </div>
+            <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.7)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div><strong>Klant:</strong> <code>klant@saleswizard.nl</code> / <code>klant123</code></div>
+              <div><strong>Klant:</strong> <code>klant@doublesmart.nl</code> / <code>klant123</code></div>
+              <div><strong>Medewerker:</strong> <code>medewerker@saleswizard.nl</code> / <code>sales123</code></div>
+            </div>
+          </div>
+        )}
 
       </div>
 
