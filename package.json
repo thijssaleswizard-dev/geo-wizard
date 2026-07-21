@@ -5,15 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "server": "nodemon server.js",
-    "start": "concurrently \"npm run dev\" \"npm run server\"",
+    "server": "nodemon server/index.js",
+    "db:migrate": "knex migrate:latest",
+    "db:seed": "knex seed:run",
     "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview",
-    "migrate:make": "knex migrate:make",
-    "migrate:latest": "knex migrate:latest",
-    "migrate:rollback": "knex migrate:rollback",
-    "seed:run": "knex seed:run"
+    "lint": "eslint .",
+    "preview": "vite preview"
   },
   "dependencies": {
     "axios": "^1.7.7",
