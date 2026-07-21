@@ -116,6 +116,11 @@ function App() {
     }
   };
 
+  // Callback: Medewerker creates new client workspace
+  const handleAddClient = (newClient) => {
+    setClients(prev => [newClient, ...prev]);
+  };
+
   // Callback: Medewerker clicks "Bekijk Dashboard" for a client
   const handleSelectClient = (company) => {
     setActiveWorkspace(company);
@@ -164,7 +169,7 @@ function App() {
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
-        return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} />;
+        return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} />;
       default:
         // coming soon fallback page
         return (
