@@ -151,7 +151,7 @@ function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'overview':
-        return <Overview key={activeWorkspace} />;
+        return <Overview key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'keywords':
         return <Keywords key={activeWorkspace} currentUser={currentUser} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'prompts':
@@ -163,7 +163,7 @@ function App() {
       case 'agents':
         return <AgentsAnalytics key={activeWorkspace} />;
       case 'prompt_research':
-        return <PromptResearch key={activeWorkspace} />;
+        return <PromptResearch key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'audit_tools':
         return <AuditTools key={activeWorkspace} />;
       case 'account_plan':

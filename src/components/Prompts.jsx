@@ -413,6 +413,37 @@ export default function Prompts({ activeWorkspace }) {
                     <td style={{ textAlign: 'center' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
                         <button
+                          title="Run Live Scraper for this prompt"
+                          onClick={async () => {
+                            const workspace = activeWorkspace || 'Saleswizard.nl';
+                            alert(`Scraper gestart voor: "${prompt.text}". Resultaten worden verwerkt en opgeslagen in de database.`);
+                            try {
+                              await fetch('/api/scraper/run', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ prompt: prompt.text, company: workspace })
+                              });
+                              alert(`Scraping voltooid! Citaten en AI statistieken zijn opgeslagen.`);
+                            } catch (e) {
+                              alert(`Scraper fout: ${e.message}`);
+                            }
+                          }}
+                          style={{
+                            padding: '6px',
+                            borderRadius: '4px',
+                            color: 'var(--brand-primary)',
+                            cursor: 'pointer'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = 'var(--brand-light)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <Play size={14} />
+                        </button>
+                        <button
                           title="Delete tracked prompt"
                           onClick={() => handleDelete(prompt.id)}
                           style={{

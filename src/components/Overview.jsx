@@ -1,15 +1,68 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ChevronDown, HelpCircle, Check, Info, ArrowUpRight, 
-  TrendingUp, Star, Award, ShieldAlert, Sparkles, MessageSquare
+  TrendingUp, Star, Award, ShieldAlert, Sparkles, MessageSquare,
+  RefreshCw, Loader2, CheckCircle2
 } from 'lucide-react';
 
-export default function Overview() {
+export default function Overview({ activeWorkspace }) {
+  const currentCompany = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '');
+  
   // Filters state
   const [dateRange, setDateRange] = useState('Last 14 days');
   const [tag, setTag] = useState('All tags');
   const [engine, setEngine] = useState('All Engines');
   const [country, setCountry] = useState('Netherlands');
+  
+  // Sync state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [dbStats, setDbStats] = useState(null);
+
+  // Fetch DB overview stats
+  useEffect(() => {
+    fetch(`/api/overview-stats?company=${encodeURIComponent(currentCompany)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.stats) {
+          setDbStats(data.stats);
+        }
+      })
+      .catch(console.error);
+  }, [currentCompany]);
+
+  // Handle Full Database Mention Sync
+  const handleSyncAll = async () => {
+    setIsSyncing(true);
+    setSyncMessage(`Database mentions & GEO scores worden live bijgewerkt voor ${currentCompany}...`);
+
+    try {
+      const response = await fetch('/api/scraper/sync-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: currentCompany })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setDbStats({
+          geo_score: data.geoScore,
+          brand_share: data.brandShare,
+          citations_total: data.citationsTotal
+        });
+        setSyncMessage(`✓ Mentions & GEO scores succesvol bijgewerkt! GEO Score: ${data.geoScore}%.`);
+      } else {
+        setSyncMessage(`Fout bij synchroniseren: ${data.error || 'Probeer het opnieuw'}`);
+      }
+    } catch (e) {
+      console.error('Error syncing database mentions:', e);
+      setSyncMessage('Kan geen verbinding maken met de sync service.');
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncMessage(''), 6000);
+    }
+  };
   
   // Chart checkboxes
   const [visibleBrands, setVisibleBrands] = useState({
@@ -436,13 +489,54 @@ export default function Overview() {
             <ChevronDown size={14} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', opacity: 0.6 }} />
           </div>
 
+          {/* Sync Database Mentions Button */}
+          <button
+            onClick={handleSyncAll}
+            disabled={isSyncing}
+            style={{
+              padding: '8px 14px',
+              borderRadius: 'var(--border-radius-sm)',
+              backgroundColor: 'var(--brand-primary)',
+              color: 'white',
+              fontSize: '12px',
+              fontWeight: 700,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              border: 'none',
+              cursor: isSyncing ? 'not-allowed' : 'pointer',
+              boxShadow: 'var(--shadow-sm)'
+            }}
+          >
+            {isSyncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {isSyncing ? 'Syncen...' : 'Sync Database Mentions'}
+          </button>
+
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '13px' }}>
           <Sparkles size={16} style={{ color: '#a78bfa' }} />
-          <span>Report based on <strong>{topPrompts.length} prompts</strong>. Showing {topPrompts.length} filtered prompts.</span>
+          <span>Report for <strong>{currentCompany}</strong>. Database score: <strong>{dbStats?.geo_score || 74}%</strong>.</span>
         </div>
       </div>
+
+      {syncMessage && (
+        <div style={{
+          backgroundColor: syncMessage.startsWith('✓') ? 'rgba(34, 197, 94, 0.15)' : 'rgba(68, 0, 153, 0.12)',
+          border: '1px solid rgba(124, 58, 237, 0.25)',
+          borderRadius: 'var(--border-radius-sm)',
+          padding: '10px 14px',
+          color: syncMessage.startsWith('✓') ? '#22c55e' : 'var(--brand-primary)',
+          fontSize: '13px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <CheckCircle2 size={16} />
+          {syncMessage}
+        </div>
+      )}
 
       {/* Main Grid: Line chart + metric cards */}
       <div style={{
