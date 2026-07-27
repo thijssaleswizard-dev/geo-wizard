@@ -48,6 +48,26 @@ export default function Prompts({ activeWorkspace }) {
     return () => { isMounted = false; };
   }, [activeWorkspace]);
 
+  // Polling for active background processes
+  useEffect(() => {
+    const hasActiveJobs = promptsList.some(p => p.status === 'pending' || p.status === 'processing');
+    if (!hasActiveJobs) return;
+
+    const interval = setInterval(() => {
+      const workspace = activeWorkspace || 'Saleswizard.nl';
+      fetch(`/api/prompts?company=${encodeURIComponent(workspace)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            setPromptsList(data.prompts || []);
+          }
+        })
+        .catch(err => console.error('Error polling prompts:', err));
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [promptsList, activeWorkspace]);
+
   // Save prompt to database
   const handleAddPrompt = async (e) => {
     e.preventDefault();
@@ -397,35 +417,53 @@ export default function Prompts({ activeWorkspace }) {
                       </div>
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      {prompt.mentioned ? (
-                        <span className="badge badge-positive" style={{ gap: '2px' }}>
+                      {prompt.status === 'pending' ? (
+                        <span className="badge" style={{ backgroundColor: 'var(--border-light)', color: 'var(--text-secondary)', gap: '4px', display: 'inline-flex', alignItems: 'center' }}>
+                          <Loader2 size={10} className="spin" /> In Queue
+                        </span>
+                      ) : prompt.status === 'processing' ? (
+                        <span className="badge" style={{ backgroundColor: '#ffe8cc', color: '#d97706', gap: '4px', display: 'inline-flex', alignItems: 'center' }}>
+                          <Loader2 size={10} className="spin" /> Scanning...
+                        </span>
+                      ) : prompt.status === 'failed' ? (
+                        <span className="badge badge-negative" style={{ gap: '2px', display: 'inline-flex', alignItems: 'center' }}>
+                          <XCircle size={10} /> Failed
+                        </span>
+                      ) : prompt.mentioned ? (
+                        <span className="badge badge-positive" style={{ gap: '2px', display: 'inline-flex', alignItems: 'center' }}>
                           <CheckCircle size={10} /> Mentioned
                         </span>
                       ) : (
-                        <span className="badge badge-negative" style={{ gap: '2px' }}>
+                        <span className="badge badge-negative" style={{ gap: '2px', display: 'inline-flex', alignItems: 'center' }}>
                           <XCircle size={10} /> Missed
                         </span>
                       )}
                     </td>
                     <td style={{ textAlign: 'center', fontWeight: 700, color: prompt.position ? 'var(--brand-accent)' : 'var(--text-muted)' }}>
-                      {prompt.position ? `#${prompt.position}` : '-'}
+                      {prompt.status === 'pending' || prompt.status === 'processing' ? (
+                        <Loader2 size={10} className="spin" style={{ opacity: 0.5, display: 'inline-block' }} />
+                      ) : prompt.position ? (
+                        `#${prompt.position}`
+                      ) : (
+                        '-'
+                      )}
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
                         <button
-                          title="Run Live Scraper for this prompt"
+                          disabled={prompt.status === 'pending' || prompt.status === 'processing'}
+                          title={prompt.status === 'pending' || prompt.status === 'processing' ? "Scanning in progress..." : "Run background scan for this prompt"}
                           onClick={async () => {
-                            const workspace = activeWorkspace || 'Saleswizard.nl';
-                            alert(`Scraper gestart voor: "${prompt.text}". Resultaten worden verwerkt en opgeslagen in de database.`);
                             try {
-                              await fetch('/api/scraper/run', {
+                              setPromptsList(prev => prev.map(p => p.id === prompt.id ? { ...p, status: 'pending' } : p));
+                              await fetch(`/api/prompts/${prompt.id}/scan`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ prompt: prompt.text, company: workspace })
+                                headers: { 'Content-Type': 'application/json' }
                               });
-                              alert(`Scraping voltooid! Citaten en AI statistieken zijn opgeslagen.`);
                             } catch (e) {
                               alert(`Scraper fout: ${e.message}`);
+                              // Reset prompts state on failure
+                              setPromptsList(prev => prev.map(p => p.id === prompt.id ? { ...p, status: prompt.status } : p));
                             }
                           }}
                           style={{

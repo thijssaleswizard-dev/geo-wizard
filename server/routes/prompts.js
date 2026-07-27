@@ -1,5 +1,6 @@
 import express from 'express';
 import db from '../db.js';
+import { enqueueScrape } from '../services/queue.js';
 
 const router = express.Router();
 
@@ -18,6 +19,8 @@ router.get('/', async (req, res) => {
       mentioned: Boolean(p.brand_mentioned),
       position: p.position,
       sentiment: p.sentiment || '+90',
+      status: p.status || 'completed',
+      logs: p.logs ? JSON.parse(p.logs) : [],
       dateAdded: p.created_at ? new Date(p.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
     }));
 
@@ -39,21 +42,24 @@ router.post('/', async (req, res) => {
   const companyKey = (company || 'saleswizard').toLowerCase().replace('.nl', '').trim();
 
   try {
-    const mentioned = Math.random() > 0.3;
-    const position = mentioned ? Math.floor(Math.random() * 3) + 1 : null;
-
+    const defaultEngines = engines || { chatgpt: true, gemini: true, perplexity: true, copilot: true, claude: true, aio: true };
     const [newId] = await db('prompts').insert({
       company_key: companyKey,
       prompt_text: text.trim(),
       category: tag || 'Algemeen',
-      response_summary: `AI analyse voor "${text.trim()}"`,
-      brand_mentioned: mentioned,
-      position: position,
-      sentiment: '+92',
-      engine: 'ChatGPT'
+      response_summary: 'Wachtend op achtergrond scan...',
+      brand_mentioned: false,
+      position: null,
+      sentiment: 'N/A',
+      engine: 'ChatGPT',
+      status: 'pending',
+      engines: JSON.stringify(defaultEngines)
     });
 
     const insertedPrompt = await db('prompts').where('id', newId).first();
+
+    // Trigger background process
+    enqueueScrape(newId);
 
     res.status(201).json({
       success: true,
@@ -61,16 +67,42 @@ router.post('/', async (req, res) => {
         id: insertedPrompt.id,
         text: insertedPrompt.prompt_text,
         tag: insertedPrompt.category,
-        engines: engines || { chatgpt: true, gemini: true, perplexity: true, copilot: true, claude: true, aio: true },
-        mentioned: Boolean(insertedPrompt.brand_mentioned),
-        position: insertedPrompt.position,
-        sentiment: insertedPrompt.sentiment,
+        engines: defaultEngines,
+        mentioned: false,
+        position: null,
+        sentiment: 'N/A',
+        status: 'pending',
         dateAdded: new Date().toISOString().split('T')[0]
       }
     });
   } catch (err) {
     console.error('Error saving prompt to database:', err);
     res.status(500).json({ error: 'Fout bij opslaan van prompt in database.' });
+  }
+});
+
+// POST /api/prompts/:id/scan - Force trigger background re-scan for a prompt
+router.post('/:id/scan', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const promptRecord = await db('prompts').where({ id }).first();
+    if (!promptRecord) {
+      return res.status(404).json({ error: 'Prompt niet gevonden' });
+    }
+
+    // Set status to pending
+    await db('prompts').where({ id }).update({
+      status: 'pending',
+      updated_at: new Date().toISOString()
+    });
+
+    // Enqueue
+    enqueueScrape(id);
+
+    res.json({ success: true, message: 'Scan gestart op de achtergrond.' });
+  } catch (err) {
+    console.error('Error starting scan:', err);
+    res.status(500).json({ error: 'Fout bij starten van scan.' });
   }
 });
 

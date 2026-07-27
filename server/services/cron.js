@@ -87,9 +87,9 @@ export async function syncCompanyStats(companyName = 'Saleswizard') {
 export function initCronScheduler() {
   console.log('[Cron Scheduler] Initializing background automated scraping scheduler...');
 
-  // Schedule cron job to run every 6 hours: '0 */6 * * *'
-  cron.schedule('0 */6 * * *', async () => {
-    console.log('[Cron Job Triggered] Running 6-hour automated GEO mention scan for all companies...');
+  // Schedule cron job to run every 24 hours at midnight: '0 0 * * *'
+  cron.schedule('0 0 * * *', async () => {
+    console.log('[Cron Job Triggered] Running daily automated GEO mention scan for all companies...');
     try {
       const allClients = await db('clients').select('company');
       for (const client of allClients) {

@@ -13,6 +13,27 @@ export async function runScraper({ prompt, company }) {
   const companyKey = companyName.toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '');
   const promptText = (prompt || 'Zoek een betrouwbaar online marketing bureau voor mijn webshop').trim();
 
+  // 1. Check for recent cached results (within last 24 hours) to save costs
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const cached = await db('prompts')
+      .where({ company_key: companyKey, prompt_text: promptText, status: 'completed' })
+      .where('updated_at', '>', oneDayAgo)
+      .whereNotNull('results')
+      .orderBy('id', 'desc')
+      .first();
+
+    if (cached && cached.results) {
+      const parsedResults = JSON.parse(cached.results);
+      parsedResults.logs = parsedResults.logs || [];
+      parsedResults.logs.unshift(`[Cache Hit] Serving cached result from ${new Date(cached.updated_at).toLocaleString()}`);
+      console.log(`[Cache Hit] Returning cached result for prompt: "${promptText}"`);
+      return parsedResults;
+    }
+  } catch (cacheErr) {
+    console.warn(`[Cache Warning] Failed to retrieve cached query: ${cacheErr.message}`);
+  }
+
   const crawlLogs = [];
   crawlLogs.push(`[Hybrid Engine] Initializing AI Visibility Pipeline for target: "${companyName}"...`);
   crawlLogs.push(`[Hybrid Engine] Querying prompt: "${promptText}"`);
