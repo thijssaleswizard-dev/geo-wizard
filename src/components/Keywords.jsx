@@ -108,7 +108,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
     const addon = currentUser.addonPrompts || 0;
     let base = 15;
     if (sub === 'AI Pro') base = 30;
-    if (sub === 'AI Enterprise') base = 100;
+    if (sub === 'AI Enterprise') base = 60;
     return base + addon;
   };
 
@@ -347,7 +347,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
         {currentUser.role === 'klant' && (
           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Basis ({currentUser.subscription === 'AI Starter' ? 15 : currentUser.subscription === 'AI Pro' ? 30 : 100}) 
+            Basis ({currentUser.subscription === 'AI Starter' ? 15 : currentUser.subscription === 'AI Pro' ? 30 : 60}) 
             {currentUser.addonPrompts > 0 && ` + Add-on (${currentUser.addonPrompts})`}
           </div>
         )}

@@ -211,13 +211,13 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     >
                       <option value="AI Starter">AI Starter (€195)</option>
                       <option value="AI Pro">AI Pro (€350)</option>
-                      <option value="AI Enterprise">AI Enterprise (€750)</option>
+                      <option value="AI Enterprise">AI Enterprise (€700)</option>
                     </select>
                   </td>
                   <td style={{ textAlign: 'center', fontWeight: 600 }}>
                     {client.promptsCount} / {
                       client.subscription === 'AI Starter' ? 15 :
-                      client.subscription === 'AI Pro' ? 30 : 100
+                      client.subscription === 'AI Pro' ? 30 : 60
                     }
                   </td>
                   <td style={{ textAlign: 'center' }}>

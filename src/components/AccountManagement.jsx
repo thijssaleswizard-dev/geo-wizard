@@ -5,18 +5,18 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
   const plans = [
     {
       id: 'AI Starter',
-      name: 'AI Starter',
+      name: 'AI/GEO Starter',
       price: 195,
       setup: '750',
       promptsLimit: 15,
       features: [
         'Nulmeting AI-zichtbaarheid',
-        'GEO/AI Zoekmachine-strategie',
-        'Monitoring van 15 prompts',
-        '1 paginaoptimalisatie per maand',
-        'AI Zichtbaarheidsrapportage',
-        '1 backlink per maand',
-        '1,5 uur support per maand',
+        'AI strategie',
+        'Monitoring 15 prompts',
+        '1 paginaoptimalisatie p/m',
+        'AI Zichtbaarheidsrapport',
+        '1 backlink p/m',
+        'Max 1,5 uur support p/m',
         'Jaarlijkse evaluatie'
       ],
       color: '#06b6d4', // Cyan
@@ -24,19 +24,21 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
     },
     {
       id: 'AI Pro',
-      name: 'AI Pro',
+      name: 'AI/GEO Pro',
       price: 350,
       setup: '750',
       promptsLimit: 30,
       features: [
         'Nulmeting AI-zichtbaarheid',
-        'GEO/AI Zoekmachine-strategie',
-        'Monitoring van 30 prompts',
-        '3 paginaoptimalisaties per maand',
-        'Wekelijkse AI Zichtbaarheidsrapportage',
-        '2 backlinks per maand',
-        '3,0 uur support per maand',
-        'Kwartaalevaluatie'
+        'AI strategie',
+        'Monitoring 30 prompts',
+        '1 paginaoptimalisatie p/m',
+        '1 FAQ sectie p/m',
+        '1 post/pagina extra p/m',
+        'AI Zichtbaarheidsrapport',
+        '2 backlinks p/m',
+        'Max 4 uur support p/m',
+        'Halfjaarlijkse evaluatie'
       ],
       color: '#440099', // Saleswizard Purple
       badge: 'Populair',
@@ -44,19 +46,21 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
     },
     {
       id: 'AI Enterprise',
-      name: 'AI Enterprise',
-      price: 750,
+      name: 'AI/GEO Top',
+      price: 700,
       setup: '750',
-      promptsLimit: 100,
+      promptsLimit: 60,
       features: [
-        'Custom Nulmeting & GEO Audits',
-        'Op maat gemaakte AI strategie',
-        'Monitoring van 100 prompts',
-        'Onbeperkte pagina-optimalisaties',
-        'Real-time dashboard en rapportage',
-        '5+ backlinks per maand',
-        'Dedicated Support & Slack-kanaal',
-        'Maandelijkse evaluatie'
+        'Nulmeting AI-zichtbaarheid',
+        'AI strategie',
+        'Monitoring 60 prompts',
+        '2 paginaoptimalisaties p/m',
+        '2 FAQ sectie p/m',
+        '2 posts/pagina\'s p/m',
+        'AI Zichtbaarheidsrapport',
+        '4 backlinks p/m',
+        'Max 8 uur support p/m',
+        'Kwartaalevaluatie'
       ],
       color: '#ec4899', // Pink
       badge: 'Maatwerk'
