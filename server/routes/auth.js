@@ -64,69 +64,12 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/register
+// POST /api/auth/register (Disabled: Only Admins can create users)
 router.post('/register', async (req, res) => {
-  const { username, email, password, company_name } = req.body;
-
-  if (!username || !email || !password || !company_name) {
-    return res.status(400).json({ error: 'Vul alstublieft alle velden in.' });
-  }
-
-  try {
-    const existingUser = await db('users').where('email', email.trim().toLowerCase()).first();
-    if (existingUser) {
-      return res.status(400).json({ error: 'Dit e-mailadres is al in gebruik.' });
-    }
-
-    const password_hash = await bcrypt.hash(password, 10);
-
-    const klantRole = await db('roles').where('name', 'klant').first();
-    const roleId = klantRole ? klantRole.id : 2;
-
-    const [userId] = await db('users').insert({
-      username: username.trim(),
-      email: email.trim().toLowerCase(),
-      password_hash,
-      role_id: roleId,
-      company_name: company_name.trim(),
-      subscription: 'AI Starter',
-      addon_prompts: 0
-    });
-
-    const registeredUser = await db('users')
-      .join('roles', 'users.role_id', '=', 'roles.id')
-      .select(
-        'users.id',
-        'users.username',
-        'users.email',
-        'users.company_name',
-        'users.subscription',
-        'users.addon_prompts',
-        'roles.name as role'
-      )
-      .where('users.id', userId)
-      .first();
-
-    const companyName = registeredUser.company_name || company_name;
-    const avatar = companyName[0] ? companyName[0].toUpperCase() : 'U';
-
-    res.status(201).json({
-      success: true,
-      user: {
-        id: registeredUser.id,
-        role: registeredUser.role,
-        name: registeredUser.username,
-        company: companyName,
-        email: registeredUser.email,
-        subscription: registeredUser.subscription || 'AI Starter',
-        addonPrompts: registeredUser.addon_prompts || 0,
-        avatar
-      }
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ error: 'Interne serverfout tijdens registratie.' });
-  }
+  return res.status(403).json({
+    success: false,
+    error: 'Publieke registratie is uitgeschakeld. Alleen beheerders kunnen nieuwe gebruikers aanmaken.'
+  });
 });
 
 export default router;

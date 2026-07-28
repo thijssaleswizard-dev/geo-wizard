@@ -1,10 +1,7 @@
 import React, { useState } from 'react';
-import { ShieldCheck, User, Lock, ArrowRight, Building, Loader2 } from 'lucide-react';
+import { ShieldCheck, User, Lock, ArrowRight, Loader2 } from 'lucide-react';
 
 export default function Login({ onLogin }) {
-  const [isRegister, setIsRegister] = useState(false);
-  const [name, setName] = useState('');
-  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -13,25 +10,16 @@ export default function Login({ onLogin }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (isRegister) {
-      if (!name || !companyName || !email || !password) {
-        setError('Vul alstublieft alle velden in om te registreren.');
-        return;
-      }
-    } else {
-      if (!email || !password) {
-        setError('Vul alstublieft alle velden in om in te loggen.');
-        return;
-      }
+    if (!email || !password) {
+      setError('Vul alstublieft alle velden in om in te loggen.');
+      return;
     }
 
     setError('');
     setLoading(true);
 
-    const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-    const payload = isRegister
-      ? { username: name, company_name: companyName, email, password }
-      : { email, password };
+    const endpoint = '/api/auth/login';
+    const payload = { email, password };
 
     try {
       const response = await fetch(endpoint, {
@@ -45,7 +33,7 @@ export default function Login({ onLogin }) {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        setError(data.error || (isRegister ? 'Registratie mislukt.' : 'Ongeldige inloggegevens.'));
+        setError(data.error || 'Ongeldige inloggegevens.');
         setLoading(false);
         return;
       }
@@ -54,7 +42,7 @@ export default function Login({ onLogin }) {
       onLogin(data.user);
     } catch (err) {
       console.error('Auth network error:', err);
-      setError('Kan geen verbinding maken met de server. Controleer of de backend draait op poort 5002.'.err);
+      setError('Kan geen verbinding maken met de server. Controleer of de backend draait op poort 5002.');
       setLoading(false);
     }
   };
@@ -115,54 +103,8 @@ export default function Login({ onLogin }) {
           </h2>
 
           <p style={{ color: 'rgba(255, 255, 255, 0.6)', fontSize: '13px' }}>
-            {isRegister ? 'Meld uw organisatie aan voor GEO campagnes.' : 'Beheer uw AI zoekmachine-vindbaarheid & GEO campagnes.'}
+            Beheer uw AI zoekmachine-vindbaarheid & GEO campagnes.
           </p>
-        </div>
-
-        {/* Tab Toggle (Inloggen / Registreren) */}
-        <div style={{
-          display: 'flex',
-          backgroundColor: 'rgba(0, 0, 0, 0.3)',
-          padding: '4px',
-          borderRadius: 'var(--border-radius-sm)',
-          border: '1px solid rgba(255, 255, 255, 0.08)'
-        }}>
-          <button
-            type="button"
-            onClick={() => { setIsRegister(false); setError(''); }}
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: !isRegister ? 'var(--brand-primary)' : 'transparent',
-              color: !isRegister ? 'white' : 'rgba(255,255,255,0.6)',
-              fontWeight: 700,
-              fontSize: '13px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            Inloggen
-          </button>
-          <button
-            type="button"
-            onClick={() => { setIsRegister(true); setError(''); }}
-            style={{
-              flex: 1,
-              padding: '8px',
-              borderRadius: '6px',
-              border: 'none',
-              backgroundColor: isRegister ? 'var(--brand-primary)' : 'transparent',
-              color: isRegister ? 'white' : 'rgba(255,255,255,0.6)',
-              fontWeight: 700,
-              fontSize: '13px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease'
-            }}
-          >
-            Registreren
-          </button>
         </div>
 
         {/* Error alert */}
@@ -181,58 +123,6 @@ export default function Login({ onLogin }) {
 
         {/* Form */}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-          {isRegister && (
-            <>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Uw Naam
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <User size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.4)' }} />
-                  <input
-                    type="text"
-                    placeholder="Jan de Vries"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    disabled={loading}
-                    style={{
-                      width: '100%',
-                      paddingLeft: '38px',
-                      backgroundColor: 'rgba(0,0,0,0.2)',
-                      borderColor: 'rgba(255,255,255,0.1)',
-                      color: 'white',
-                      borderRadius: 'var(--border-radius-sm)'
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Bedrijfsnaam
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <Building size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.4)' }} />
-                  <input
-                    type="text"
-                    placeholder="Uw Bedrijf B.V."
-                    value={companyName}
-                    onChange={(e) => setCompanyName(e.target.value)}
-                    disabled={loading}
-                    style={{
-                      width: '100%',
-                      paddingLeft: '38px',
-                      backgroundColor: 'rgba(0,0,0,0.2)',
-                      borderColor: 'rgba(255,255,255,0.1)',
-                      color: 'white',
-                      borderRadius: 'var(--border-radius-sm)'
-                    }}
-                  />
-                </div>
-              </div>
-            </>
-          )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255, 255, 255, 0.7)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -306,11 +196,11 @@ export default function Login({ onLogin }) {
             {loading ? (
               <>
                 <Loader2 size={16} className="spin" />
-                {isRegister ? 'Bezig met registreren...' : 'Bezig met inloggen...'}
+                Bezig met inloggen...
               </>
             ) : (
               <>
-                {isRegister ? 'Account Aanmaken' : 'Inloggen'}
+                Inloggen
                 <ArrowRight size={16} />
               </>
             )}
@@ -318,27 +208,25 @@ export default function Login({ onLogin }) {
         </form>
 
         {/* Demo Credentials Info Box */}
-        {!isRegister && (
-          <div style={{
-            backgroundColor: 'rgba(167, 139, 250, 0.08)',
-            border: '1px solid rgba(167, 139, 250, 0.2)',
-            borderRadius: 'var(--border-radius-sm)',
-            padding: '14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#a78bfa', fontSize: '12px', fontWeight: 700 }}>
-              <ShieldCheck size={15} />
-              Test Accounts (Database Authenticated)
-            </div>
-            <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.7)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <div><strong>Klant:</strong> <code>klant@saleswizard.nl</code> / <code>klant123</code></div>
-              <div><strong>Klant:</strong> <code>klant@doublesmart.nl</code> / <code>klant123</code></div>
-              <div><strong>Medewerker:</strong> <code>medewerker@saleswizard.nl</code> / <code>sales123</code></div>
-            </div>
+        <div style={{
+          backgroundColor: 'rgba(167, 139, 250, 0.08)',
+          border: '1px solid rgba(167, 139, 250, 0.2)',
+          borderRadius: 'var(--border-radius-sm)',
+          padding: '14px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#a78bfa', fontSize: '12px', fontWeight: 700 }}>
+            <ShieldCheck size={15} />
+            Test Accounts (Database Authenticated)
           </div>
-        )}
+          <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.7)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div><strong>Klant:</strong> <code>klant@saleswizard.nl</code> / <code>klant123</code></div>
+            <div><strong>Klant:</strong> <code>klant@doublesmart.nl</code> / <code>klant123</code></div>
+            <div><strong>Medewerker:</strong> <code>medewerker@saleswizard.nl</code> / <code>sales123</code></div>
+          </div>
+        </div>
 
       </div>
 
