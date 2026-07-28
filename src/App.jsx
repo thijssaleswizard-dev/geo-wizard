@@ -153,7 +153,7 @@ function App() {
       case 'overview':
         return <Overview key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'keywords':
-        return <Keywords key={activeWorkspace} currentUser={currentUser} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'prompts':
         return <Prompts key={activeWorkspace} />;
       case 'citations':

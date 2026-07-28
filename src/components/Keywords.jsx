@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Plus, Search, HelpCircle, Archive, Trash2, 
   ChevronDown, ChevronRight, Sparkles, Check, Info, TrendingUp,
@@ -6,13 +6,26 @@ import {
   Edit2, X
 } from 'lucide-react';
 
-export default function Keywords({ currentUser, onUpdateAddonPrompts }) {
+export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPrompts }) {
   const [isAdding, setIsAdding] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
   const [isArchivedOpen, setIsArchivedOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [generatedFeedback, setGeneratedFeedback] = useState([]);
   const [expandedKeywords, setExpandedKeywords] = useState(new Set([1])); // Pre-expand first one
+  const [totalUsedPrompts, setTotalUsedPrompts] = useState(0);
+
+  useEffect(() => {
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    fetch(`/api/prompts?company=${encodeURIComponent(workspace)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.prompts) {
+          setTotalUsedPrompts(data.prompts.length);
+        }
+      })
+      .catch(err => console.error('Failed to fetch prompts count for limits:', err));
+  }, [activeWorkspace]);
 
   // Active tab per expanded keyword (default is 'prompts')
   const [keywordTabs, setKeywordTabs] = useState({}); // e.g. { [kwId]: 'prompts' }
@@ -100,7 +113,6 @@ export default function Keywords({ currentUser, onUpdateAddonPrompts }) {
   };
 
   const activeLimit = getPlanLimit();
-  const totalUsedPrompts = keywords.reduce((sum, kw) => sum + kw.prompts.length, 0);
   const isLimitReached = totalUsedPrompts >= activeLimit;
 
   // Toggle active tab per keyword (Rankings, Prompts, Sources, Shopping, Settings)
@@ -155,6 +167,7 @@ export default function Keywords({ currentUser, onUpdateAddonPrompts }) {
       return kw;
     }));
 
+    setTotalUsedPrompts(prev => prev + 1);
     setCustomPromptInput(kwId, '');
   };
 
@@ -169,6 +182,7 @@ export default function Keywords({ currentUser, onUpdateAddonPrompts }) {
       }
       return kw;
     }));
+    setTotalUsedPrompts(prev => Math.max(0, prev - 1));
   };
 
   // Add new keywords via form
@@ -226,6 +240,7 @@ export default function Keywords({ currentUser, onUpdateAddonPrompts }) {
     setKeywords(prev => [...addedKeywords, ...prev]);
     setKeywordInput('');
     setGeneratedFeedback(generatedPrompts);
+    setTotalUsedPrompts(prev => prev + promptsToGenerateCount);
 
     // Autoexpand the first added keyword
     if (addedKeywords.length > 0) {
