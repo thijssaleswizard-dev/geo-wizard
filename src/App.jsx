@@ -17,8 +17,18 @@ import {
 
 function App() {
   // Authentication & Workspace session state
-  const [currentUser, setCurrentUser] = useState(null);
-  const [activeWorkspace, setActiveWorkspace] = useState('Saleswizard.nl');
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = localStorage.getItem('geo_wizard_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [activeWorkspace, setActiveWorkspace] = useState(() => {
+    const saved = localStorage.getItem('geo_wizard_user');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return parsed.role === 'klant' ? parsed.company : 'Saleswizard.nl';
+    }
+    return 'Saleswizard.nl';
+  });
   const [activeTab, setActiveTab] = useState('overview');
   const [showNotifications, setShowNotifications] = useState(false);
 
@@ -57,6 +67,7 @@ function App() {
   // Callback: User logs in
   const handleLogin = (user) => {
     setCurrentUser(user);
+    localStorage.setItem('geo_wizard_user', JSON.stringify(user));
     if (user.role === 'klant') {
       // Force clients to their own workspace
       setActiveWorkspace(user.company);
@@ -70,6 +81,7 @@ function App() {
   // Callback: User logs out
   const handleLogout = () => {
     setCurrentUser(null);
+    localStorage.removeItem('geo_wizard_user');
     setActiveTab('overview');
   };
 
@@ -78,10 +90,11 @@ function App() {
     if (!currentUser) return;
     
     // Update logged in profile
-    setCurrentUser(prev => ({
-      ...prev,
-      subscription: newPlan
-    }));
+    setCurrentUser(prev => {
+      const updated = { ...prev, subscription: newPlan };
+      localStorage.setItem('geo_wizard_user', JSON.stringify(updated));
+      return updated;
+    });
 
     // Update clients database list
     setClients(clients.map(c => {
@@ -95,10 +108,11 @@ function App() {
   // Callback: Client updates their addon prompts bundle
   const handleUpdateAddonPrompts = (count) => {
     if (!currentUser) return;
-    setCurrentUser(prev => ({
-      ...prev,
-      addonPrompts: count
-    }));
+    setCurrentUser(prev => {
+      const updated = { ...prev, addonPrompts: count };
+      localStorage.setItem('geo_wizard_user', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   // Callback: Medewerker updates client plan in Admin page
