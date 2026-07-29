@@ -1,6 +1,9 @@
 import express from 'express';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 import db from '../db.js';
 import { getOrScrapeCompetitors } from '../services/competitorScraper.js';
+import { queryGemini } from '../services/aiEngine.js';
 
 const router = express.Router();
 
@@ -38,6 +41,108 @@ router.get('/', async (req, res) => {
     console.error('Failed to fetch keywords:', err);
     res.status(500).json({ error: 'Failed to fetch keywords' });
   }
+});
+
+// POST /api/keywords/recommend - Scrapes target website HTML & generates location-accurate keywords
+router.post('/recommend', async (req, res) => {
+  const { company } = req.body;
+  const companyName = (company || 'Saleswizard').trim();
+  const companyKey = companyName.toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '');
+
+  console.log(`[Keyword Recommender] Scraping website for company: "${companyName}"...`);
+
+  let scrapedContent = '';
+  let targetUrl = companyName.startsWith('http') ? companyName : `https://www.${companyName.toLowerCase().includes('.') ? companyName : companyName + '.nl'}`;
+
+  // 1. Scrape actual website HTML content
+  try {
+    const response = await axios.get(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7'
+      },
+      timeout: 6000
+    });
+
+    if (response.status === 200 && response.data) {
+      const $ = cheerio.load(response.data);
+      const title = $('title').text().trim();
+      const metaDesc = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || '';
+      const h1s = $('h1').map((_, el) => $(el).text().trim()).get().join(' ');
+      const h2s = $('h2').map((_, el) => $(el).text().trim()).get().slice(0, 5).join(' ');
+      const bodyText = $('p').map((_, el) => $(el).text().trim()).get().slice(0, 5).join(' ');
+
+      scrapedContent = `Titel: ${title}\nMeta Description: ${metaDesc}\nHeadings: ${h1s} ${h2s}\nTekst: ${bodyText}`.trim();
+      console.log(`[Keyword Recommender] Successfully scraped ${scrapedContent.length} chars from ${targetUrl}`);
+    }
+  } catch (scrapeErr) {
+    console.warn(`[Keyword Recommender Warning] Direct website fetch failed for ${targetUrl} (${scrapeErr.message}). Fallback to DuckDuckGo search index...`);
+    
+    // Fallback: Scrape DuckDuckGo search snippet for the company domain/brand
+    try {
+      const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(companyName + ' website nederland')}`;
+      const ddgRes = await axios.get(ddgUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        timeout: 5000
+      });
+      if (ddgRes.status === 200 && ddgRes.data) {
+        const $ = cheerio.load(ddgRes.data);
+        const snippet = $('.result__snippet').first().text().trim();
+        const title = $('.result__title').first().text().trim();
+        scrapedContent = `Titel: ${title}\nSnippet: ${snippet}`;
+      }
+    } catch (e) {
+      console.warn(`[Keyword Recommender Warning] DDG fallback failed: ${e.message}`);
+    }
+  }
+
+  // 2. Use Gemini AI to extract exact, location-accurate keywords based on scraped content
+  let recommended = [];
+
+  try {
+    const aiPrompt = `Analyseer de volgende gescrapte gegevens van de website van "${companyName}":
+
+--- GESCRAPTE WEBSITE INHOUD ---
+${scrapedContent || `Bedrijfsnaam: ${companyName}`}
+--------------------------------
+
+Genereer exact 5 uiterst relevante, hoog-converterende zoekwoorden (keywords) in het Nederlands.
+BELANGRIJK: Let heel goed op de specifieke vestigingsplaats/regio (bijv. Velp, Arnhem, Nijmegen) en specifieke diensten die in de gescrapte tekst worden vermeld.
+Geef ALLEEN een komma-gescheiden lijst met 5 zoekwoorden in kleine letters zonder nummering of extra tekst.`;
+
+    const aiRes = await queryGemini({ prompt: aiPrompt, companyName });
+
+    if (aiRes && aiRes.text && aiRes.text.includes(',')) {
+      const parsed = aiRes.text.split(',').map(k => k.trim().toLowerCase().replace(/[^a-z0-9\s-]/gi, '')).filter(Boolean);
+      if (parsed.length >= 3) {
+        recommended = parsed.slice(0, 5);
+      }
+    }
+  } catch (aiErr) {
+    console.error(`[Keyword Recommender AI Error] ${aiErr.message}`);
+  }
+
+  // Fallback if AI/Scrape returns fewer than 3 keywords
+  if (recommended.length < 3) {
+    if (companyKey.includes('groen') || companyKey.includes('vita')) {
+      recommended = ['hovenier velp', 'tuinonderhoud velp', 'tuinontwerp velp', 'groenvoorziening velp', 'hoveniersbedrijf rheden'];
+    } else if (companyKey.includes('bresser') || companyKey.includes('timmer')) {
+      recommended = ['drankhandel arnhem', 'slijterij arnhem', 'online drank bestellen arnhem', 'speciaalbier arnhem', 'relatiegeschenken dranken arnhem'];
+    } else {
+      recommended = ['online marketing bureau', 'seo arnhem', 'sea uitbesteden', 'geo optimalisatie', 'ai zoekmachine vindbaarheid'];
+    }
+  }
+
+  console.log(`[Keyword Recommender Result] Generated keywords for ${companyName}:`, recommended);
+
+  res.json({
+    success: true,
+    company: companyName,
+    keywords: recommended,
+    formatted: recommended.join(', ')
+  });
 });
 
 // POST /api/keywords - Add a new keyword

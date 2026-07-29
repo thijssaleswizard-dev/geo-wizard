@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ChevronRight, ChevronDown, Plus, Search, Archive, Trash2, 
+  ChevronRight, ChevronDown, ChevronUp, Plus, Search, Archive, Trash2, 
   Sparkles, Play, Edit2, X, AlertTriangle, Loader2,
   ArrowLeft, Download, Share2
 } from 'lucide-react';
@@ -11,12 +11,36 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   const [selectedKeyword, setSelectedKeyword] = useState(null);
   const [detailTab, setDetailTab] = useState('rankings');
   const [editPromptModes, setEditPromptModes] = useState({});
-  const [customPromptInputs, setCustomPromptInputs] = useState({});
+  const [recommending, setRecommending] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isArchivedOpen, setIsArchivedOpen] = useState(false);
   const [totalUsedPrompts, setTotalUsedPrompts] = useState(0);
+
+  const handleRecommendKeywords = async () => {
+    setRecommending(true);
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    try {
+      const response = await fetch('/api/keywords/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: workspace })
+      });
+      const data = await response.json();
+      if (data.success && data.formatted) {
+        if (keywordInput.trim()) {
+          setKeywordInput(prev => `${prev}, ${data.formatted}`);
+        } else {
+          setKeywordInput(data.formatted);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to recommend keywords:', err);
+    } finally {
+      setRecommending(false);
+    }
+  };
 
   // Sync archived keywords with localStorage per workspace
   const [archivedKeywords, setArchivedKeywords] = useState(() => {
@@ -966,8 +990,41 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             Add Keywords & Generate Prompts
           </h3>
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <label style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>Keywords (comma-separated)</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>Keywords (comma-separated)</label>
+              <button
+                type="button"
+                onClick={handleRecommendKeywords}
+                disabled={recommending || isLimitReached}
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: '#440099',
+                  backgroundColor: '#f3e8ff',
+                  border: '1px solid #d8b4fe',
+                  borderRadius: '16px',
+                  padding: '4px 12px',
+                  cursor: recommending || isLimitReached ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {recommending ? (
+                  <>
+                    <Loader2 size={12} className="spin" />
+                    Keywords aanbevelen...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={12} />
+                    Recommend keywords
+                  </>
+                )}
+              </button>
+            </div>
             <textarea
               rows={2}
               placeholder="e.g. seo arnhem, online marketing bureau, ads uitbesteden"
@@ -1198,39 +1255,45 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
           {isArchivedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
 
-        {isArchivedOpen && archivedKeywords.length > 0 && (
-          <div style={{ marginTop: '12px', overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
-              <tbody>
-                {archivedKeywords.map(kw => (
-                  <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '10px 16px' }}><span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>{kw.text}</span></td>
-                    <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
-                    <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
-                    <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
-                    <td style={{ padding: '10px 16px' }}>
-                      <button
-                        type="button"
-                        onClick={() => handleRestoreKeyword(kw)}
-                        style={{
-                          fontSize: '11px',
-                          padding: '4px 8px',
-                          borderRadius: '4px',
-                          backgroundColor: '#f3f4f6',
-                          color: '#111827',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          border: 'none'
-                        }}
-                      >
-                        Restore
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {isArchivedOpen && (
+          archivedKeywords.length > 0 ? (
+            <div style={{ marginTop: '12px', overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                <tbody>
+                  {archivedKeywords.map(kw => (
+                    <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '10px 16px' }}><span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>{kw.text}</span></td>
+                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
+                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
+                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreKeyword(kw)}
+                          style={{
+                            fontSize: '11px',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            backgroundColor: '#f3f4f6',
+                            color: '#111827',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            border: 'none'
+                          }}
+                        >
+                          Restore
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ fontSize: '13px', color: '#9ca3af', padding: '12px 0px', fontStyle: 'italic' }}>
+              Geen gearchiveerde keywords voor dit project.
+            </p>
+          )
         )}
       </div>
 

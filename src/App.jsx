@@ -131,6 +131,15 @@ function App() {
     }
   };
 
+  // Callback: Medewerker deletes a client workspace
+  const handleDeleteClient = (companyToDelete) => {
+    setClients(prev => prev.filter(c => c.company.toLowerCase() !== companyToDelete.toLowerCase()));
+    if (activeWorkspace && activeWorkspace.toLowerCase() === companyToDelete.toLowerCase()) {
+      setActiveWorkspace(null);
+      setActiveTab('client_admin');
+    }
+  };
+
   // Callback: Medewerker creates new client workspace
   const handleAddClient = (newClient) => {
     setClients(prev => [newClient, ...prev]);
@@ -161,14 +170,14 @@ function App() {
       case 'prompt_research': return 'AI Prompt Research';
       case 'audit_tools': return 'GEO Audit Tools';
       case 'account_plan': return 'Account & Plan';
-      case 'client_admin': return 'Client Workspaces Admin';
-      default: return 'Saleswizard GEO Portal';
+      case 'client_admin': return 'Projects';
+      default: return activeTab;
     }
   };
 
   const renderContent = () => {
     if (currentUser.role === 'medewerker' && !activeWorkspace) {
-      return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} />;
+      return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
     }
     switch (activeTab) {
       case 'overview':
@@ -176,7 +185,7 @@ function App() {
       case 'keywords':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'prompts':
-        return <Prompts key={activeWorkspace} activeWorkspace={activeWorkspace} />;
+        return <Prompts key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} />;
       case 'citations':
         return <Citations key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'recommendations':
@@ -190,7 +199,7 @@ function App() {
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
-        return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} />;
+        return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
       default:
         // coming soon fallback page
         return (

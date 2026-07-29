@@ -110,4 +110,22 @@ router.post('/', async (req, res) => {
   }
 });
 
+// DELETE /api/clients/:company - Delete a client workspace and its associated data
+router.delete('/:company', async (req, res) => {
+  const { company } = req.params;
+  const decodedCompany = decodeURIComponent(company).trim();
+  const companyKey = decodedCompany.toLowerCase().replace('.nl', '').trim();
+
+  try {
+    await db('clients').whereRaw('LOWER(company) = ?', [decodedCompany.toLowerCase()]).del();
+    await db('keywords').where({ company_key: companyKey }).del();
+    await db('prompts').where({ company_key: companyKey }).del();
+
+    res.json({ success: true, message: `Project "${decodedCompany}" succesvol verwijderd.` });
+  } catch (err) {
+    console.error('Error deleting client workspace:', err);
+    res.status(500).json({ error: 'Fout bij verwijderen van project in database.' });
+  }
+});
+
 export default router;

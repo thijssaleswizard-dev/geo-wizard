@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Plus, Search, X, Loader2 } from 'lucide-react';
+import { Plus, Search, X, Loader2, Trash2 } from 'lucide-react';
 
-export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient }) {
+export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient }) {
   const [searchQuery, setSearchQuery] = useState('');
   
   // Add Client Modal state
@@ -15,6 +15,30 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [error, setError] = useState('');
   const [step, setStep] = useState(1);
   const [keywordInput, setKeywordInput] = useState('');
+
+  const handleDeleteClientSubmit = async (e, companyToDelete) => {
+    e.stopPropagation();
+    if (!window.confirm(`Weet u zeker dat u het project "${companyToDelete}" wilt verwijderen?\n\nAlle gekoppelde keywords en prompts worden ook uit de database gewist.`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/clients/${encodeURIComponent(companyToDelete)}`, {
+        method: 'DELETE'
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        if (onDeleteClient) {
+          onDeleteClient(companyToDelete);
+        }
+      } else {
+        alert(data.error || 'Fout bij verwijderen van project.');
+      }
+    } catch (err) {
+      console.error('Error deleting client:', err);
+      alert('Kan geen verbinding maken met de server.');
+    }
+  };
 
   const filteredClients = clients.filter(c => {
     const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -267,11 +291,32 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   </div>
                 </div>
 
-                {/* Right Side: Keywords Count */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {/* Right Side: Keywords Count & Delete Action */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
                     {client.keywordsCount || 0} keywords
                   </span>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteClientSubmit(e, client.company)}
+                    title="Verwijder project"
+                    style={{
+                      padding: '8px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.backgroundColor = '#fee2e2'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
               </div>
             );
