@@ -18,7 +18,6 @@ export default function Sidebar({
 
   const brandReportItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'keywords', label: 'Keywords', icon: Sliders },
     { id: 'prompts', label: 'Prompts', icon: Search },
     { id: 'citations', label: 'Citations', icon: Award },
     { id: 'recommendations', label: 'Recommendations', icon: RefreshCw },
@@ -36,7 +35,7 @@ export default function Sidebar({
   const getAdminItems = () => {
     if (currentUser.role === 'medewerker') {
       return [
-        { id: 'client_admin', label: 'Client Workspaces', icon: Users, badge: 'Admin' },
+        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard },
         { id: 'api_keys', label: 'API Keys', icon: Key }
       ];
     }
@@ -153,14 +152,14 @@ export default function Sidebar({
             fontWeight: 700,
             fontSize: '11px'
           }}>
-            {activeWorkspace[0]}
+            {activeWorkspace ? activeWorkspace[0] : 'P'}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               {currentUser.role === 'medewerker' ? 'Actief Project' : 'Uw Project'}
             </div>
-            <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {activeWorkspace}
+            <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeWorkspace ? 'white' : 'rgba(255,255,255,0.5)' }}>
+              {activeWorkspace || 'Select a project'}
             </div>
           </div>
           {currentUser.role === 'medewerker' && (
@@ -213,69 +212,119 @@ export default function Sidebar({
       {/* Navigation Groups */}
       <div style={{ flex: 1, padding: '12px' }}>
         
-        {/* BRAND REPORT SECTION */}
-        <div>
-          <div style={{
-            width: '100%',
-            padding: '8px',
-            fontSize: '10px',
-            fontWeight: 800,
-            color: 'rgba(255,255,255,0.4)',
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
-            textAlign: 'left'
-          }}>
-            Brand Report
+        {!activeWorkspace ? (
+          /* Medewerker Initial state menu (Only Organization & Projects) */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <button
+              onClick={() => setActiveTab('client_admin')}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: 'var(--border-radius-sm)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                fontSize: '13px',
+                fontWeight: activeTab === 'organization' ? 600 : 400,
+                color: activeTab === 'organization' ? '#f8fafc' : 'rgba(255,255,255,0.65)',
+                backgroundColor: activeTab === 'organization' ? 'rgba(255,255,255,0.05)' : 'transparent',
+                textAlign: 'left',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Users size={16} style={{ color: 'rgba(255,255,255,0.4)' }} />
+              Organization
+            </button>
+            <button
+              onClick={() => setActiveTab('client_admin')}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: 'var(--border-radius-sm)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                fontSize: '13px',
+                fontWeight: activeTab === 'client_admin' ? 600 : 400,
+                color: activeTab === 'client_admin' ? '#f8fafc' : 'rgba(255,255,255,0.85)',
+                backgroundColor: activeTab === 'client_admin' ? 'rgba(255,255,255,0.08)' : 'transparent',
+                textAlign: 'left',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <LayoutDashboard size={16} style={{ color: '#c084fc' }} />
+              Projects
+            </button>
           </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
-            <div style={{
-              fontSize: '11px',
-              fontWeight: 700,
-              color: '#cbd5e1',
-              padding: '6px 8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
-              <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#a78bfa' }}></div>
-              {activeWorkspace}
+        ) : (
+          /* Normal Project menus */
+          <>
+            {/* BRAND REPORT SECTION */}
+            <div>
+              <div style={{
+                width: '100%',
+                padding: '8px',
+                fontSize: '10px',
+                fontWeight: 800,
+                color: 'rgba(255,255,255,0.4)',
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+                textAlign: 'left'
+              }}>
+                Brand Report
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#cbd5e1',
+                  padding: '6px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#a78bfa' }}></div>
+                  {activeWorkspace}
+                </div>
+                {brandReportItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveTab(item.id)}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: 'var(--border-radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontSize: '13px',
+                        fontWeight: isActive ? 600 : 400,
+                        color: isActive ? '#f8fafc' : 'rgba(255,255,255,0.65)',
+                        backgroundColor: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                        borderLeft: isActive ? '3px solid #a78bfa' : '3px solid transparent',
+                        textAlign: 'left',
+                        cursor: 'pointer'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
+                      }}
+                    >
+                      <Icon size={16} style={{ color: isActive ? '#c084fc' : 'rgba(255,255,255,0.4)' }} />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            {brandReportItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--border-radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    fontSize: '13px',
-                    fontWeight: isActive ? 600 : 400,
-                    color: isActive ? '#f8fafc' : 'rgba(255,255,255,0.65)',
-                    backgroundColor: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-                    borderLeft: isActive ? '3px solid #a78bfa' : '3px solid transparent',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
-                  }}
-                >
-                  <Icon size={16} style={{ color: isActive ? '#c084fc' : 'rgba(255,255,255,0.4)' }} />
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
         {/* GENERAL SECTION */}
         <div style={{ marginTop: '18px' }}>
@@ -357,7 +406,12 @@ export default function Sidebar({
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => {
+                    if (item.id === 'client_admin') {
+                      onWorkspaceChange(null);
+                    }
+                    setActiveTab(item.id);
+                  }}
                   style={{
                     width: '100%',
                     padding: '8px 12px',
@@ -398,6 +452,8 @@ export default function Sidebar({
             })}
           </div>
         </div>
+      </>
+    )}
 
       </div>
 

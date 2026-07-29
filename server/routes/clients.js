@@ -8,8 +8,41 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const clients = await db('clients').select('*');
-    res.json({ success: true, clients });
+    
+    // Count keywords per client from the database
+    const keywordsCounts = await db('keywords')
+      .select('company_key')
+      .count('id as count')
+      .groupBy('company_key');
+
+    // Count prompts per client from the database
+    const promptsCounts = await db('prompts')
+      .select('company_key')
+      .count('id as count')
+      .groupBy('company_key');
+
+    const keywordsMap = {};
+    keywordsCounts.forEach(item => {
+      keywordsMap[item.company_key] = item.count;
+    });
+
+    const promptsMap = {};
+    promptsCounts.forEach(item => {
+      promptsMap[item.company_key] = item.count;
+    });
+
+    const clientsWithCounts = clients.map(client => {
+      const companyKey = client.company.toLowerCase().replace('.nl', '').trim();
+      return {
+        ...client,
+        keywordsCount: keywordsMap[companyKey] || 0,
+        promptsCount: promptsMap[companyKey] || 0
+      };
+    });
+
+    res.json({ success: true, clients: clientsWithCounts });
   } catch (err) {
+    console.error('Error fetching clients:', err);
     res.status(500).json({ error: 'Failed to fetch clients from database' });
   }
 });

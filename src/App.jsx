@@ -71,11 +71,12 @@ function App() {
     if (user.role === 'klant') {
       // Force clients to their own workspace
       setActiveWorkspace(user.company);
+      setActiveTab('overview');
     } else {
-      // Employees start with the first workspace
-      setActiveWorkspace('Saleswizard.nl');
+      // Employees start with no workspace selected (null) to choose a project
+      setActiveWorkspace(null);
+      setActiveTab('client_admin');
     }
-    setActiveTab('overview');
   };
 
   // Callback: User logs out
@@ -147,6 +148,9 @@ function App() {
   }
 
   const getTabTitle = () => {
+    if (currentUser.role === 'medewerker' && !activeWorkspace) {
+      return 'Projects';
+    }
     switch (activeTab) {
       case 'overview': return 'Overview Dashboard';
       case 'keywords': return 'Keywords';
@@ -163,23 +167,26 @@ function App() {
   };
 
   const renderContent = () => {
+    if (currentUser.role === 'medewerker' && !activeWorkspace) {
+      return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} />;
+    }
     switch (activeTab) {
       case 'overview':
-        return <Overview key={activeWorkspace} activeWorkspace={activeWorkspace} />;
+        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'keywords':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'prompts':
-        return <Prompts key={activeWorkspace} />;
+        return <Prompts key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'citations':
-        return <Citations key={activeWorkspace} />;
+        return <Citations key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'recommendations':
-        return <Recommendations key={activeWorkspace} />;
+        return <Recommendations key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'agents':
-        return <AgentsAnalytics key={activeWorkspace} />;
+        return <AgentsAnalytics key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'prompt_research':
         return <PromptResearch key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'audit_tools':
-        return <AuditTools key={activeWorkspace} />;
+        return <AuditTools key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
@@ -250,44 +257,45 @@ function App() {
       {/* Main Content Area */}
       <main className="main-content">
         
-        {/* Top Header Bar */}
-        <header style={{
-          height: 'var(--header-height)',
-          backgroundColor: 'var(--bg-card)',
-          borderBottom: '1px solid var(--border-light)',
-          padding: '0 24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 90
-        }}>
-          <div>
-            <h1 style={{ fontSize: '20px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>
-              {getTabTitle()}
-            </h1>
-          </div>
-
-          {/* Quick actions */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            
-            {/* Live active client marker */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 12px',
-              borderRadius: '20px',
-              backgroundColor: 'rgba(68, 0, 153, 0.05)',
-              border: '1px solid var(--brand-light-border)',
-              fontSize: '12px',
-              fontWeight: 700,
-              color: 'var(--brand-primary)'
-            }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }}></span>
-              Client: {activeWorkspace}
+        {/* Top Workspace Sub-Header Bar (only shown when a project is selected) */}
+        {activeWorkspace && (
+          <header style={{
+            height: 'var(--header-height)',
+            backgroundColor: 'var(--bg-card)',
+            borderBottom: '1px solid var(--border-light)',
+            padding: '0 24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            position: 'sticky',
+            top: 0,
+            zIndex: 90
+          }}>
+            <div>
+              <h1 style={{ fontSize: '20px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>
+                {getTabTitle()}
+              </h1>
             </div>
+
+            {/* Quick actions */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              
+              {/* Live active client marker */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                borderRadius: '20px',
+                backgroundColor: 'rgba(68, 0, 153, 0.05)',
+                border: '1px solid var(--brand-light-border)',
+                fontSize: '12px',
+                fontWeight: 700,
+                color: 'var(--brand-primary)'
+              }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }}></span>
+                Client: {activeWorkspace}
+              </div>
 
             {/* Notifications trigger */}
             <div style={{ position: 'relative' }}>
@@ -395,8 +403,9 @@ function App() {
 
           </div>
         </header>
+      )}
 
-        {/* Dynamic subview */}
+      {/* Dynamic subview */}
         <div style={{ flex: 1 }}>
           {renderContent()}
         </div>
