@@ -336,6 +336,15 @@ export default function Prompts({ activeWorkspace }) {
       </div>
 
       {/* Prompts Table */}
+      <style>{`
+        .prompts-table-compact th {
+          padding: 8px 16px !important;
+        }
+        .prompts-table-compact td {
+          padding: 8px 16px !important;
+          font-size: 12.5px !important;
+        }
+      `}</style>
       <div className="card" style={{ padding: '0px', overflow: 'hidden' }}>
         {loadingPrompts ? (
           <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -343,7 +352,7 @@ export default function Prompts({ activeWorkspace }) {
             Prompts ophalen uit database...
           </div>
         ) : (
-          <table className="premium-table">
+          <table className="premium-table prompts-table-compact">
             <thead>
               <tr>
                 <th>Prompt text</th>
