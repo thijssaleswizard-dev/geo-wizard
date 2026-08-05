@@ -99,6 +99,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   const [selectedKeyword, setSelectedKeyword] = useState(null);
   const [detailTab, setDetailTab] = useState('rankings');
   const [editPromptModes, setEditPromptModes] = useState({});
+  const [customPromptInputs, setCustomPromptInputs] = useState({});
   const [recommending, setRecommending] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -147,6 +148,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
       alert('Kan geen verbinding maken met de server.');
     }
   };
+
 
   const toggleExpandedPrompt = (pId) => {
     setExpandedPrompts(prev => ({ ...prev, [pId]: !prev[pId] }));
@@ -598,7 +600,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
       const response = await fetch('/api/prompts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: workspace, text: input, tag: 'Custom' })
+        body: JSON.stringify({ company: workspace, text: input, tag: 'Custom', keyword_id: kwId })
       });
       const data = await response.json();
 
@@ -648,20 +650,17 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
     }
   };
 
-  const handleDeletePrompt = async (kwId, promptText) => {
-    const kw = keywords.find(k => k.id === kwId);
-    if (!kw) return;
-    const target = (kw.prompts || []).find(p => p.text === promptText);
-    if (!target || !target.id) return;
+  const handleDeletePrompt = async (kwId, promptId) => {
+    if (!window.confirm('Weet u zeker dat u deze prompt wilt verwijderen?')) return;
 
     try {
-      const res = await fetch(`/api/prompts/${target.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/prompts/${promptId}`, { method: 'DELETE' });
       if (res.ok) {
         setKeywords(prev => prev.map(k => {
           if (k.id === kwId) {
             return {
               ...k,
-              prompts: (k.prompts || []).filter(p => p.text !== promptText)
+              prompts: (k.prompts || []).filter(p => p.id !== promptId)
             };
           }
           return k;
@@ -670,7 +669,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
         if (selectedKeyword && selectedKeyword.id === kwId) {
           setSelectedKeyword(prev => ({
             ...prev,
-            prompts: (prev.prompts || []).filter(p => p.text !== promptText)
+            prompts: (prev.prompts || []).filter(p => p.id !== promptId)
           }));
         }
 
@@ -1071,7 +1070,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                         {isEditMode ? (
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.text); }}
+                            onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.id); }}
                             title="Verwijder prompt"
                             style={{ padding: '6px', borderRadius: '4px', color: '#ef4444', cursor: 'pointer', background: 'none', border: 'none' }}
                           >
