@@ -7,6 +7,7 @@ import axios from 'axios';
 
 // 1. OpenAI API (ChatGPT)
 export async function queryOpenAI({ prompt, companyName }) {
+
   const apiKey = process.env.OPENAI_API_KEY;
   const companyKey = companyName.toLowerCase().replace('.nl', '').trim();
 

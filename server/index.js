@@ -13,6 +13,7 @@ import notificationsRoutes from './routes/notifications.js';
 import agentsRoutes from './routes/agents.js';
 import overviewRoutes from './routes/overview.js';
 import scraperRoutes from './routes/scraper.js';
+import paymentsRoutes from './routes/payments.js';
 import { initCronScheduler } from './services/cron.js';
 
 const app = express();
@@ -32,6 +33,7 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/agents-analytics', agentsRoutes);
 app.use('/api/overview-stats', overviewRoutes);
 app.use('/api/scraper', scraperRoutes);
+app.use('/api/payments', paymentsRoutes);
 
 app.listen(PORT, () => {
   console.log(`==================================================`);

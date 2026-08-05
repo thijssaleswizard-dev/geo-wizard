@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Award, Check, Sparkles, Zap, ShieldCheck, HelpCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Award, Check, Sparkles, Zap, ShieldCheck, HelpCircle, FileText, Download, Loader2 } from 'lucide-react';
 
 export default function AccountManagement({ currentUser, onUpdateSubscription, onUpdateAddonPrompts }) {
   const plans = [
@@ -86,6 +86,25 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
   const totalPrice = basePrice + addonPrice;
   const totalLimit = currentPlan.promptsLimit + currentAddonPrompts;
 
+  // Invoices state & fetching
+  const [invoices, setInvoices] = useState([]);
+  const [loadingInvoices, setLoadingInvoices] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/payments/invoices?userId=${currentUser.id}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.invoices) {
+          setInvoices(data.invoices);
+        }
+        setLoadingInvoices(false);
+      })
+      .catch(err => {
+        console.error('Error fetching invoices:', err);
+        setLoadingInvoices(false);
+      });
+  }, [currentUser.id]);
+
   const handleSelectAddon = (count) => {
     if (onUpdateAddonPrompts) {
       onUpdateAddonPrompts(count);
@@ -104,7 +123,7 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
       </div>
 
       {/* Account Details Box */}
-      <div className="card" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }} className="responsive-grid">
+      <div className="card responsive-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <h3 style={{ fontSize: '15px', fontWeight: 700 }}>Bedrijfsgegevens</h3>
           <div style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -314,25 +333,68 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
         </div>
       </div>
 
-      {/* Invoice Overview Card */}
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: 'rgba(68,0,153,0.01)', border: '1px dashed var(--border-medium)' }}>
-        <h4 style={{ fontSize: '14px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>Factuur Overzicht</h4>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          <div className="flex-between">
-            <span>Basis: {currentPlan.name} abonnement</span>
-            <span style={{ fontWeight: 700 }}>€{basePrice},- / mnd</span>
+      {/* Invoice Registry List */}
+      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <h3 style={{ fontSize: '16px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px', fontFamily: "'Outfit', sans-serif" }}>
+          <FileText size={18} style={{ color: 'var(--brand-primary)' }} />
+          Factuurhistorie (Recurring Payments)
+        </h3>
+        
+        {loadingInvoices ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '20px', color: 'var(--text-secondary)' }}>
+            <Loader2 size={16} className="spin" /> Facturen laden...
           </div>
-          {currentAddonPrompts > 0 && (
-            <div className="flex-between">
-              <span>Extra: +{currentAddonPrompts} Prompts Add-on Bundel</span>
-              <span style={{ fontWeight: 700 }}>€{addonPrice},- / mnd</span>
-            </div>
-          )}
-          <div className="flex-between" style={{ borderTop: '1px solid var(--border-light)', paddingTop: '8px', marginTop: '4px', fontSize: '15px', color: 'var(--text-primary)', fontWeight: 800 }}>
-            <span>Totaal maandelijks:</span>
-            <span>€{totalPrice},- / mnd</span>
+        ) : invoices.length === 0 ? (
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+            Er zijn nog geen facturen gegenereerd voor dit account.
           </div>
-        </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border-light)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '10px' }}>Factuurnummer</th>
+                  <th style={{ padding: '10px' }}>Datum</th>
+                  <th style={{ padding: '10px' }}>Omschrijving</th>
+                  <th style={{ padding: '10px' }}>Totaal (incl. BTW)</th>
+                  <th style={{ padding: '10px' }}>Status</th>
+                  <th style={{ padding: '10px', textAlign: 'right' }}>Actie</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv) => (
+                  <tr key={inv.id} style={{ borderBottom: '1px solid var(--border-light)', color: 'var(--text-primary)' }}>
+                    <td style={{ padding: '10px', fontWeight: 700 }}>{inv.invoice_number}</td>
+                    <td style={{ padding: '10px' }}>{new Date(inv.created_at).toLocaleDateString('nl-NL')}</td>
+                    <td style={{ padding: '10px' }}>{inv.package_name}</td>
+                    <td style={{ padding: '10px', fontWeight: 700 }}>€ {Number(inv.total_amount).toFixed(2).replace('.', ',')}</td>
+                    <td style={{ padding: '10px' }}>
+                      <span className="badge badge-positive" style={{ fontSize: '11px', padding: '2px 8px' }}>Betaald</span>
+                    </td>
+                    <td style={{ padding: '10px', textAlign: 'right' }}>
+                      <a
+                        href={inv.html_path}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          color: 'var(--brand-primary)',
+                          fontWeight: 700,
+                          textDecoration: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <Download size={14} /> Bekijken
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
     </div>
