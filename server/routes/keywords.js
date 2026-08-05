@@ -30,10 +30,35 @@ router.get('/', async (req, res) => {
         // Use clean domain and company name to return fallback list instantly
         const cleanDomain = companyKey.includes('.') ? companyKey : `${companyKey}.nl`;
         const selfName = companyKey.charAt(0).toUpperCase() + companyKey.slice(1);
+        
+        let nicheFallbacks = [
+          { brand: 'DoubleSmart', domain: 'doublesmart.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+          { brand: 'Traffic Builders', domain: 'trafficbuilders.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+          { brand: 'Inoma ICT', domain: 'inoma.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+        ];
+
+        const kwLower = (k.keyword || '').toLowerCase();
+        if (kwLower.includes('uitvaart') || kwLower.includes('condoleance') || kwLower.includes('graf') || kwLower.includes('crematie') || companyKey.includes('ugna')) {
+          nicheFallbacks = [
+            { brand: 'Dela', domain: 'dela.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+            { brand: 'Monuta', domain: 'monuta.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+            { brand: 'Yarden', domain: 'yarden.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+          ];
+        } else if (kwLower.includes('drank') || kwLower.includes('slijter')) {
+          nicheFallbacks = [
+            { brand: 'Gall & Gall', domain: 'gall.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+            { brand: 'Drankgigant', domain: 'drankgigant.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+          ];
+        } else if (kwLower.includes('groen') || kwLower.includes('hovenier') || kwLower.includes('tuin')) {
+          nicheFallbacks = [
+            { brand: 'GroenRijk', domain: 'groenrijk.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+            { brand: 'Hovenier Nederland', domain: 'hoveniernederland.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+          ];
+        }
+
         competitors = [
           { brand: selfName, domain: cleanDomain, isSelf: true, sov: 0, position: '-', citations: 0 },
-          { brand: 'Competitor A', domain: 'competitora.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-          { brand: 'Competitor B', domain: 'competitorb.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+          ...nicheFallbacks
         ];
       }
 
