@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal } from 'lucide-react';
+import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal, Sparkles } from 'lucide-react';
 
 export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,6 +43,39 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
       console.error('Error fetching API status monitor:', err);
     } finally {
       setMonitorLoading(false);
+    }
+  };
+
+  const [recommending, setRecommending] = useState(false);
+
+  const handleRecommendKeywords = async () => {
+    if (!company || company === 'https://') {
+      setError('Voer eerst een geldige website URL in bij stap 1.');
+      return;
+    }
+    setRecommending(true);
+    setError('');
+    try {
+      const response = await fetch('/api/keywords/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: company })
+      });
+      const data = await response.json();
+      if (data.success && data.formatted) {
+        setKeywordInput(prev => {
+          const trimmed = prev.trim();
+          if (!trimmed) return data.formatted;
+          return trimmed + ', ' + data.formatted;
+        });
+      } else {
+        setError(data.error || 'Kon geen keywords aanbevelen.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Fout bij verbinden met keyword recommender.');
+    } finally {
+      setRecommending(false);
     }
   };
 
@@ -659,9 +692,42 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
                 <form onSubmit={handleAddClientSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                      Keywords (komma-gescheiden)
-                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        Keywords (komma-gescheiden)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleRecommendKeywords}
+                        disabled={recommending}
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: '#440099',
+                          backgroundColor: '#f3e8ff',
+                          border: '1px solid #d8b4fe',
+                          borderRadius: '16px',
+                          padding: '2px 10px',
+                          cursor: recommending ? 'not-allowed' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {recommending ? (
+                          <>
+                            <Loader2 size={10} className="spin" />
+                            Aanbevelen...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={10} />
+                            Recommend keywords
+                          </>
+                        )}
+                      </button>
+                    </div>
                     <textarea
                       rows={4}
                       placeholder="bijv. seo optimalisatie, online marketing bureau, ads uitbesteden"

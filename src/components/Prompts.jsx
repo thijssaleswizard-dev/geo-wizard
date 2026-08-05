@@ -26,6 +26,47 @@ export default function Prompts({ activeWorkspace }) {
     aio: true
   });
 
+  const [selectedPromptIds, setSelectedPromptIds] = useState([]);
+
+  const handleSelectAllPrompts = (e) => {
+    if (e.target.checked) {
+      setSelectedPromptIds(filteredPrompts.map(p => p.id));
+    } else {
+      setSelectedPromptIds([]);
+    }
+  };
+
+  const handleSelectPrompt = (id, checked) => {
+    if (checked) {
+      setSelectedPromptIds(prev => [...prev, id]);
+    } else {
+      setSelectedPromptIds(prev => prev.filter(x => x !== id));
+    }
+  };
+
+  const handleBulkDeletePrompts = async () => {
+    if (selectedPromptIds.length === 0) return;
+    if (!window.confirm(`Weet u zeker dat u de ${selectedPromptIds.length} geselecteerde prompts wilt verwijderen?`)) return;
+
+    try {
+      const response = await fetch('/api/prompts/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedPromptIds })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setPromptsList(prev => prev.filter(p => !selectedPromptIds.includes(p.id)));
+        setSelectedPromptIds([]);
+      } else {
+        alert(data.error || 'Fout bij verwijderen van prompts.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Kan geen verbinding maken met de server.');
+    }
+  };
+
   // Fetch prompts from database on mount & activeWorkspace change
   useEffect(() => {
     let isMounted = true;
@@ -335,6 +376,41 @@ export default function Prompts({ activeWorkspace }) {
         </div>
       </div>
 
+      {/* Bulk actions */}
+      {selectedPromptIds.length > 0 && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#fee2e2',
+          border: '1px solid #fca5a5',
+          borderRadius: '8px',
+          padding: '10px 16px',
+          marginBottom: '16px',
+          width: '100%'
+        }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
+            {selectedPromptIds.length} prompts geselecteerd
+          </span>
+          <button
+            type="button"
+            onClick={handleBulkDeletePrompts}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: 'none',
+              backgroundColor: '#ef4444',
+              color: 'white',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            Verwijder Geselecteerde
+          </button>
+        </div>
+      )}
+
       {/* Prompts Table */}
       <style>{`
         .prompts-table-compact th {
@@ -355,6 +431,13 @@ export default function Prompts({ activeWorkspace }) {
           <table className="premium-table prompts-table-compact">
             <thead>
               <tr>
+                <th style={{ width: '40px' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={filteredPrompts.length > 0 && selectedPromptIds.length === filteredPrompts.length}
+                    onChange={handleSelectAllPrompts}
+                  />
+                </th>
                 <th>Prompt text</th>
                 <th style={{ width: '120px' }}>Category</th>
                 <th>Engines tracked</th>
@@ -366,7 +449,7 @@ export default function Prompts({ activeWorkspace }) {
             <tbody>
               {filteredPrompts.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                     <AlertCircle size={24} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
                     No tracked prompts found matching filters.
                   </td>
@@ -374,6 +457,13 @@ export default function Prompts({ activeWorkspace }) {
               ) : (
                 filteredPrompts.map((prompt) => (
                   <tr key={prompt.id}>
+                    <td style={{ width: '40px' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={selectedPromptIds.includes(prompt.id)}
+                        onChange={(e) => handleSelectPrompt(prompt.id, e.target.checked)} 
+                      />
+                    </td>
                     <td style={{ fontWeight: 600, color: 'var(--text-primary)', maxWidth: '300px' }}>
                       {prompt.text}
                     </td>

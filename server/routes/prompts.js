@@ -168,4 +168,20 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// POST /api/prompts/bulk-delete - Delete multiple prompts
+router.post('/bulk-delete', async (req, res) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Geen geldige IDs opgegeven.' });
+  }
+
+  try {
+    await db('prompts').whereIn('id', ids).del();
+    res.json({ success: true, message: 'Prompts succesvol verwijderd.' });
+  } catch (err) {
+    console.error('Error bulk deleting prompts:', err);
+    res.status(500).json({ error: 'Fout bij bulk verwijderen van prompts' });
+  }
+});
+
 export default router;

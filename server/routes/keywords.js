@@ -220,4 +220,20 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// POST /api/keywords/bulk-delete - Delete multiple keywords
+router.post('/bulk-delete', async (req, res) => {
+  const { ids } = req.body;
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Geen geldige IDs opgegeven.' });
+  }
+
+  try {
+    await db('keywords').whereIn('id', ids).del();
+    res.json({ success: true, message: 'Keywords succesvol verwijderd.' });
+  } catch (err) {
+    console.error('Error bulk deleting keywords:', err);
+    res.status(500).json({ error: 'Failed to delete keywords' });
+  }
+});
+
 export default router;

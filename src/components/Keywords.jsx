@@ -107,6 +107,46 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   const [totalUsedPrompts, setTotalUsedPrompts] = useState(0);
   const [scanningPrompts, setScanningPrompts] = useState({});
   const [expandedPrompts, setExpandedPrompts] = useState({});
+  const [selectedKeywordIds, setSelectedKeywordIds] = useState([]);
+
+  const handleSelectAllKeywords = (e) => {
+    if (e.target.checked) {
+      setSelectedKeywordIds(filteredKeywords.map(k => k.id));
+    } else {
+      setSelectedKeywordIds([]);
+    }
+  };
+
+  const handleSelectKeyword = (id, checked) => {
+    if (checked) {
+      setSelectedKeywordIds(prev => [...prev, id]);
+    } else {
+      setSelectedKeywordIds(prev => prev.filter(x => x !== id));
+    }
+  };
+
+  const handleBulkDeleteKeywords = async () => {
+    if (selectedKeywordIds.length === 0) return;
+    if (!window.confirm(`Weet u zeker dat u de ${selectedKeywordIds.length} geselecteerde keywords wilt verwijderen?`)) return;
+
+    try {
+      const response = await fetch('/api/keywords/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedKeywordIds })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setKeywords(prev => prev.filter(k => !selectedKeywordIds.includes(k.id)));
+        setSelectedKeywordIds([]);
+      } else {
+        alert(data.error || 'Fout bij verwijderen van keywords.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Kan geen verbinding maken met de server.');
+    }
+  };
 
   const toggleExpandedPrompt = (pId) => {
     setExpandedPrompts(prev => ({ ...prev, [pId]: !prev[pId] }));
@@ -1471,11 +1511,54 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
         />
       </div>
 
+      {/* Bulk actions */}
+      {selectedKeywordIds.length > 0 && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#fee2e2',
+          border: '1px solid #fca5a5',
+          borderRadius: '8px',
+          padding: '10px 16px',
+          marginTop: '12px',
+          width: '100%'
+        }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
+            {selectedKeywordIds.length} keywords geselecteerd
+          </span>
+          <button
+            type="button"
+            onClick={handleBulkDeleteKeywords}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: 'none',
+              backgroundColor: '#ef4444',
+              color: 'white',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            Verwijder Geselecteerde
+          </button>
+        </div>
+      )}
+
       {/* Keywords Table */}
       <div style={{ width: '100%', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+              <th style={{ padding: '12px 16px', width: '40px' }}>
+                <input 
+                  type="checkbox" 
+                  checked={filteredKeywords.length > 0 && selectedKeywordIds.length === filteredKeywords.length}
+                  onChange={handleSelectAllKeywords}
+                  onClick={(e) => e.stopPropagation()} 
+                />
+              </th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Keyword</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Rank</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Share of Voice</th>
@@ -1501,6 +1584,13 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
               >
+                <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedKeywordIds.includes(kw.id)}
+                    onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)} 
+                  />
+                </td>
                 <td style={{ padding: '16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
