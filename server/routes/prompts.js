@@ -1,6 +1,7 @@
 import express from 'express';
 import db from '../db.js';
 import { enqueueScrape } from '../services/queue.js';
+import { queryGemini } from '../services/aiEngine.js';
 
 const router = express.Router();
 
@@ -10,7 +11,6 @@ router.get('/', async (req, res) => {
   try {
     const prompts = await db('prompts').where({ company_key: companyKey }).orderBy('id', 'desc');
     
-    // Format response to match expected frontend structure
     const formatted = prompts.map(p => ({
       id: p.id,
       text: p.prompt_text,
@@ -31,9 +31,50 @@ router.get('/', async (req, res) => {
   }
 });
 
+// POST /api/prompts/generate - Generate 3 dynamic prompts based on a keyword and company
+router.post('/generate', async (req, res) => {
+  const { company, keyword } = req.body;
+  if (!keyword) {
+    return res.status(400).json({ error: 'Keyword is verplicht voor het genereren van prompts.' });
+  }
+
+  const companyName = (company || 'Saleswizard').trim();
+  const companyKey = companyName.toLowerCase().replace('.nl', '').trim();
+
+  // Prompt logic for Gemini (FAQ-style consumer questions)
+  const promptMessage = `We hebben een bedrijf genaamd "${companyName}" en het zoekwoord "${keyword}". Genereer exact 3 veelgestelde FAQ-vragen (natuurlijke consumentenvragen) in het Nederlands die mensen stellen in AI-zoekmachines wanneer ze zoeken naar "${keyword}".
+Regels:
+1. De vragen moeten klinken als echte FAQ-vragen (bijv: "Wat kost...?", "Wie is de beste...?", "Hoe kies ik...?").
+2. Output UITSLUITEND de 3 FAQ-vragen gescheiden door een verticale streep (|) zonder nummers of extra tekst.
+Voorbeeld output:
+Wat kost een specialist gemiddeld voor ${keyword}? | Wie is de best beoordeelde partij voor ${keyword}? | Waar moet ik op letten bij het inschakelen van een expert voor ${keyword}?`;
+
+  try {
+    const aiResponse = await queryGemini({ prompt: promptMessage, companyName });
+    let prompts = [];
+    if (aiResponse && aiResponse.text && aiResponse.text.includes('|')) {
+      prompts = aiResponse.text.split('|').map(p => p.trim()).filter(Boolean);
+    }
+
+    // FAQ Niche fallbacks if AI fails
+    if (prompts.length < 3) {
+      prompts = [
+        `Wat kost een specialist gemiddeld voor ${keyword}?`,
+        `Wie is de best beoordeelde partij voor ${keyword}?`,
+        `Waar moet ik op letten bij het inschakelen van een expert voor ${keyword}?`
+      ];
+    }
+
+    res.json({ success: true, prompts: prompts.slice(0, 3) });
+  } catch (err) {
+    console.error('Error generating prompts:', err);
+    res.status(500).json({ error: 'Failed to generate prompts' });
+  }
+});
+
 // POST /api/prompts - Create a new tracked prompt
 router.post('/', async (req, res) => {
-  const { company, text, tag, engines } = req.body;
+  const { company, text, tag, engines, keyword_id } = req.body;
   
   if (!text) {
     return res.status(400).json({ error: 'Prompt tekst is verplicht.' });
@@ -45,6 +86,7 @@ router.post('/', async (req, res) => {
     const defaultEngines = engines || { chatgpt: true, gemini: true, perplexity: true, copilot: true, claude: true, aio: true };
     const [newId] = await db('prompts').insert({
       company_key: companyKey,
+      keyword_id: keyword_id ? parseInt(keyword_id) : null,
       prompt_text: text.trim(),
       category: tag || 'Algemeen',
       response_summary: 'Wachtend op achtergrond scan...',
@@ -90,13 +132,11 @@ router.post('/:id/scan', async (req, res) => {
       return res.status(404).json({ error: 'Prompt niet gevonden' });
     }
 
-    // Set status to pending
     await db('prompts').where({ id }).update({
       status: 'pending',
       updated_at: new Date().toISOString()
     });
 
-    // Enqueue
     enqueueScrape(id);
 
     res.json({ success: true, message: 'Scan gestart op de achtergrond.' });

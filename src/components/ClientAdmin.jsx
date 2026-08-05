@@ -15,22 +15,20 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [error, setError] = useState('');
   const [step, setStep] = useState(1);
   const [keywordInput, setKeywordInput] = useState('');
+  const [projectToDelete, setProjectToDelete] = useState(null);
 
-  const handleDeleteClientSubmit = async (e, companyToDelete) => {
-    e.stopPropagation();
-    if (!window.confirm(`Weet u zeker dat u het project "${companyToDelete}" wilt verwijderen?\n\nAlle gekoppelde keywords en prompts worden ook uit de database gewist.`)) {
-      return;
-    }
-
+  const confirmDeleteProject = async () => {
+    if (!projectToDelete) return;
     try {
-      const response = await fetch(`/api/clients/${encodeURIComponent(companyToDelete)}`, {
+      const response = await fetch(`/api/clients/${encodeURIComponent(projectToDelete)}`, {
         method: 'DELETE'
       });
       const data = await response.json();
       if (response.ok && data.success) {
         if (onDeleteClient) {
-          onDeleteClient(companyToDelete);
+          onDeleteClient(projectToDelete);
         }
+        setProjectToDelete(null);
       } else {
         alert(data.error || 'Fout bij verwijderen van project.');
       }
@@ -99,18 +97,32 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
           const kwData = await kwResponse.json();
 
           if (kwData.success) {
-            // Generate the default 3 prompts
-            const prompts = [
+            // Generate 3 dynamic prompts using backend AI service
+            const genResponse = await fetch('/api/prompts/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ company: company, keyword: kw })
+            });
+            const genData = await genResponse.json();
+            const prompts = genData.success && genData.prompts ? genData.prompts : [
               `Wat is het beste ${kw} in Nederland?`,
               `Welke ${kw} partijen zijn gespecialiseerd in MKB groei?`,
               `Hoe kies ik een betrouwbare partner voor ${kw}?`
             ];
             for (const pText of prompts) {
-              await fetch('/api/prompts', {
+              const pResponse = await fetch('/api/prompts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ company: company, text: pText, tag: 'AI Generated' })
+                body: JSON.stringify({ company: company, text: pText, tag: 'AI Generated', keyword_id: kwData.keyword.id })
               });
+              const pData = await pResponse.json();
+              if (pData.success && pData.prompt) {
+                fetch('/api/scraper/run', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ prompt: pText, company: company })
+                }).catch(() => {});
+              }
             }
           }
         }
@@ -298,7 +310,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   </span>
                   <button
                     type="button"
-                    onClick={(e) => handleDeleteClientSubmit(e, client.company)}
+                    onClick={(e) => { e.stopPropagation(); setProjectToDelete(client.company); }}
                     title="Verwijder project"
                     style={{
                       padding: '8px',
@@ -588,6 +600,97 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                 </form>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Project Confirmation Modal */}
+      {projectToDelete && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1100,
+          padding: '20px'
+        }}>
+          <div className="card fade-in" style={{
+            width: '100%',
+            maxWidth: '440px',
+            backgroundColor: '#ffffff',
+            borderRadius: '16px',
+            padding: '32px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '16px'
+          }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              backgroundColor: '#fee2e2',
+              color: '#ef4444',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Trash2 size={24} />
+            </div>
+            
+            <div>
+              <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
+                Project Verwijderen?
+              </h3>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '8px', lineHeight: '1.5' }}>
+                Weet u zeker dat u het project <strong>{projectToDelete}</strong> en alle bijbehorende keywords en prompts wilt verwijderen? Dit kan niet ongedaan worden gemaakt.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', width: '100%', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={() => setProjectToDelete(null)}
+                style={{
+                  flex: 1,
+                  padding: '12px 16px',
+                  borderRadius: '30px',
+                  border: '1px solid #d1d5db',
+                  backgroundColor: '#ffffff',
+                  color: '#374151',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  cursor: 'pointer'
+                }}
+              >
+                Annuleren
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteProject}
+                style={{
+                  flex: 1,
+                  padding: '12px 16px',
+                  borderRadius: '30px',
+                  border: 'none',
+                  backgroundColor: '#ef4444',
+                  color: '#ffffff',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer'
+                }}
+              >
+                Ja, verwijder
+              </button>
+            </div>
           </div>
         </div>
       )}

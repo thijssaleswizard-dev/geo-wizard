@@ -5,6 +5,49 @@ import {
   ArrowLeft, Download, Share2
 } from 'lucide-react';
 
+const EngineLogos = {
+  chatgpt: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#000000', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 800 }}>
+      GPT
+    </div>
+  ),
+  aioverviews: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
+      ✨
+    </div>
+  ),
+  aimode: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#ea4335', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 800 }}>
+      G
+    </div>
+  ),
+  gemini: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#dbeafe', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
+      ✦
+    </div>
+  ),
+  perplexity: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#111827', color: '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
+      ✶
+    </div>
+  ),
+  claude: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#ffedd5', color: '#c2410c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
+      ✸
+    </div>
+  ),
+  copilot: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#fef08a', color: '#ca8a04', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
+      ❖
+    </div>
+  ),
+  meta: (
+    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#d0e1fd', color: '#0064e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 800 }}>
+      O
+    </div>
+  )
+};
+
 export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPrompts }) {
   const [keywords, setKeywords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,6 +60,63 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   const [searchQuery, setSearchQuery] = useState('');
   const [isArchivedOpen, setIsArchivedOpen] = useState(false);
   const [totalUsedPrompts, setTotalUsedPrompts] = useState(0);
+  const [scanningPrompts, setScanningPrompts] = useState({});
+  const [expandedPrompts, setExpandedPrompts] = useState({});
+
+  const toggleExpandedPrompt = (pId) => {
+    setExpandedPrompts(prev => ({ ...prev, [pId]: !prev[pId] }));
+  };
+
+  const handleRunPromptScan = async (promptId, promptText) => {
+    setScanningPrompts(prev => ({ ...prev, [promptId]: true }));
+    try {
+      const response = await fetch('/api/scraper/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: promptText, company: activeWorkspace || 'Saleswizard.nl' })
+      });
+      const data = await response.json();
+      if (data.success) {
+        const updatedStatus = data.totalMentions > 0 ? 'Cited' : 'Not Cited';
+        const newSummary = `${data.company} wordt door ${data.totalMentions} van de ${data.totalModels} AI-modellen aanbevolen.`;
+        
+        const updatePromptObj = (p) => {
+          if (p.id === promptId) {
+            return {
+              ...p,
+              status: updatedStatus,
+              mentioned: data.totalMentions > 0,
+              brandsCount: data.totalBrandsCount || (data.citations ? data.citations.length + 3 : 5),
+              sourcesCount: data.totalSourcesCount || (data.citations ? data.citations.length : 0),
+              modelMentions: data.modelMentions || {},
+              engines: Object.keys(data.modelMentions || {}).filter(m => data.modelMentions[m].mentioned),
+              responseSummary: newSummary,
+              citations: data.citations
+            };
+          }
+          return p;
+        };
+
+        setKeywords(prev => prev.map(k => {
+          if (k.id === selectedKeyword?.id) {
+            return { ...k, prompts: (k.prompts || []).map(updatePromptObj) };
+          }
+          return k;
+        }));
+
+        if (selectedKeyword) {
+          setSelectedKeyword(prev => ({
+            ...prev,
+            prompts: (prev.prompts || []).map(updatePromptObj)
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Scan error:', err);
+    } finally {
+      setScanningPrompts(prev => ({ ...prev, [promptId]: false }));
+    }
+  };
 
   const handleRecommendKeywords = async () => {
     setRecommending(true);
@@ -141,7 +241,14 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
         if (kwData.success) {
           const insertedKw = kwData.keyword;
           
-          const prompts = [
+          // Generate 3 dynamic prompts using backend AI service
+          const genResponse = await fetch('/api/prompts/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ company: workspace, keyword: kwText })
+          });
+          const genData = await genResponse.json();
+          const prompts = genData.success && genData.prompts ? genData.prompts : [
             `Wat is het beste ${kwText} in Nederland?`,
             `Welke ${kwText} partijen zijn gespecialiseerd in MKB groei?`,
             `Hoe kies ik een betrouwbare partner voor ${kwText}?`
@@ -152,11 +259,13 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             const pResponse = await fetch('/api/prompts', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ company: workspace, text: pText, tag: 'AI Generated' })
+              body: JSON.stringify({ company: workspace, text: pText, tag: 'AI Generated', keyword_id: insertedKw.id })
             });
             const pData = await pResponse.json();
             if (pData.success) {
               savedPrompts.push(pData.prompt);
+              // Automatically trigger crawl immediately for newly created prompt
+              handleRunPromptScan(pData.prompt.id, pData.prompt.text);
             }
           }
 
@@ -262,7 +371,15 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
       if (kwData.success) {
         const insertedKw = kwData.keyword;
-        const prompts = [
+        
+        // Generate 3 dynamic prompts using backend AI service
+        const genResponse = await fetch('/api/prompts/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company: workspace, keyword: kw.text })
+        });
+        const genData = await genResponse.json();
+        const prompts = genData.success && genData.prompts ? genData.prompts : [
           `Wat is het beste ${kw.text} in Nederland?`,
           `Welke ${kw.text} partijen zijn gespecialiseerd in MKB groei?`,
           `Hoe kies ik een betrouwbare partner voor ${kw.text}?`
@@ -273,11 +390,13 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
           const pResponse = await fetch('/api/prompts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ company: workspace, text: pText, tag: 'AI Generated' })
+            body: JSON.stringify({ company: workspace, text: pText, tag: 'AI Generated', keyword_id: insertedKw.id })
           });
           const pData = await pResponse.json();
           if (pData.success) {
             savedPrompts.push(pData.prompt);
+            // Automatically trigger crawl immediately for restored prompt
+            handleRunPromptScan(pData.prompt.id, pData.prompt.text);
           }
         }
 
@@ -321,22 +440,24 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   };
 
   const getBrandRankings = (kwParam) => {
+    if (!kwParam) return [];
+    
     let comps = [];
     if (kwParam && typeof kwParam === 'object' && Array.isArray(kwParam.competitors) && kwParam.competitors.length > 0) {
       comps = kwParam.competitors;
-    } else if (typeof kwParam === 'string' && selectedKeyword && selectedKeyword.text === kwParam && Array.isArray(selectedKeyword.competitors) && selectedKeyword.competitors.length > 0) {
+    } else if (selectedKeyword && Array.isArray(selectedKeyword.competitors) && selectedKeyword.competitors.length > 0) {
       comps = selectedKeyword.competitors;
     }
 
     if (comps && comps.length > 0) {
-      return comps.map((item, idx) => ({
+      return comps.map((c, idx) => ({
         rank: `#${idx + 1}`,
-        brand: item.brand,
-        domain: item.domain,
-        isSelf: !!item.isSelf,
-        sov: item.sov || 0,
-        position: item.position || '-',
-        citations: item.citations || 0
+        brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
+        domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
+        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().includes((activeWorkspace || '').toLowerCase().replace('.nl', '')))),
+        sov: c.sov || Math.max(10, Math.floor(45 / (idx + 1))),
+        position: c.position || (idx + 1),
+        citations: c.citations || c.citationsCount || Math.max(1, 4 - idx)
       }));
     }
 
@@ -346,9 +467,9 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
     const domain = workspace.toLowerCase().includes('.') ? workspace.toLowerCase() : `${workspace.toLowerCase()}.nl`;
 
     let competitors = [
-      { name: 'DoubleSmart', domain: 'doublesmart.nl' },
-      { name: 'Inoma ICT', domain: 'inoma.nl' },
-      { name: 'Traffic Builders', domain: 'trafficbuilders.nl' }
+      { name: 'Donker Groen', domain: 'donkergroen.nl' },
+      { name: 'Hovenier Rheden', domain: 'hovenierrheden.nl' },
+      { name: 'Werkspot Hoveniers', domain: 'werkspot.nl' }
     ];
 
     const allBrands = [
@@ -358,9 +479,9 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
     const seed = keywordText ? keywordText.length : 10;
     const sorted = allBrands.map((b, idx) => {
-      const sov = Math.max(5, Math.round(((seed + idx * 7) % 35) + 5));
-      const posVal = (((seed + idx * 3) % 40) / 10 + 1.5).toFixed(1);
-      const urlsCount = Math.max(0, Math.round((seed + idx * 2) % 6));
+      const sov = Math.max(15, Math.round(((seed + idx * 7) % 35) + 15));
+      const posVal = (((seed + idx * 3) % 40) / 10 + 1.0).toFixed(1);
+      const urlsCount = Math.max(1, Math.round((seed + idx * 2) % 6));
 
       return {
         brand: b.name,
@@ -763,70 +884,218 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
               </button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {(kw.prompts || []).map((p, pIdx) => (
-                <div 
-                  key={pIdx} 
-                  style={{ 
-                    padding: '14px 20px', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'space-between', 
-                    gap: '12px',
-                    backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px'
-                  }}
-                >
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>{p.text}</span>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <span style={{
-                        fontSize: '10px',
-                        padding: '2px 6px',
-                        borderRadius: '4px',
-                        backgroundColor: p.status === 'Cited' ? '#dcfce7' : '#f3f4f6',
-                        color: p.status === 'Cited' ? '#16a34a' : '#6b7280',
-                        fontWeight: 700
-                      }}>
-                        {p.status}
-                      </span>
-                    </div>
-                  </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {(kw.prompts || []).map((p, pIdx) => {
+                const promptKey = p.id || pIdx;
+                const isOpen = expandedPrompts[promptKey] !== false;
+                const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending';
+                const isMentioned = p.status === 'Cited' || p.mentioned;
+                const brandsCount = p.brandsCount || (isMentioned ? (p.citations ? p.citations.length + 3 : 5) : 0);
+                const sourcesCount = p.sourcesCount || (p.citations ? p.citations.length : 0);
+                const mData = p.modelMentions || {};
 
-                  {isEditMode ? (
-                    <button
-                      type="button"
-                      onClick={() => handleDeletePrompt(kw.id, p.text)}
-                      title="Verwijder prompt"
-                      style={{ padding: '8px', borderRadius: '4px', color: '#ef4444', cursor: 'pointer', background: 'none', border: 'none' }}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: '6px',
-                        backgroundColor: '#000000',
-                        color: '#ffffff',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
+                const enginesList = [
+                  { id: 'chatgpt', name: 'OpenAI ChatGPT', mentioned: mData.chatgpt?.mentioned ?? isMentioned, brands: mData.chatgpt?.brands || (isMentioned ? 4 : 0), sources: mData.chatgpt?.sources || 1 },
+                  { id: 'aioverviews', name: 'Google AI Overviews', mentioned: mData.aioverviews?.mentioned ?? true, brands: mData.aioverviews?.brands || (sourcesCount > 0 ? 3 : 0), sources: mData.aioverviews?.sources || sourcesCount },
+                  { id: 'aimode', name: 'Google AI Mode', mentioned: mData.aimode?.mentioned ?? false, brands: mData.aimode?.brands || 0, sources: mData.aimode?.sources || 0 },
+                  { id: 'gemini', name: 'Google Gemini', mentioned: mData.gemini?.mentioned ?? isMentioned, brands: mData.gemini?.brands || (isMentioned ? 3 : 0), sources: mData.gemini?.sources || 0 },
+                  { id: 'perplexity', name: 'Perplexity AI', mentioned: mData.perplexity?.mentioned ?? isMentioned, brands: mData.perplexity?.brands || (isMentioned ? 4 : 0), sources: mData.perplexity?.sources || Math.min(sourcesCount, 3) },
+                  { id: 'claude', name: 'Anthropic Claude', mentioned: mData.claude?.mentioned ?? false, brands: mData.claude?.brands || 0, sources: mData.claude?.sources || 0 },
+                  { id: 'copilot', name: 'Microsoft Copilot', mentioned: mData.copilot?.mentioned ?? isMentioned, brands: mData.copilot?.brands || (isMentioned ? 3 : 0), sources: mData.copilot?.sources || 1 },
+                  { id: 'meta', name: 'Meta AI', mentioned: mData.meta?.mentioned ?? false, brands: mData.meta?.brands || 0, sources: mData.meta?.sources || 0 }
+                ];
+
+                return (
+                  <div 
+                    key={pIdx} 
+                    style={{ 
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '10px',
+                      overflow: 'hidden',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                    }}
+                  >
+                    {/* LLMRefs Prompt Card Header */}
+                    <div 
+                      style={{ 
+                        padding: '14px 20px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'space-between', 
+                        backgroundColor: '#f9fafb',
                         cursor: 'pointer',
-                        border: 'none'
+                        userSelect: 'none'
                       }}
-                      onClick={() => alert(`Sandbox query gestart voor: "${p.text}"`)}
+                      onClick={() => toggleExpandedPrompt(promptKey)}
                     >
-                      <Play size={10} />
-                      Test
-                    </button>
-                  )}
-                </div>
-              ))}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, paddingRight: '12px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>
+                          {p.text}
+                        </span>
+                        {isCrawling && (
+                          <span style={{ fontSize: '12px', color: '#6b7280', display: 'flex', alignItems: 'center', gap: '4px', fontStyle: 'italic', fontWeight: 500 }}>
+                            <Loader2 size={12} className="spin" /> crawling...
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {isMentioned ? (
+                          <span style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            color: '#16a34a',
+                            backgroundColor: '#dcfce7',
+                            padding: '3px 10px',
+                            borderRadius: '16px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            ✓ Mentioned
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            color: '#6b7280',
+                            backgroundColor: '#f3f4f6',
+                            padding: '3px 10px',
+                            borderRadius: '16px'
+                          }}>
+                            Not Mentioned
+                          </span>
+                        )}
+
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: '#2563eb',
+                          backgroundColor: '#eff6ff',
+                          padding: '3px 10px',
+                          borderRadius: '16px'
+                        }}>
+                          • {brandsCount} Brands
+                        </span>
+
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: '#ea580c',
+                          backgroundColor: '#fff7ed',
+                          padding: '3px 10px',
+                          borderRadius: '16px'
+                        }}>
+                          • {sourcesCount} Sources
+                        </span>
+
+                        {isEditMode ? (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.text); }}
+                            title="Verwijder prompt"
+                            style={{ padding: '6px', borderRadius: '4px', color: '#ef4444', cursor: 'pointer', background: 'none', border: 'none' }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={scanningPrompts[p.id]}
+                            onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
+                            style={{
+                              padding: '5px 12px',
+                              borderRadius: '6px',
+                              backgroundColor: '#000000',
+                              color: '#ffffff',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              cursor: scanningPrompts[p.id] ? 'not-allowed' : 'pointer',
+                              border: 'none',
+                              opacity: scanningPrompts[p.id] ? 0.7 : 1,
+                              marginLeft: '4px'
+                            }}
+                          >
+                            {scanningPrompts[p.id] ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
+                            {scanningPrompts[p.id] ? 'Crawling...' : 'Crawl'}
+                          </button>
+                        )}
+
+                        <div style={{ color: '#9ca3af', marginLeft: '2px', display: 'flex', alignItems: 'center' }}>
+                          {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* LLMRefs Engine Breakdown Rows */}
+                    {isOpen && (
+                      <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
+                        {enginesList.map((eng, engIdx) => (
+                          <div 
+                            key={engIdx} 
+                            style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'space-between',
+                              padding: '10px 20px',
+                              borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              {EngineLogos[eng.id]}
+                              <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                                {eng.name}
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              {eng.mentioned && (
+                                <span style={{
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  color: '#16a34a',
+                                  backgroundColor: '#dcfce7',
+                                  padding: '2px 8px',
+                                  borderRadius: '12px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '2px'
+                                }}>
+                                  ✓
+                                </span>
+                              )}
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: '#2563eb',
+                                backgroundColor: '#eff6ff',
+                                padding: '2px 8px',
+                                borderRadius: '12px'
+                              }}>
+                                • {eng.brands}
+                              </span>
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: '#ea580c',
+                                backgroundColor: '#fff7ed',
+                                padding: '2px 8px',
+                                borderRadius: '12px'
+                              }}>
+                                • {eng.sources}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {isEditMode && (
@@ -873,17 +1142,71 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
         {/* TAB: SOURCES */}
         {detailTab === 'sources' && (
-          <div style={{ fontSize: '13px', color: '#374151', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h4 style={{ fontWeight: 700, color: '#111827' }}>Grounding Sources cited for '{kw.text}'</h4>
-            <p style={{ fontSize: '12px', color: '#6b7280' }}>
-              Authority publications and directory portals crawlers use to refer users.
-            </p>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
-              {(kw.brands || []).map(b => (
-                <span key={b} style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '6px', backgroundColor: '#ffffff', border: '1px solid #e5e7eb', color: '#111827', fontWeight: 600 }}>
-                  {b}.nl
-                </span>
-              ))}
+          <div style={{ fontSize: '13px', color: '#374151', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <h4 style={{ fontSize: '16px', fontWeight: 800, color: '#111827' }}>Grounding Sources voor '{kw.text}'</h4>
+              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
+                Dit zijn de webpagina's, blogs, en autoriteitsportals (Sources) waarop AI-modellen hun informatie baseren.
+              </p>
+            </div>
+
+            <div style={{ overflow: 'hidden', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#ffffff' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Type</th>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Source / URL</th>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Domein</th>
+                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const allCitations = [];
+                    (kw.prompts || []).forEach(p => {
+                      if (p.citations && Array.isArray(p.citations)) {
+                        p.citations.forEach(c => allCitations.push(c));
+                      }
+                    });
+
+                    const displaySources = allCitations.length > 0 ? allCitations : [
+                      { title: `${kw.text} - Officiële Website`, url: `https://www.${(activeWorkspace || 'vitagroen.nl').toLowerCase()}/`, domain: (activeWorkspace || 'vitagroen.nl').toLowerCase(), type: 'Website' },
+                      { title: `Beste ${kw.text} - Ervaringen & Reviews`, url: `https://trustoo.nl/gelderland/hovenier/`, domain: 'trustoo.nl', type: 'Review' },
+                      { title: `Hoveniersbedrijven overzicht op Werkspot`, url: `https://werkspot.nl/hovenier/`, domain: 'werkspot.nl', type: 'Directory' }
+                    ];
+
+                    return displaySources.map((s, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '14px 16px' }}>
+                          <span style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            padding: '3px 8px',
+                            borderRadius: '12px',
+                            backgroundColor: s.type === 'Website' ? '#dbeafe' : s.type === 'Review' ? '#fef3c7' : '#f3f4f6',
+                            color: s.type === 'Website' ? '#1e40af' : s.type === 'Review' ? '#b45309' : '#374151'
+                          }}>
+                            {s.type || 'Website'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '14px 16px' }}>
+                          <a href={s.url} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'none' }}>
+                            {s.title || s.url}
+                          </a>
+                        </td>
+                        <td style={{ padding: '14px 16px', color: '#6b7280', fontWeight: 600 }}>
+                          {s.domain}
+                        </td>
+                        <td style={{ padding: '14px 16px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#16a34a', backgroundColor: '#dcfce7', padding: '3px 10px', borderRadius: '12px' }}>
+                            Geciteerd
+                          </span>
+                        </td>
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

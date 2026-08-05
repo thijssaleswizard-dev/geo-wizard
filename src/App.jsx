@@ -21,16 +21,40 @@ function App() {
     const saved = localStorage.getItem('geo_wizard_user');
     return saved ? JSON.parse(saved) : null;
   });
+
   const [activeWorkspace, setActiveWorkspace] = useState(() => {
-    const saved = localStorage.getItem('geo_wizard_user');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return parsed.role === 'klant' ? parsed.company : 'Saleswizard.nl';
+    const savedWs = localStorage.getItem('geo_wizard_active_workspace');
+    if (savedWs && savedWs !== 'null') return savedWs;
+
+    const savedUser = localStorage.getItem('geo_wizard_user');
+    if (savedUser) {
+      const parsed = JSON.parse(savedUser);
+      return parsed.role === 'klant' ? parsed.company : null;
     }
-    return 'Saleswizard.nl';
+    return null;
   });
-  const [activeTab, setActiveTab] = useState('overview');
+
+  const [activeTab, setActiveTab] = useState(() => {
+    const savedTab = localStorage.getItem('geo_wizard_active_tab');
+    return savedTab || 'overview';
+  });
+
   const [showNotifications, setShowNotifications] = useState(false);
+
+  // Sync activeWorkspace and activeTab to localStorage so page refresh retains state
+  useEffect(() => {
+    if (activeWorkspace) {
+      localStorage.setItem('geo_wizard_active_workspace', activeWorkspace);
+    } else {
+      localStorage.removeItem('geo_wizard_active_workspace');
+    }
+  }, [activeWorkspace]);
+
+  useEffect(() => {
+    if (activeTab) {
+      localStorage.setItem('geo_wizard_active_tab', activeTab);
+    }
+  }, [activeTab]);
 
   // Clients database (Workspaces list)
   const [clients, setClients] = useState([]);
@@ -83,6 +107,9 @@ function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('geo_wizard_user');
+    localStorage.removeItem('geo_wizard_active_workspace');
+    localStorage.removeItem('geo_wizard_active_tab');
+    setActiveWorkspace(null);
     setActiveTab('overview');
   };
 

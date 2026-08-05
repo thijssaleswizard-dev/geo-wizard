@@ -28,11 +28,32 @@ router.get('/', async (req, res) => {
       }
 
       const kwText = k.keyword || k.keyword_text || '';
+
+      // Fetch prompts linked to this keyword
+      let prompts = await db('prompts')
+        .where({ company_key: companyKey, keyword_id: k.id })
+        .orderBy('id', 'asc');
+
+      if (!prompts || prompts.length === 0) {
+        prompts = await db('prompts')
+          .where({ company_key: companyKey })
+          .andWhere('prompt_text', 'like', `%${kwText}%`)
+          .orderBy('id', 'asc');
+      }
+
       return {
         ...k,
         keyword_text: kwText,
         competitors: competitors,
-        brands_mentioned: competitors.map(c => c.domain.split('.')[0]).join(',')
+        brands_mentioned: competitors.map(c => c.domain.split('.')[0]).join(','),
+        prompts: prompts.map(p => ({
+          id: p.id,
+          text: p.prompt_text,
+          status: p.brand_mentioned ? 'Cited' : 'Not Cited',
+          engines: ['chatgpt', 'gemini', 'perplexity'],
+          brandsCount: p.brand_mentioned ? 1 : 0,
+          sourcesCount: p.citations_count || 0
+        }))
       };
     }));
 
