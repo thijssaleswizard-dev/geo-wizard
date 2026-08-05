@@ -19,29 +19,24 @@ export default function Sidebar({
   const brandReportItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'prompts', label: 'Prompts', icon: Search },
-    { id: 'citations', label: 'Citations', icon: Award },
     { id: 'recommendations', label: 'Recommendations', icon: RefreshCw },
     { id: 'agents', label: 'Agents analytics', icon: BarChart2 }
   ];
 
   const generalItems = [
     { id: 'prompt_research', label: 'AI Prompt Research', icon: Compass },
-    { id: 'search_prompts', label: 'Search Prompts', icon: Sliders, badge: 'New' },
-    { id: 'audit_tools', label: 'GEO Audit Tools', icon: AlertCircle },
-    { id: 'resources', label: 'Resources', icon: HelpCircle }
+    { id: 'audit_tools', label: 'GEO Audit Tools', icon: AlertCircle }
   ];
 
   // Admin menu links vary by role
   const getAdminItems = () => {
     if (currentUser.role === 'medewerker') {
       return [
-        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard },
-        { id: 'api_keys', label: 'API Keys', icon: Key }
+        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard }
       ];
     }
     return [
-      { id: 'account_plan', label: 'Account & Plan', icon: Settings },
-      { id: 'api_keys', label: 'API Keys', icon: Key }
+      { id: 'account_plan', label: 'Account & Plan', icon: Settings }
     ];
   };
 
