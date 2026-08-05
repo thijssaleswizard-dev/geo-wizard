@@ -41,11 +41,21 @@ router.get('/', async (req, res) => {
           .orderBy('id', 'asc');
       }
 
+      const citedPrompts = prompts.filter(p => p.brand_mentioned || p.status === 'Cited');
+      const companySov = prompts.length > 0 ? Math.round((citedPrompts.length / prompts.length) * 100) : 0;
+
+      const updatedCompetitors = competitors.map(c => {
+        if (c.isSelf) {
+          return { ...c, sov: companySov };
+        }
+        return c;
+      });
+
       return {
         ...k,
         keyword_text: kwText,
-        competitors: competitors,
-        brands_mentioned: competitors.map(c => c.domain.split('.')[0]).join(','),
+        competitors: updatedCompetitors,
+        brands_mentioned: updatedCompetitors.map(c => c.domain.split('.')[0]).join(','),
         prompts: prompts.map(p => ({
           id: p.id,
           text: p.prompt_text,

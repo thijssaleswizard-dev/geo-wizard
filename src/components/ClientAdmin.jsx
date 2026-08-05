@@ -186,7 +186,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ company, name, email, password, subscription })
+        body: JSON.stringify({ company, name, email, password, subscription, keywords: keywordInput })
       });
 
       const data = await response.json();
@@ -195,50 +195,6 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
         setError(data.error || 'Fout bij aanmaken van klant.');
         setLoading(false);
         return;
-      }
-
-      // Save step 2 keywords if entered
-      if (keywordInput.trim()) {
-        const rawKeywords = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
-        for (const kw of rawKeywords) {
-          // POST /api/keywords
-          const kwResponse = await fetch('/api/keywords', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ company: company, keyword: kw, volume: 100 })
-          });
-          const kwData = await kwResponse.json();
-
-          if (kwData.success) {
-            // Generate 3 dynamic prompts using backend AI service
-            const genResponse = await fetch('/api/prompts/generate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ company: company, keyword: kw })
-            });
-            const genData = await genResponse.json();
-            const prompts = genData.success && genData.prompts ? genData.prompts : [
-              `Wat is het beste ${kw} in Nederland?`,
-              `Welke ${kw} partijen zijn gespecialiseerd in MKB groei?`,
-              `Hoe kies ik een betrouwbare partner voor ${kw}?`
-            ];
-            for (const pText of prompts) {
-              const pResponse = await fetch('/api/prompts', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ company: company, text: pText, tag: 'AI Generated', keyword_id: kwData.keyword.id })
-              });
-              const pData = await pResponse.json();
-              if (pData.success && pData.prompt) {
-                fetch('/api/scraper/run', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ prompt: pText, company: company })
-                }).catch(() => {});
-              }
-            }
-          }
-        }
       }
 
       setLoading(false);
@@ -390,7 +346,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             return (
               <div
                 key={client.company}
-                onClick={() => onSelectClient(client.company)}
+                onClick={client.setup_status === 'processing' ? null : () => onSelectClient(client.company)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -399,15 +355,18 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   border: '1px solid #e5e7eb',
                   borderRadius: '12px',
                   padding: '16px 20px',
-                  cursor: 'pointer',
+                  cursor: client.setup_status === 'processing' ? 'default' : 'pointer',
                   transition: 'all 0.2s ease',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                  opacity: client.setup_status === 'processing' ? 0.85 : 1
                 }}
                 className="project-card"
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = 'var(--brand-primary)';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                  e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.05)';
+                  if (client.setup_status !== 'processing') {
+                    e.currentTarget.style.borderColor = 'var(--brand-primary)';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                    e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.05)';
+                  }
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = '#e5e7eb';
@@ -442,54 +401,68 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   </div>
                 </div>
 
-                {/* Right Side: Keywords Count & Delete Action */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                    {client.keywordsCount || 0} keywords
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleEditClientClick(client); }}
-                    title="Bewerk project"
-                    style={{
-                      padding: '8px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      backgroundColor: 'transparent',
-                      color: '#9ca3af',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      transition: 'all 0.15s ease'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand-primary)'; e.currentTarget.style.backgroundColor = 'var(--brand-light)'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                  >
-                    <Edit2 size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setProjectToDelete(client.company); }}
-                    title="Verwijder project"
-                    style={{
-                      padding: '8px',
-                      borderRadius: '6px',
-                      border: 'none',
-                      backgroundColor: 'transparent',
-                      color: '#9ca3af',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      transition: 'all 0.15s ease'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.backgroundColor = '#fee2e2'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+                {/* Right Side: Keywords Count & Actions OR Progress Indicator */}
+                {client.setup_status === 'processing' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', minWidth: '180px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Loader2 size={12} className="spin" style={{ color: 'var(--brand-primary)' }} />
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                        AI Prompts opzetten... {client.setup_progress}%
+                      </span>
+                    </div>
+                    <div style={{ width: '120px', height: '4px', backgroundColor: '#e5e7eb', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div style={{ width: `${client.setup_progress}%`, height: '100%', backgroundColor: 'var(--brand-primary)', transition: 'width 0.4s ease' }} />
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                      {client.keywordsCount || 0} keywords
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleEditClientClick(client); }}
+                      title="Bewerk project"
+                      style={{
+                        padding: '8px',
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: 'transparent',
+                        color: '#9ca3af',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand-primary)'; e.currentTarget.style.backgroundColor = 'var(--brand-light)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setProjectToDelete(client.company); }}
+                      title="Verwijder project"
+                      style={{
+                        padding: '8px',
+                        borderRadius: '6px',
+                        border: 'none',
+                        backgroundColor: 'transparent',
+                        color: '#9ca3af',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.backgroundColor = '#fee2e2'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

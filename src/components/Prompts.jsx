@@ -438,12 +438,12 @@ export default function Prompts({ activeWorkspace }) {
                     onChange={handleSelectAllPrompts}
                   />
                 </th>
-                <th>Prompt text</th>
-                <th style={{ width: '120px' }}>Category</th>
-                <th>Engines tracked</th>
-                <th style={{ textAlign: 'center', width: '100px' }}>Status</th>
-                <th style={{ textAlign: 'center', width: '120px' }}>Avg Position</th>
-                <th style={{ textAlign: 'center', width: '80px' }}>Actions</th>
+                <th style={{ cursor: 'help' }} title="De exacte vraag/prompt die naar de AI-zoekmachines gestuurd wordt">Prompt text</th>
+                <th style={{ width: '120px', cursor: 'help' }} title="De categorie of herkomst (bijv. handmatig of AI-gegenereerd)">Category</th>
+                <th style={{ cursor: 'help' }} title="Welke AI-zoekmachines gemonitord en gescand worden">Engines tracked</th>
+                <th style={{ textAlign: 'center', width: '100px', cursor: 'help' }} title="Status van de AI-scan: genoemd (Cited) of niet genoemd (Missed)">Status</th>
+                <th style={{ textAlign: 'center', width: '120px', cursor: 'help' }} title="Gemiddelde positie van vermelding in AI-zoekresultaten">Avg Position</th>
+                <th style={{ textAlign: 'center', width: '80px', cursor: 'help' }} title="Beschikbare acties, zoals handmatige scan forceren of prompt wissen">Actions</th>
               </tr>
             </thead>
             <tbody>

@@ -1559,13 +1559,13 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                   onClick={(e) => e.stopPropagation()} 
                 />
               </th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Keyword</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Rank</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Share of Voice</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Position</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Search Volume</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>Top Brands</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px' }}>Actions</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Het zoekwoord waarop de AI-zoekmachines worden gescand">Keyword</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De organische positie in de traditionele Google.nl zoekresultaten">Rank</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Percentage van de prompts waarin dit merk door AI-modellen wordt genoemd">Share of Voice</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De gemiddelde positie/volgorde waarin het merk wordt genoemd in de AI-antwoorden">Position</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Schatting van het aantal maandelijkse zoekopdrachten in Google Nederland">Search Volume</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De meest genoemde merken in de AI-zoekresultaten voor dit zoekwoord">Top Brands</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren, archiveren of verwijderen">Actions</th>
             </tr>
           </thead>
           <tbody>

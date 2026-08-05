@@ -95,7 +95,9 @@ function App() {
             subscription: c.subscription,
             promptsCount: c.promptsCount,
             keywordsCount: c.keywordsCount,
-            visibilityIndex: c.visibility_index
+            visibilityIndex: c.visibility_index,
+            setup_status: c.setup_status,
+            setup_progress: c.setup_progress
           })));
         }
       })
@@ -110,6 +112,36 @@ function App() {
       })
       .catch(console.error);
   }, []);
+
+  // Poll clients if any is processing setup
+  useEffect(() => {
+    const hasProcessing = clients.some(c => c.setup_status === 'processing');
+    if (!hasProcessing) return;
+
+    const interval = setInterval(() => {
+      fetch('/api/clients')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.clients) {
+            setClients(data.clients.map(c => ({
+              id: c.id,
+              company: c.company,
+              name: c.name,
+              email: c.email,
+              subscription: c.subscription,
+              promptsCount: c.promptsCount,
+              keywordsCount: c.keywordsCount,
+              visibilityIndex: c.visibility_index,
+              setup_status: c.setup_status,
+              setup_progress: c.setup_progress
+            })));
+          }
+        })
+        .catch(console.error);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [clients]);
 
   // Callback: User logs in
   const handleLogin = (user) => {
