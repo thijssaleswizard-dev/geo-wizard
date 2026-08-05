@@ -92,7 +92,8 @@ function App() {
             name: c.name,
             email: c.email,
             subscription: c.subscription,
-            promptsCount: c.prompts_count,
+            promptsCount: c.promptsCount,
+            keywordsCount: c.keywordsCount,
             visibilityIndex: c.visibility_index
           })));
         }
