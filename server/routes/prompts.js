@@ -42,12 +42,19 @@ router.post('/generate', async (req, res) => {
   const companyKey = companyName.toLowerCase().replace('.nl', '').trim();
 
   // Prompt logic for Gemini (FAQ-style consumer questions)
-  const promptMessage = `We hebben een bedrijf genaamd "${companyName}" en het zoekwoord "${keyword}". Genereer exact 3 veelgestelde FAQ-vragen (natuurlijke consumentenvragen) in het Nederlands die mensen stellen in AI-zoekmachines wanneer ze zoeken naar "${keyword}".
-Regels:
-1. De vragen moeten klinken als echte FAQ-vragen (bijv: "Wat kost...?", "Wie is de beste...?", "Hoe kies ik...?").
-2. Output UITSLUITEND de 3 FAQ-vragen gescheiden door een verticale streep (|) zonder nummers of extra tekst.
-Voorbeeld output:
-Wat kost een specialist gemiddeld voor ${keyword}? | Wie is de best beoordeelde partij voor ${keyword}? | Waar moet ik op letten bij het inschakelen van een expert voor ${keyword}?`;
+  const promptMessage = `We hebben een bedrijf genaamd "${companyName}" en het zoekwoord "${keyword}".
+Genereer exact 3 veelgestelde, natuurlijke consumentenvragen (FAQ-vragen) in het Nederlands die mensen stellen in AI-zoekmachines (zoals ChatGPT of Gemini) wanneer ze informatie zoeken over "${keyword}".
+
+Kwaliteitseisen voor de vragen:
+1. Ze moeten klinken als natuurlijk geschreven vragen door een mens (bijv: "Wat kost...?", "Wie is de beste...?", "Hoe vind ik...?").
+2. Integratie van het zoekwoord: Verwerk het zoekwoord "${keyword}" op een grammaticaal correcte en vloeiende manier in de zin.
+   - FOUT: "Wat is het beste hoveniersbedrijf rheden in Nederland?" of "Wie is de best beoordeelde partij voor hoveniersbedrijf rheden?".
+   - GOED: "Wat is het beste hoveniersbedrijf in Rheden?", "Wie is de best beoordeelde hovenier in Rheden?", "Hoeveel kost een hovenier in Rheden gemiddeld?".
+3. Locatie-afhandeling: Als het zoekwoord een plaatsnaam of regio bevat (zoals 'rheden', 'velp', 'arnhem'), schrijf de plaatsnaam dan altijd met een hoofdletter en gebruik een passend voorzetsel (meestal "in" of "voor", bijv. "in Rheden"). Voeg geen overtollige/onlogische toevoegingen toe zoals "in Nederland" als er al een specifieke plaatsnaam is genoemd.
+4. Output uitsluitend de 3 vragen gescheiden door een verticale streep (|) zonder nummering of andere tekst.
+
+Voorbeeld van goede output voor het zoekwoord "hoveniersbedrijf rheden":
+Wat kost een hoveniersbedrijf in Rheden gemiddeld? | Wie is de best beoordeelde hovenier in Rheden? | Waar moet ik op letten bij het inschakelen van een hoveniersbedrijf in Rheden?`;
 
   try {
     const aiResponse = await queryGemini({ prompt: promptMessage, companyName });

@@ -35,7 +35,7 @@ export async function queryOpenAI({ prompt, companyName }) {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
           },
-          timeout: 10000
+          timeout: 30000
         }
       );
 
@@ -77,7 +77,7 @@ export async function queryGemini({ prompt, companyName }) {
   if (apiKey) {
     try {
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
         {
           contents: [
             {
@@ -87,7 +87,7 @@ export async function queryGemini({ prompt, companyName }) {
         },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
+          timeout: 30000
         }
       );
 
@@ -95,8 +95,8 @@ export async function queryGemini({ prompt, companyName }) {
       const mentionsBrand = content.toLowerCase().includes(companyKey);
 
       return {
-        method: 'Gemini API (gemini-1.5-flash)',
-        name: 'Gemini 1.5 Pro',
+        method: 'Gemini API (gemini-3.5-flash)',
+        name: 'Gemini 3.5 Flash',
         text: content,
         mentioned: mentionsBrand,
         position: mentionsBrand ? 1 : null,
@@ -141,7 +141,7 @@ export async function queryPerplexity({ prompt, companyName }) {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
           },
-          timeout: 10000
+          timeout: 30000
         }
       );
 
@@ -198,7 +198,7 @@ export async function queryAnthropic({ prompt, companyName }) {
             'anthropic-version': '2023-06-01',
             'Content-Type': 'application/json'
           },
-          timeout: 10000
+          timeout: 30000
         }
       );
 
