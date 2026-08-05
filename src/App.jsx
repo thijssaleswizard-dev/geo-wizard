@@ -11,11 +11,32 @@ import Login from './components/Login';
 import AccountManagement from './components/AccountManagement';
 import ClientAdmin from './components/ClientAdmin';
 import Keywords from './components/Keywords';
+import PaymentSimulator from './components/PaymentSimulator';
 import { 
-  Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User 
+  Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut 
 } from 'lucide-react';
 
 function App() {
+  // Check for simulated payment parameters
+  const [simulationParams, setSimulationParams] = useState(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('simulate_payment') === 'true') {
+      setSimulationParams({
+        paymentId: params.get('payment_id'),
+        customerId: params.get('customer_id'),
+        amount: params.get('amount'),
+        description: params.get('description'),
+        userId: params.get('userId')
+      });
+    } else if (params.get('payment_success') === 'true') {
+      // In a real app we might auto-login or show a success notice
+      alert('Betaling succesvol ontvangen! U kunt nu inloggen.');
+      window.history.replaceState({}, document.title, "/");
+    }
+  }, []);
+
   // Authentication & Workspace session state
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('geo_wizard_user');
@@ -178,6 +199,22 @@ function App() {
     setActiveTab('overview');
   };
 
+  if (simulationParams) {
+    return (
+      <PaymentSimulator
+        paymentId={simulationParams.paymentId}
+        customerId={simulationParams.customerId}
+        amount={simulationParams.amount}
+        description={simulationParams.description}
+        userId={simulationParams.userId}
+        onPaymentComplete={() => {
+          // Redirect to trigger success and clear parameters
+          window.location.href = `/?payment_success=true&userId=${simulationParams.userId}`;
+        }}
+      />
+    );
+  }
+
   // If no session, show Login Page
   if (!currentUser) {
     return <Login onLogin={handleLogin} />;
@@ -293,30 +330,30 @@ function App() {
       {/* Main Content Area */}
       <main className="main-content">
         
-        {/* Top Workspace Sub-Header Bar (only shown when a project is selected) */}
-        {activeWorkspace && (
-          <header style={{
-            height: 'var(--header-height)',
-            backgroundColor: 'var(--bg-card)',
-            borderBottom: '1px solid var(--border-light)',
-            padding: '0 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            position: 'sticky',
-            top: 0,
-            zIndex: 90
-          }}>
-            <div>
-              <h1 style={{ fontSize: '20px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>
-                {getTabTitle()}
-              </h1>
-            </div>
+        {/* Top Workspace Sub-Header Bar */}
+        <header style={{
+          height: 'var(--header-height)',
+          backgroundColor: 'var(--bg-card)',
+          borderBottom: '1px solid var(--border-light)',
+          padding: '0 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          position: 'sticky',
+          top: 0,
+          zIndex: 90
+        }}>
+          <div>
+            <h1 style={{ fontSize: '20px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>
+              {getTabTitle()}
+            </h1>
+          </div>
 
-            {/* Quick actions */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              
-              {/* Live active client marker */}
+          {/* Quick actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            
+            {/* Live active client marker */}
+            {activeWorkspace && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -332,6 +369,7 @@ function App() {
                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }}></span>
                 Client: {activeWorkspace}
               </div>
+            )}
 
             {/* Notifications trigger */}
             <div style={{ position: 'relative' }}>
@@ -437,9 +475,58 @@ function App() {
               <HelpCircle size={18} />
             </a>
 
+            {/* Divider */}
+            <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--border-medium)', margin: '0 8px' }}></div>
+
+            {/* User Profile & Logout */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: currentUser.role === 'medewerker' ? 'linear-gradient(135deg, #ec4899, #ec4899)' : 'linear-gradient(135deg, #a78bfa, #818cf8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                fontWeight: 800,
+                fontSize: '13px'
+              }}>
+                {currentUser.avatar}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{currentUser.name}</span>
+                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                  {currentUser.role === 'medewerker' ? 'SW Medewerker' : currentUser.subscription}
+                </span>
+              </div>
+              <button
+                onClick={handleLogout}
+                title="Uitloggen"
+                style={{
+                  padding: '8px',
+                  borderRadius: '50%',
+                  color: 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#ef4444';
+                  e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = 'var(--text-secondary)';
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+
           </div>
         </header>
-      )}
 
       {/* Dynamic subview */}
         <div style={{ flex: 1 }}>

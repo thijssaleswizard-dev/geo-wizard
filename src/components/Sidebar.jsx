@@ -503,60 +503,7 @@ export default function Sidebar({
         </div>
       )}
 
-      {/* User Footer Profile */}
-      <div style={{
-        padding: '12px 16px',
-        borderTop: '1px solid rgba(255, 255, 255, 0.05)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        background: 'rgba(0,0,0,0.1)'
-      }}>
-        <div style={{
-          width: '32px',
-          height: '32px',
-          borderRadius: '50%',
-          background: currentUser.role === 'medewerker' ? 'linear-gradient(135deg, #ec4899, #ec4899)' : 'linear-gradient(135deg, #a78bfa, #818cf8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'white',
-          fontWeight: 800,
-          fontSize: '13px'
-        }}>
-          {currentUser.avatar}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '13px', fontWeight: 700, color: 'white', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {currentUser.name}
-          </div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontWeight: 600, textTransform: 'capitalize' }}>
-            {currentUser.role === 'medewerker' ? 'SW Medewerker' : `${currentUser.subscription}`}
-          </div>
-        </div>
-        <button
-          onClick={onLogout}
-          title="Uitloggen"
-          style={{
-            padding: '6px',
-            borderRadius: '6px',
-            color: 'rgba(255,255,255,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = '#ef4444';
-            e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'rgba(255,255,255,0.4)';
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }}
-        >
-          <LogOut size={14} />
-        </button>
-      </div>
+
 
     </aside>
   );
