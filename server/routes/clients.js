@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../db.js';
+import { getApiStatus, getApiHistory } from '../services/aiEngine.js';
 
 const router = express.Router();
 
@@ -180,6 +181,18 @@ router.delete('/:company', async (req, res) => {
   } catch (err) {
     console.error('Error deleting client workspace:', err);
     res.status(500).json({ error: 'Fout bij verwijderen van project in database.' });
+  }
+});
+
+// GET /api/clients/api-monitor/status - Fetch live API key status and history logs
+router.get('/api-monitor/status', (req, res) => {
+  try {
+    const status = getApiStatus();
+    const history = getApiHistory();
+    res.json({ success: true, status, history });
+  } catch (err) {
+    console.error('Error fetching API monitor stats:', err);
+    res.status(500).json({ error: 'Fout bij ophalen van API monitor data.' });
   }
 });
 

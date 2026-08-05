@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Search, X, Loader2, Trash2, Edit2 } from 'lucide-react';
+import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal } from 'lucide-react';
 
 export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -23,6 +23,28 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editSubscription, setEditSubscription] = useState('AI Pro');
+
+  // API Monitoring Modal state
+  const [showMonitorModal, setShowMonitorModal] = useState(false);
+  const [apiStatus, setApiStatus] = useState([]);
+  const [apiHistory, setApiHistory] = useState([]);
+  const [monitorLoading, setMonitorLoading] = useState(false);
+
+  const fetchApiMonitorData = async () => {
+    setMonitorLoading(true);
+    try {
+      const response = await fetch('/api/clients/api-monitor/status');
+      const data = await response.json();
+      if (data.success) {
+        setApiStatus(data.status);
+        setApiHistory(data.history);
+      }
+    } catch (err) {
+      console.error('Error fetching API status monitor:', err);
+    } finally {
+      setMonitorLoading(false);
+    }
+  };
 
   const confirmDeleteProject = async () => {
     if (!projectToDelete) return;
@@ -237,29 +259,55 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             </p>
           </div>
 
-          <button
-            onClick={() => { setShowModal(true); setError(''); setStep(1); setKeywordInput(''); setCompany('https://'); }}
-            style={{
-              backgroundColor: '#000000',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '24px',
-              padding: '10px 20px',
-              fontSize: '13px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-              transition: 'background-color 0.15s ease'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
-          >
-            <Plus size={14} strokeWidth={3} />
-            Create Project
-          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={() => { fetchApiMonitorData(); setShowMonitorModal(true); }}
+              style={{
+                backgroundColor: '#ffffff',
+                color: '#374151',
+                border: '1px solid #d1d5db',
+                borderRadius: '24px',
+                padding: '10px 20px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f9fafb'; e.currentTarget.style.borderColor = '#9ca3af'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
+            >
+              <Activity size={14} />
+              API Status
+            </button>
+
+            <button
+              onClick={() => { setShowModal(true); setError(''); setStep(1); setKeywordInput(''); setCompany('https://'); }}
+              style={{
+                backgroundColor: '#000000',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '24px',
+                padding: '10px 20px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                transition: 'background-color 0.15s ease'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+            >
+              <Plus size={14} strokeWidth={3} />
+              Create Project
+            </button>
+          </div>
         </div>
 
         {/* Search Box */}
@@ -959,6 +1007,197 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* API Monitoring Modal */}
+      {showMonitorModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div className="card fade-in" style={{
+            width: '100%',
+            maxWidth: '720px',
+            backgroundColor: '#ffffff',
+            borderRadius: '16px',
+            padding: '32px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            position: 'relative',
+            maxHeight: '85vh',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px'
+          }}>
+            <button
+              onClick={() => setShowMonitorModal(false)}
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                border: 'none',
+                backgroundColor: 'transparent',
+                color: '#9ca3af',
+                cursor: 'pointer',
+                padding: '4px'
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            <div>
+              <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif", display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Activity size={20} className="animate-pulse" style={{ color: 'var(--brand-primary)' }} />
+                API Status & Engine Monitor
+              </h3>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>
+                Bekijk de live verbindingsstatus en logboeken van de aangesloten LLM engines.
+              </p>
+            </div>
+
+            {/* Engine Status Grid */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: '12px',
+              borderBottom: '1px solid #e5e7eb',
+              paddingBottom: '20px'
+            }}>
+              {apiStatus.map(eng => {
+                let badgeBg = '#f3f4f6';
+                let badgeColor = '#4b5563';
+                let label = 'Niet gebruikt';
+
+                if (eng.status === 'NOT_CONFIGURED') {
+                  badgeBg = '#fee2e2';
+                  badgeColor = '#ef4444';
+                  label = 'Geen sleutel';
+                } else if (eng.status === 'ACTIVE') {
+                  badgeBg = '#dcfce7';
+                  badgeColor = '#22c55e';
+                  label = 'Actief';
+                } else if (eng.status === 'DEGRADED') {
+                  badgeBg = '#fef9c3';
+                  badgeColor = '#ca8a04';
+                  label = 'Degraded / Error';
+                }
+
+                return (
+                  <div key={eng.engine} style={{
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    backgroundColor: '#fafafa'
+                  }}>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>{eng.name.split(' ')[0]}</span>
+                    <span style={{
+                      alignSelf: 'flex-start',
+                      fontSize: '10px',
+                      fontWeight: 800,
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      backgroundColor: badgeBg,
+                      color: badgeColor
+                    }}>
+                      {label}
+                    </span>
+                    {eng.lastError && (
+                      <span style={{ fontSize: '9px', color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={eng.lastError}>
+                        {eng.lastError}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Call History Logs */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#374151', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Terminal size={14} />
+                  Live API Logboeken (max. 50)
+                </span>
+                <button
+                  onClick={fetchApiMonitorData}
+                  disabled={monitorLoading}
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: 'var(--brand-primary)',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {monitorLoading ? 'Verversen...' : 'Nu verversen'}
+                </button>
+              </div>
+
+              <div style={{
+                backgroundColor: '#0f172a',
+                borderRadius: '8px',
+                padding: '16px',
+                fontFamily: "'Courier New', Courier, monospace",
+                fontSize: '11px',
+                color: '#38bdf8',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                minHeight: '180px',
+                overflowY: 'auto'
+              }}>
+                {apiHistory.length === 0 ? (
+                  <span style={{ color: '#94a3b8' }}>Er zijn nog geen API-aanroepen geregistreerd in de huidige sessie.</span>
+                ) : (
+                  apiHistory.map((log, idx) => {
+                    const isErr = log.status === 'ERROR';
+                    const time = new Date(log.timestamp).toLocaleTimeString();
+                    return (
+                      <div key={idx} style={{ borderBottom: '1px solid #1e293b', paddingBottom: '6px', color: isErr ? '#f87171' : '#38dfa8' }}>
+                        <span style={{ color: '#64748b', marginRight: '8px' }}>[{time}]</span>
+                        <strong style={{ textTransform: 'uppercase', marginRight: '6px' }}>{log.engine}</strong>
+                        <span style={{ color: isErr ? '#f87171' : '#e2e8f0' }}>{log.message}</span>
+                        {log.latency && <span style={{ color: '#64748b', marginLeft: '8px' }}>({log.latency})</span>}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setShowMonitorModal(false)}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: '30px',
+                  border: '1px solid #d1d5db',
+                  backgroundColor: '#ffffff',
+                  color: '#374151',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  cursor: 'pointer'
+                }}
+              >
+                Sluiten
+              </button>
+            </div>
+
           </div>
         </div>
       )}
