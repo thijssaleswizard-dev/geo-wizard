@@ -24,7 +24,17 @@ router.get('/', async (req, res) => {
       }
 
       if (!competitors || competitors.length === 0) {
-        competitors = await getOrScrapeCompetitors(k.id, k.keyword, companyKey);
+        // Run scrape in background
+        getOrScrapeCompetitors(k.id, k.keyword, companyKey).catch(e => console.error(e));
+
+        // Use clean domain and company name to return fallback list instantly
+        const cleanDomain = companyKey.includes('.') ? companyKey : `${companyKey}.nl`;
+        const selfName = companyKey.charAt(0).toUpperCase() + companyKey.slice(1);
+        competitors = [
+          { brand: selfName, domain: cleanDomain, isSelf: true, sov: 0, position: '-', citations: 0 },
+          { brand: 'Competitor A', domain: 'competitora.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+          { brand: 'Competitor B', domain: 'competitorb.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+        ];
       }
 
       const kwText = k.keyword || k.keyword_text || '';
@@ -193,7 +203,15 @@ router.post('/', async (req, res) => {
       monthly_searches: volume ? parseInt(volume) : 100
     });
 
-    const competitors = await getOrScrapeCompetitors(newId, kwText, companyKey);
+    // Run scraper in background
+    getOrScrapeCompetitors(newId, kwText, companyKey).catch(e => console.error(e));
+
+    const cleanDomain = companyKey.includes('.') ? companyKey : `${companyKey}.nl`;
+    const selfName = companyKey.charAt(0).toUpperCase() + companyKey.slice(1);
+    const competitors = [
+      { brand: selfName, domain: cleanDomain, isSelf: true, sov: 0, position: '-', citations: 0 }
+    ];
+
     const insertedKeyword = await db('keywords').where('id', newId).first();
 
     res.status(201).json({
