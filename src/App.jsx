@@ -88,6 +88,7 @@ function App() {
       .then(data => {
         if (data.success && data.clients) {
           setClients(data.clients.map(c => ({
+            id: c.id,
             company: c.company,
             name: c.name,
             email: c.email,
@@ -194,6 +195,11 @@ function App() {
     setClients(prev => [newClient, ...prev]);
   };
 
+  // Callback: Medewerker updates an existing client workspace
+  const handleUpdateClient = (updatedClient) => {
+    setClients(prev => prev.map(c => c.id === updatedClient.id ? { ...c, ...updatedClient } : c));
+  };
+
   // Callback: Medewerker clicks "Bekijk Dashboard" for a client
   const handleSelectClient = (company) => {
     setActiveWorkspace(company);
@@ -242,7 +248,7 @@ function App() {
 
   const renderContent = () => {
     if (currentUser.role === 'medewerker' && !activeWorkspace) {
-      return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
+      return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
     }
     switch (activeTab) {
       case 'overview':

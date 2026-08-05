@@ -110,6 +110,61 @@ router.post('/', async (req, res) => {
   }
 });
 
+// PUT /api/clients/:id - Edit an existing client workspace
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, email, subscription } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Klantnaam en e-mailadres zijn verplicht.' });
+  }
+
+  try {
+    const existingClient = await db('clients').where('id', id).first();
+    if (!existingClient) {
+      return res.status(404).json({ error: 'Project niet gevonden.' });
+    }
+
+    // 1. Update clients table
+    await db('clients')
+      .where('id', id)
+      .update({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        subscription: subscription || existingClient.subscription,
+        updated_at: new Date().toISOString()
+      });
+
+    // 2. Also update associated user account in users table if the email matches the old one
+    await db('users')
+      .where('email', existingClient.email)
+      .update({
+        username: name.trim(),
+        email: email.trim().toLowerCase(),
+        subscription: subscription || existingClient.subscription
+      });
+
+    const updatedClient = await db('clients').where('id', id).first();
+
+    res.json({
+      success: true,
+      message: 'Project succesvol bijgewerkt.',
+      client: {
+        id: updatedClient.id,
+        company: updatedClient.company,
+        name: updatedClient.name,
+        email: updatedClient.email,
+        subscription: updatedClient.subscription,
+        promptsCount: updatedClient.prompts_count,
+        visibilityIndex: updatedClient.visibility_index
+      }
+    });
+  } catch (err) {
+    console.error('Error updating client workspace:', err);
+    res.status(500).json({ error: 'Fout bij bijwerken van project in database.' });
+  }
+});
+
 // DELETE /api/clients/:company - Delete a client workspace and its associated data
 router.delete('/:company', async (req, res) => {
   const { company } = req.params;

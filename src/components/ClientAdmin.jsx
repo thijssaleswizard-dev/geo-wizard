@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Plus, Search, X, Loader2, Trash2 } from 'lucide-react';
+import { Plus, Search, X, Loader2, Trash2, Edit2 } from 'lucide-react';
 
-export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient }) {
+export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient }) {
   const [searchQuery, setSearchQuery] = useState('');
   
   // Add Client Modal state
@@ -16,6 +16,13 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [step, setStep] = useState(1);
   const [keywordInput, setKeywordInput] = useState('');
   const [projectToDelete, setProjectToDelete] = useState(null);
+
+  // Edit Client Modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editClient, setEditClient] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editSubscription, setEditSubscription] = useState('AI Pro');
 
   const confirmDeleteProject = async () => {
     if (!projectToDelete) return;
@@ -35,6 +42,57 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
     } catch (err) {
       console.error('Error deleting client:', err);
       alert('Kan geen verbinding maken met de server.');
+    }
+  };
+
+  const handleEditClientClick = (client) => {
+    setEditClient(client);
+    setEditName(client.name || '');
+    setEditEmail(client.email || '');
+    setEditSubscription(client.subscription || 'AI Pro');
+    setError('');
+    setShowEditModal(true);
+  };
+
+  const handleEditClientSubmit = async (e) => {
+    e.preventDefault();
+    if (!editClient) return;
+
+    setError('');
+    setLoading(true);
+
+    try {
+      const response = await fetch(`/api/clients/${editClient.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: editName,
+          email: editEmail,
+          subscription: editSubscription
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setError(data.error || 'Fout bij bijwerken van project.');
+        setLoading(false);
+        return;
+      }
+
+      if (onUpdateClient) {
+        onUpdateClient(data.client);
+      }
+
+      setLoading(false);
+      setShowEditModal(false);
+      setEditClient(null);
+    } catch (err) {
+      console.error('Error editing client:', err);
+      setError('Kan geen verbinding maken met de server.');
+      setLoading(false);
     }
   };
 
@@ -308,6 +366,27 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
                     {client.keywordsCount || 0} keywords
                   </span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleEditClientClick(client); }}
+                    title="Bewerk project"
+                    style={{
+                      padding: '8px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand-primary)'; e.currentTarget.style.backgroundColor = 'var(--brand-light)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                  >
+                    <Edit2 size={16} />
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setProjectToDelete(client.company); }}
@@ -691,6 +770,195 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                 Ja, verwijder
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Edit Client Modal */}
+      {showEditModal && editClient && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div className="card fade-in" style={{
+            width: '100%',
+            maxWidth: '520px',
+            backgroundColor: '#ffffff',
+            borderRadius: '16px',
+            padding: '32px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            position: 'relative'
+          }}>
+            <button
+              onClick={() => { setShowEditModal(false); setEditClient(null); }}
+              style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                border: 'none',
+                backgroundColor: 'transparent',
+                color: '#9ca3af',
+                cursor: 'pointer',
+                padding: '4px'
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', marginBottom: '8px', fontFamily: "'Outfit', sans-serif" }}>
+              Project Bewerken
+            </h3>
+            <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '24px' }}>
+              Pas de contactgegevens of het abonnement van het geselecteerde project aan.
+            </p>
+
+            <form onSubmit={handleEditClientSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+                  Website / Company Domain
+                </label>
+                <input
+                  type="text"
+                  value={editClient.company}
+                  disabled
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: '1px solid #e5e7eb',
+                    backgroundColor: '#f3f4f6',
+                    color: '#9ca3af',
+                    fontSize: '13px',
+                    cursor: 'not-allowed'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+                  Contactpersoon Naam
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Bijv. Jan de Vries"
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '13px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+                  E-mailadres
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="Bijv. jan@bedrijf.nl"
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '13px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+                  Abonnement
+                </label>
+                <select
+                  value={editSubscription}
+                  onChange={(e) => setEditSubscription(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '13px',
+                    backgroundColor: '#ffffff'
+                  }}
+                >
+                  <option value="AI Lite">AI Lite</option>
+                  <option value="AI Pro">AI Pro</option>
+                  <option value="AI Enterprise">AI Enterprise</option>
+                </select>
+              </div>
+
+              {error && (
+                <div style={{ color: '#ef4444', fontSize: '12px', fontWeight: 600, textAlign: 'center', marginTop: '4px' }}>
+                  {error}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => { setShowEditModal(false); setEditClient(null); }}
+                  style={{
+                    flex: 1,
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: '1px solid #d1d5db',
+                    backgroundColor: '#ffffff',
+                    color: '#374151',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Annuleren
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{
+                    flex: 1,
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: 'none',
+                    backgroundColor: 'var(--brand-primary)',
+                    color: '#ffffff',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="animate-spin" size={16} />
+                      Opslaan...
+                    </>
+                  ) : (
+                    'Opslaan'
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
