@@ -3,7 +3,50 @@ import {
   ChevronDown, HelpCircle, Check, Info, ArrowUpRight, 
   TrendingUp, Star, Award, ShieldAlert, Sparkles, MessageSquare,
   RefreshCw, Loader2, CheckCircle2
-} from 'lucide-react';
+} from 'lucide-react';const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
+  const [error, setError] = useState(!domain);
+
+  useEffect(() => {
+    setError(!domain);
+  }, [domain]);
+
+  if (error) {
+    return (
+      <span style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: size > 22 ? '6px' : '4px',
+        backgroundColor: fallbackBg || '#64748b',
+        color: fallbackColor || 'white',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: size > 22 ? '11px' : '9px',
+        fontWeight: 800,
+        ...style
+      }}>
+        {fallbackLabel ? fallbackLabel[0]?.toUpperCase() : '?'}
+      </span>
+    );
+  }
+
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size * 2}`;
+
+  return (
+    <img 
+      src={faviconUrl}
+      alt={fallbackLabel}
+      onError={() => setError(true)}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: size > 22 ? '6px' : '4px',
+        objectFit: 'contain',
+        ...style
+      }}
+    />
+  );
+};
 
 export default function Overview({ activeWorkspace }) {
   const currentCompany = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '');
@@ -18,6 +61,8 @@ export default function Overview({ activeWorkspace }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [dbStats, setDbStats] = useState(null);
+  const [keywords, setKeywords] = useState([]);
+  const [loadingKeywords, setLoadingKeywords] = useState(true);
 
   // Fetch DB overview stats
   useEffect(() => {
@@ -30,6 +75,50 @@ export default function Overview({ activeWorkspace }) {
       })
       .catch(console.error);
   }, [currentCompany]);
+
+  // Fetch keywords to compute dynamic competitors and Share of Voice
+  useEffect(() => {
+    setLoadingKeywords(true);
+    fetch(`/api/keywords?company=${encodeURIComponent(activeWorkspace || 'Saleswizard.nl')}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.keywords) {
+          setKeywords(data.keywords);
+
+          const tempVisible = {};
+          const cleanWorkspace = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '').trim();
+          const selfBrandName = cleanWorkspace.charAt(0).toUpperCase() + cleanWorkspace.slice(1);
+          tempVisible[selfBrandName] = true;
+
+          data.keywords.forEach(kw => {
+            if (kw.competitors && Array.isArray(kw.competitors)) {
+              kw.competitors.forEach(c => {
+                let name = c.brand || c.name || (c.domain ? c.domain.split('.')[0] : 'BEDRIJF');
+                name = name.charAt(0).toUpperCase() + name.slice(1);
+                tempVisible[name] = true;
+              });
+            }
+          });
+
+          if (!data.keywords || data.keywords.length === 0 || !data.keywords.some(k => k.competitors && k.competitors.length > 0)) {
+            setVisibleBrands({
+              [selfBrandName]: true,
+              'DoubleSmart': true,
+              'Inoma': true,
+              'Aanpoters': true,
+              'Traffic Builders': true
+            });
+          } else {
+            setVisibleBrands(tempVisible);
+          }
+        }
+        setLoadingKeywords(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setLoadingKeywords(false);
+      });
+  }, [activeWorkspace]);
 
   // Handle Full Database Mention Sync
   const handleSyncAll = async () => {
@@ -64,22 +153,15 @@ export default function Overview({ activeWorkspace }) {
     }
   };
   
-  // Chart checkboxes
-  const [visibleBrands, setVisibleBrands] = useState({
-    Saleswizard: true,
-    DoubleSmart: true,
-    Inoma: true,
-    Aanpoters: true,
-    TrafficBuilders: true,
-    PittigBakkie: true
-  });
+  // Chart checkboxes state (initialized dynamically in useEffect)
+  const [visibleBrands, setVisibleBrands] = useState({});
 
   const [showCompetitorsOnly, setShowCompetitorsOnly] = useState(false);
   const [hoverIndex, setHoverIndex] = useState(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
   // --- Dynamic calculations based on filters ---
-  
+
   // 1. Get days list based on Date Range
   const getChartDays = () => {
     switch (dateRange) {
@@ -122,57 +204,104 @@ export default function Overview({ activeWorkspace }) {
   const { engineFactor, countryFactor } = getFactors();
   const overallFactor = engineFactor * countryFactor;
 
-  // 3. Brand raw points base databases
-  const basePoints = {
-    Saleswizard: {
-      color: '#440099', // Saleswizard Deep Purple
-      label: 'Saleswizard',
-      points14: [4.0, 4.8, 4.3, 4.3, 3.2],
-      points7: [4.3, 4.3, 3.2],
-      points30: [3.1, 3.5, 4.0, 3.8, 4.2, 4.5, 4.8, 4.2, 4.3, 4.3, 3.2],
-      points90: [2.5, 2.8, 3.2, 3.0, 3.4, 3.8, 4.0, 4.5, 4.3, 3.2]
-    },
-    DoubleSmart: {
-      color: '#06b6d4', // Cyan
-      label: 'DoubleSmart',
-      points14: [7.8, 5.2, 4.8, 6.2, 1.2],
-      points7: [4.8, 6.2, 1.2],
-      points30: [6.5, 7.0, 7.2, 6.8, 5.8, 5.2, 4.8, 5.5, 6.2, 6.0, 1.2],
-      points90: [5.8, 6.2, 6.8, 7.2, 7.0, 6.5, 5.8, 4.8, 6.2, 1.2]
-    },
-    Inoma: {
-      color: '#22c55e', // Green
-      label: 'Inoma',
-      points14: [5.2, 5.0, 4.8, 5.0, 4.4],
-      points7: [4.8, 5.0, 4.4],
-      points30: [4.5, 4.8, 5.0, 5.2, 5.1, 5.0, 4.8, 4.9, 5.0, 4.8, 4.4],
-      points90: [4.0, 4.2, 4.5, 4.8, 5.2, 5.0, 4.8, 5.0, 5.0, 4.4]
-    },
-    Aanpoters: {
-      color: '#a855f7', // Purple
-      label: 'Aanpoters',
-      points14: [1.2, 1.8, 2.5, 3.3, 2.5],
-      points7: [2.5, 3.3, 2.5],
-      points30: [0.8, 1.0, 1.2, 1.5, 1.8, 2.2, 2.5, 2.8, 3.3, 3.0, 2.5],
-      points90: [0.5, 0.8, 1.2, 1.5, 2.0, 2.5, 2.8, 3.3, 3.0, 2.5]
-    },
-    TrafficBuilders: {
-      color: '#ec4899', // Pink
-      label: 'Traffic Builders',
-      points14: [1.1, 1.4, 3.8, 3.2, 3.2],
-      points7: [3.8, 3.2, 3.2],
-      points30: [0.5, 0.8, 1.1, 1.2, 1.4, 2.5, 3.8, 3.5, 3.2, 3.4, 3.2],
-      points90: [0.3, 0.6, 1.0, 1.2, 1.4, 2.0, 3.8, 3.2, 3.2, 3.2]
-    },
-    PittigBakkie: {
-      color: '#3b82f6', // Blue
-      label: 'Pittig Bakkie',
-      points14: [4.8, 4.0, 6.8, 5.5, 5.0],
-      points7: [6.8, 5.5, 5.0],
-      points30: [3.8, 4.2, 4.8, 4.5, 4.0, 5.5, 6.8, 6.0, 5.5, 5.8, 5.0],
-      points90: [3.0, 3.5, 4.0, 4.2, 4.8, 5.2, 6.8, 5.5, 5.2, 5.0]
+  // Helper: Aggregate competitors from DB keywords
+  const getAggregatedCompetitors = () => {
+    const competitorMap = {};
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    const cleanWorkspace = workspace.replace('.nl', '').trim();
+    const selfBrandName = cleanWorkspace.charAt(0).toUpperCase() + cleanWorkspace.slice(1);
+
+    // Initialize with target company
+    competitorMap[selfBrandName] = {
+      name: selfBrandName,
+      domain: workspace.toLowerCase().includes('.') ? workspace.toLowerCase() : `${workspace.toLowerCase()}.nl`,
+      isSelf: true,
+      totalSov: 0,
+      keywordCount: 0,
+      citations: 0,
+      sentiment: '+94',
+      logoColor: '#440099'
+    };
+
+    const colors = ['#440099', '#06b6d4', '#22c55e', '#a855f7', '#ec4899', '#3b82f6', '#84cc16', '#6366f1', '#1e293b', '#64748b'];
+    let colorIdx = 1;
+
+    keywords.forEach(kw => {
+      if (kw.competitors && Array.isArray(kw.competitors)) {
+        kw.competitors.forEach(c => {
+          let brandName = c.brand || c.name || (c.domain ? c.domain.split('.')[0] : 'BEDRIJF');
+          brandName = brandName.charAt(0).toUpperCase() + brandName.slice(1);
+
+          const isSelf = c.isSelf || brandName.toLowerCase() === cleanWorkspace.toLowerCase();
+          const targetKey = isSelf ? selfBrandName : brandName;
+
+          if (!competitorMap[targetKey]) {
+            competitorMap[targetKey] = {
+              name: targetKey,
+              domain: c.domain,
+              isSelf: isSelf,
+              totalSov: 0,
+              keywordCount: 0,
+              citations: 0,
+              sentiment: c.sentiment || '+90',
+              logoColor: colors[colorIdx % colors.length]
+            };
+            if (!isSelf) colorIdx++;
+          }
+
+          competitorMap[targetKey].totalSov += c.sov || 0;
+          competitorMap[targetKey].keywordCount += 1;
+          competitorMap[targetKey].citations += c.citations || c.citationsCount || 0;
+        });
+      }
+    });
+
+    if (Object.keys(competitorMap).length <= 1) {
+      return [
+        { name: selfBrandName, domain: workspace.toLowerCase().includes('.') ? workspace.toLowerCase() : `${workspace.toLowerCase()}.nl`, isSelf: true, sentiment: '+94', baseMentions: 19, logoColor: '#440099', sov: 45 },
+        { name: 'DoubleSmart', domain: 'doublesmart.nl', isSelf: false, sentiment: '+71', baseMentions: 20, logoColor: '#06b6d4', sov: 38 },
+        { name: 'Inoma', domain: 'inoma.nl', isSelf: false, sentiment: '+52', baseMentions: 17, logoColor: '#22c55e', sov: 32 },
+        { name: 'Aanpoters', domain: 'aanpoters.nl', isSelf: false, sentiment: '+64', baseMentions: 11, logoColor: '#a855f7', sov: 25 },
+        { name: 'Traffic Builders', domain: 'trafficbuilders.nl', isSelf: false, sentiment: '+73', baseMentions: 4, logoColor: '#ec4899', sov: 18 }
+      ];
     }
+
+    return Object.values(competitorMap).map(c => {
+      const avgSov = Math.round(c.totalSov / (c.keywordCount || 1));
+      return {
+        name: c.name,
+        domain: c.domain,
+        sentiment: c.sentiment,
+        isSelf: c.isSelf,
+        baseMentions: c.citations || Math.round(avgSov / 2),
+        sov: avgSov,
+        logoColor: c.logoColor
+      };
+    }).sort((a, b) => b.sov - a.sov);
   };
+
+  const comps = getAggregatedCompetitors();
+  const selfComp = comps.find(c => c.isSelf);
+  const selfName = selfComp ? selfComp.name : 'Saleswizard';
+
+  // 3. Brand raw points base databases
+  const getDynamicBasePoints = () => {
+    const points = {};
+    comps.forEach(c => {
+      const baseVal = c.sov / 10;
+      points[c.name] = {
+        color: c.logoColor,
+        label: c.name,
+        points14: [baseVal * 0.9, baseVal * 1.1, baseVal * 1.0, baseVal * 1.0, baseVal * 0.95].map(v => Number(v.toFixed(1))),
+        points7: [baseVal * 1.0, baseVal * 1.0, baseVal * 0.95].map(v => Number(v.toFixed(1))),
+        points30: [baseVal * 0.7, baseVal * 0.8, baseVal * 0.9, baseVal * 0.85, baseVal * 0.95, baseVal * 1.0, baseVal * 1.1, baseVal * 0.95, baseVal * 1.0, baseVal * 1.0, baseVal * 0.95].map(v => Number(v.toFixed(1))),
+        points90: [baseVal * 0.55, baseVal * 0.65, baseVal * 0.75, baseVal * 0.7, baseVal * 0.8, baseVal * 0.9, baseVal * 0.95, baseVal * 1.05, baseVal * 1.0, baseVal * 0.95].map(v => Number(v.toFixed(1)))
+      };
+    });
+    return points;
+  };
+
+  const basePoints = getDynamicBasePoints();
 
   // Build the dynamic brandLines object containing scaled values
   const brandLines = {};
@@ -184,10 +313,8 @@ export default function Overview({ activeWorkspace }) {
     else if (dateRange === 'Last 90 days') rawPts = base.points90;
     else rawPts = base.points14;
 
-    // Scale by overallFactor, capping at 10.0 and at least 0.0
     const scaledPts = rawPts.map(v => {
-      // Competitors scale a bit differently to ensure diversity when engine switches
-      const localFactor = key === 'Saleswizard' ? overallFactor : (overallFactor * 0.95);
+      const localFactor = key === selfName ? overallFactor : (overallFactor * 0.95);
       const val = v * localFactor;
       return Math.min(10.0, Math.max(0.0, Number(val.toFixed(2))));
     });
@@ -208,26 +335,21 @@ export default function Overview({ activeWorkspace }) {
 
   // 4. Mentions count metrics
   const getDynamicMentions = () => {
-    const rawSaleswizard = 19;
-    const swMentions = Math.round(rawSaleswizard * overallFactor);
-    const dsMentions = Math.round(20 * (overallFactor * 0.9));
-    const inomaMentions = Math.round(17 * (overallFactor * 0.95));
-    const aanpotersMentions = Math.round(11 * (overallFactor * 1.05));
-
-    return [
-      { name: 'DoubleSmart', count: dsMentions, color: '#06b6d4' },
-      { name: 'Saleswizard', count: swMentions, color: '#440099' },
-      { name: 'Inoma', count: inomaMentions, color: '#22c55e' },
-      { name: 'Aanpoters', count: aanpotersMentions, color: '#a855f7' }
-    ].sort((a, b) => b.count - a.count);
+    return comps.map(item => {
+      const scaled = Math.round(item.baseMentions * (item.isSelf ? overallFactor : (overallFactor * 0.92)));
+      return {
+        name: item.name,
+        count: scaled,
+        color: item.logoColor
+      };
+    }).sort((a, b) => b.count - a.count);
   };
 
   const mentions = getDynamicMentions();
-  const saleswizardMentions = mentions.find(m => m.name === 'Saleswizard')?.count || 0;
+  const saleswizardMentions = mentions.find(m => m.name === selfName)?.count || 0;
 
   // 5. Brand average positions
   const getDynamicPositions = () => {
-    // If Perplexity (high visibility), rank goes up (closer to 1.00). If Copilot, rank goes down.
     let baseRank = 1.08;
     if (engine === 'Perplexity') baseRank = 1.02;
     else if (engine === 'Gemini') baseRank = 1.05;
@@ -237,42 +359,36 @@ export default function Overview({ activeWorkspace }) {
     if (country === 'Germany') baseRank = 3.50;
     else if (country === 'Belgium') baseRank = 2.10;
 
-    return [
-      { name: 'Traffic Builders', score: 1.00, color: '#ec4899' },
-      { name: 'Follo', score: 1.00, color: '#6366f1' },
-      { name: 'Saleswizard', score: Number(baseRank.toFixed(2)), color: '#440099' }
-    ].sort((a, b) => a.score - b.score);
+    return comps.slice(0, 3).map((c, idx) => {
+      let score = c.isSelf ? Number(baseRank.toFixed(2)) : (idx + 1.25);
+      return {
+        name: c.name,
+        score: score,
+        color: c.logoColor
+      };
+    }).sort((a, b) => a.score - b.score);
   };
 
   const positions = getDynamicPositions();
-  const saleswizardPosition = positions.find(p => p.name === 'Saleswizard')?.score || 1.08;
+  const saleswizardPosition = positions.find(p => p.name === selfName)?.score || 1.08;
 
   // 6. Brand ranking table metrics
   const getDynamicRankingTable = () => {
-    const list = [
-      { name: 'DoubleSmart', sentiment: '+71', baseMentions: 20, logoColor: '#06b6d4' },
-      { name: 'Saleswizard', sentiment: '+63', baseMentions: 19, logoColor: '#440099' },
-      { name: 'Inoma', sentiment: '+52', baseMentions: 17, logoColor: '#22c55e' },
-      { name: 'Aanpoters', sentiment: '+64', baseMentions: 11, logoColor: '#a855f7' },
-      { name: 'Traffic Builders', sentiment: '+73', baseMentions: 4, logoColor: '#ec4899' },
-      { name: 'Pittig Bakkie', sentiment: '+50', baseMentions: 4, logoColor: '#3b82f6' },
-      { name: 'Pixel Creation', sentiment: '0', baseMentions: 4, logoColor: '#84cc16' },
-      { name: 'Follo', sentiment: '+83', baseMentions: 3, logoColor: '#6366f1' },
-      { name: 'Baas & Baas', sentiment: 'N/A', baseMentions: 0, logoColor: '#1e293b' },
-      { name: 'Media Birds', sentiment: 'N/A', baseMentions: 0, logoColor: '#64748b' }
-    ];
+    const list = comps;
 
     // Compute metrics
     const rows = list.map(item => {
-      const scaledMentions = Math.round(item.baseMentions * (item.name === 'Saleswizard' ? overallFactor : (overallFactor * 0.92)));
+      const scaledMentions = Math.round(item.baseMentions * (item.isSelf ? overallFactor : (overallFactor * 0.92)));
       const coverageVal = Math.min(10, Math.round(scaledMentions / 4));
       return {
         name: item.name,
+        domain: item.domain,
         sentiment: item.sentiment,
         mentions: scaledMentions,
         coverage: `${coverageVal}%`,
         shareVal: scaledMentions,
-        logoColor: item.logoColor
+        logoColor: item.logoColor,
+        isSelf: item.isSelf
       };
     });
 
@@ -283,11 +399,13 @@ export default function Overview({ activeWorkspace }) {
       return {
         rank: i + 1,
         name: row.name,
+        domain: row.domain,
         sentiment: row.sentiment,
         mentions: row.mentions,
         coverage: row.coverage,
         share: `${sharePct}%`,
-        logoColor: row.logoColor
+        logoColor: row.logoColor,
+        isSelf: row.isSelf
       };
     }).sort((a, b) => b.mentions - a.mentions).map((r, idx) => ({ ...r, rank: idx + 1 }));
   };
@@ -776,7 +894,7 @@ export default function Overview({ activeWorkspace }) {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <h4 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               Your Brand Mentions
-              <Info size={12} style={{ opacity: 0.5, cursor: 'help' }} title="Number of search query recommendations for Saleswizard.nl across all tested prompts" />
+              <Info size={12} style={{ opacity: 0.5, cursor: 'help' }} title={`Number of search query recommendations for ${activeWorkspace || 'Saleswizard.nl'} across all tested prompts`} />
             </h4>
             
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
@@ -791,7 +909,7 @@ export default function Overview({ activeWorkspace }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-light)', paddingTop: '12px' }}>
               {mentions.map((item) => (
                 <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: item.name === 'Saleswizard' ? 700 : 400, color: item.name === 'Saleswizard' ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: item.name === selfName ? 700 : 400, color: item.name === selfName ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
                     <span style={{ width: '12px', height: '12px', borderRadius: '4px', backgroundColor: item.color, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 800 }}>
                       {item.name[0]}
                     </span>
@@ -807,7 +925,7 @@ export default function Overview({ activeWorkspace }) {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <h4 style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               Your Average Brand Position
-              <Info size={12} style={{ opacity: 0.5, cursor: 'help' }} title="Average index position of Saleswizard.nl when listed by AI engines (1 is top)" />
+              <Info size={12} style={{ opacity: 0.5, cursor: 'help' }} title={`Average index position of ${activeWorkspace || 'Saleswizard.nl'} when listed by AI engines (1 is top)`} />
             </h4>
             
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
@@ -822,13 +940,13 @@ export default function Overview({ activeWorkspace }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid var(--border-light)', paddingTop: '12px' }}>
               {positions.map((item) => (
                 <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: item.name === 'Saleswizard' ? 700 : 400, color: item.name === 'Saleswizard' ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: item.name === selfName ? 700 : 400, color: item.name === selfName ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
                     <span style={{ width: '12px', height: '12px', borderRadius: '4px', backgroundColor: item.color, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '8px', fontWeight: 800 }}>
                       {item.name[0]}
                     </span>
                     {item.name}
                   </span>
-                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{item.score === 0 || country === 'Germany' && item.name === 'Saleswizard' ? '-' : item.score.toFixed(2)}</span>
+                  <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{item.score === 0 || country === 'Germany' && item.name === selfName ? '-' : item.score.toFixed(2)}</span>
                 </div>
               ))}
             </div>
@@ -878,24 +996,17 @@ export default function Overview({ activeWorkspace }) {
               </thead>
               <tbody>
                 {brandRanking.map((row) => (
-                  <tr key={row.name} style={{ fontWeight: row.name === 'Saleswizard' ? 700 : 400 }}>
+                  <tr key={row.name} style={{ fontWeight: row.name === selfName ? 700 : 400 }}>
                     <td>{row.rank}</td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{
-                          width: '20px',
-                          height: '20px',
-                          borderRadius: '4px',
-                          backgroundColor: row.logoColor,
-                          color: 'white',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '10px',
-                          fontWeight: 800
-                        }}>
-                          {row.name[0]}
-                        </span>
+                        <FaviconImage 
+                          domain={row.domain} 
+                          fallbackLabel={row.name} 
+                          fallbackBg={row.logoColor} 
+                          fallbackColor="white" 
+                          size={20} 
+                        />
                         {row.name}
                       </div>
                     </td>

@@ -5,6 +5,51 @@ import {
   ArrowLeft, Download, Share2
 } from 'lucide-react';
 
+const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
+  const [error, setError] = useState(!domain);
+
+  useEffect(() => {
+    setError(!domain);
+  }, [domain]);
+
+  if (error) {
+    return (
+      <span style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: size > 22 ? '6px' : '4px',
+        backgroundColor: fallbackBg || '#64748b',
+        color: fallbackColor || 'white',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: size > 22 ? '11px' : '9px',
+        fontWeight: 800,
+        ...style
+      }}>
+        {fallbackLabel ? fallbackLabel[0]?.toUpperCase() : '?'}
+      </span>
+    );
+  }
+
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size * 2}`;
+
+  return (
+    <img 
+      src={faviconUrl}
+      alt={fallbackLabel}
+      onError={() => setError(true)}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: size > 22 ? '6px' : '4px',
+        objectFit: 'contain',
+        ...style
+      }}
+    />
+  );
+};
+
 const EngineLogos = {
   chatgpt: (
     <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#000000', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 800 }}>
@@ -423,20 +468,20 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   };
 
   const getBrandLogo = (brandKey) => {
-    if (!brandKey) return { label: '?', color: '#64748b', text: 'white' };
+    if (!brandKey) return { label: '?', color: '#64748b', text: 'white', domain: '' };
     const key = String(brandKey).toLowerCase();
     const brandMap = {
-      saleswizard: { label: 'S', color: '#440099', text: 'white' },
-      doublesmart: { label: 'D', color: '#06b6d4', text: 'white' },
-      perplexity: { label: 'P', color: '#139ea5', text: 'white' },
-      google: { label: 'G', color: '#ea4335', text: 'white' },
-      chatgpt: { label: 'C', color: '#10a37f', text: 'white' },
-      gemini: { label: 'G', color: '#1a73e8', text: 'white' },
-      inoma: { label: 'I', color: '#22c55e', text: 'white' },
-      trafficbuilders: { label: 'T', color: '#f97316', text: 'white' },
-      emerce: { label: 'E', color: '#ec4899', text: 'white' }
+      saleswizard: { label: 'S', color: '#440099', text: 'white', domain: 'saleswizard.nl' },
+      doublesmart: { label: 'D', color: '#06b6d4', text: 'white', domain: 'doublesmart.nl' },
+      perplexity: { label: 'P', color: '#139ea5', text: 'white', domain: 'perplexity.ai' },
+      google: { label: 'G', color: '#ea4335', text: 'white', domain: 'google.com' },
+      chatgpt: { label: 'C', color: '#10a37f', text: 'white', domain: 'openai.com' },
+      gemini: { label: 'G', color: '#1a73e8', text: 'white', domain: 'google.com' },
+      inoma: { label: 'I', color: '#22c55e', text: 'white', domain: 'inoma.nl' },
+      trafficbuilders: { label: 'T', color: '#f97316', text: 'white', domain: 'trafficbuilders.nl' },
+      emerce: { label: 'E', color: '#ec4899', text: 'white', domain: 'emerce.nl' }
     };
-    return brandMap[key] || { label: String(brandKey)[0]?.toUpperCase() || '?', color: '#64748b', text: 'white' };
+    return brandMap[key] || { label: String(brandKey)[0]?.toUpperCase() || '?', color: '#64748b', text: 'white', domain: `${key}.nl` };
   };
 
   const getBrandRankings = (kwParam) => {
@@ -804,20 +849,13 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                         <td style={{ padding: '14px 16px', fontWeight: 700, color: '#111827' }}>{r.rank}</td>
                         <td style={{ padding: '14px 16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <div style={{
-                              width: '26px',
-                              height: '26px',
-                              borderRadius: '6px',
-                              backgroundColor: avatarColor.bg,
-                              color: avatarColor.text,
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontWeight: 800,
-                              fontSize: '11px'
-                            }}>
-                              {r.brand[0].toUpperCase()}
-                            </div>
+                            <FaviconImage 
+                              domain={r.domain} 
+                              fallbackLabel={r.brand} 
+                              fallbackBg={avatarColor.bg} 
+                              fallbackColor={avatarColor.text} 
+                              size={26} 
+                            />
                             <div style={{ display: 'flex', flexDirection: 'column' }}>
                               <span style={{ color: '#111827', fontWeight: 600 }}>{r.brand}</span>
                               <span style={{ fontSize: '11px', color: '#6b7280' }}>{r.domain}</span>
@@ -1503,24 +1541,15 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     {(kw.brands || []).slice(0, 5).map((brandKey, bIdx) => {
                       const details = getBrandLogo(brandKey);
                       return (
-                        <div 
+                        <FaviconImage 
                           key={brandKey || bIdx}
-                          style={{
-                            width: '22px',
-                            height: '22px',
-                            borderRadius: '50%',
-                            backgroundColor: details.color,
-                            color: details.text,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '9px',
-                            fontWeight: 800,
-                            border: '1px solid #ffffff'
-                          }}
-                        >
-                          {details.label}
-                        </div>
+                          domain={details.domain} 
+                          fallbackLabel={details.label} 
+                          fallbackBg={details.color} 
+                          fallbackColor={details.text} 
+                          size={22} 
+                          style={{ border: '1px solid #ffffff', borderRadius: '50%' }}
+                        />
                       );
                     })}
                   </div>
