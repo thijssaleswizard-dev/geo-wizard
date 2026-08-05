@@ -145,15 +145,11 @@ Geef ALLEEN een komma-gescheiden lijst met 5 zoekwoorden in kleine letters zonde
     console.error(`[Keyword Recommender AI Error] ${aiErr.message}`);
   }
 
-  // Fallback if AI/Scrape returns fewer than 3 keywords
-  if (recommended.length < 3) {
-    if (companyKey.includes('groen') || companyKey.includes('vita')) {
-      recommended = ['hovenier velp', 'tuinonderhoud velp', 'tuinontwerp velp', 'groenvoorziening velp', 'hoveniersbedrijf rheden'];
-    } else if (companyKey.includes('bresser') || companyKey.includes('timmer')) {
-      recommended = ['drankhandel arnhem', 'slijterij arnhem', 'online drank bestellen arnhem', 'speciaalbier arnhem', 'relatiegeschenken dranken arnhem'];
-    } else {
-      recommended = ['online marketing bureau', 'seo arnhem', 'sea uitbesteden', 'geo optimalisatie', 'ai zoekmachine vindbaarheid'];
-    }
+  if (recommended.length === 0) {
+    return res.status(422).json({
+      success: false,
+      error: 'Er konden geen keywords worden gegenereerd voor deze website. Dit kan komen door een tijdelijke API-beperking of onbereikbaarheid van de website.'
+    });
   }
 
   console.log(`[Keyword Recommender Result] Generated keywords for ${companyName}:`, recommended);
