@@ -4,7 +4,7 @@ import cors from 'cors';
 
 // Import modular routes
 import authRoutes from './routes/auth.js';
-import clientsRoutes from './routes/clients.js';
+import projectsRoutes from './routes/projects.js';
 import citationsRoutes from './routes/citations.js';
 import keywordsRoutes from './routes/keywords.js';
 import promptsRoutes from './routes/prompts.js';
@@ -24,7 +24,7 @@ app.use(express.json());
 
 // Register API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/clients', clientsRoutes);
+app.use('/api/projects', projectsRoutes);
 app.use('/api/citations', citationsRoutes);
 app.use('/api/keywords', keywordsRoutes);
 app.use('/api/prompts', promptsRoutes);

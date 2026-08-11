@@ -6,18 +6,30 @@ import { enqueueScrape } from '../services/queue.js';
 
 const router = express.Router();
 
-// GET /api/clients - Fetch all workspaces/clients
+// GET /api/projects - Fetch all workspaces/projects (filtered for klant users)
 router.get('/', async (req, res) => {
+  const { userId, role } = req.query;
   try {
-    const clients = await db('clients').select('*');
+    let query = db('projects');
     
-    // Count keywords per client from the database
+    if (role === 'klant' && userId) {
+      query = query
+        .join('user_projects', 'projects.id', '=', 'user_projects.project_id')
+        .where('user_projects.user_id', userId)
+        .select('projects.*');
+    } else {
+      query = query.select('*');
+    }
+
+    const projects = await query;
+    
+    // Count keywords per project from the database
     const keywordsCounts = await db('keywords')
       .select('company_key')
       .count('id as count')
       .groupBy('company_key');
 
-    // Count prompts per client from the database
+    // Count prompts per project from the database
     const promptsCounts = await db('prompts')
       .select('company_key')
       .count('id as count')
@@ -33,19 +45,20 @@ router.get('/', async (req, res) => {
       promptsMap[item.company_key] = item.count;
     });
 
-    const clientsWithCounts = clients.map(client => {
-      const companyKey = client.company.toLowerCase().replace('.nl', '').trim();
+    const projectsWithCounts = projects.map(proj => {
+      const companyKey = proj.company.toLowerCase().replace('.nl', '').trim();
       return {
-        ...client,
+        ...proj,
         keywordsCount: keywordsMap[companyKey] || 0,
         promptsCount: promptsMap[companyKey] || 0
       };
     });
 
-    res.json({ success: true, clients: clientsWithCounts });
+    // Keep 'clients' as key in JSON response to maintain frontend compatibility
+    res.json({ success: true, clients: projectsWithCounts });
   } catch (err) {
-    console.error('Error fetching clients:', err);
-    res.status(500).json({ error: 'Failed to fetch clients from database' });
+    console.error('Error fetching projects:', err);
+    res.status(500).json({ error: 'Failed to fetch projects from database' });
   }
 });
 
@@ -54,7 +67,7 @@ async function startBackgroundSetup(company, keywordsString) {
   const rawKeywords = keywordsString.split(',').map(k => k.trim()).filter(Boolean);
 
   if (rawKeywords.length === 0) {
-    await db('clients').where({ company }).update({ setup_status: 'completed', setup_progress: 100 });
+    await db('projects').where({ company }).update({ setup_status: 'completed', setup_progress: 100 });
     return;
   }
 
@@ -137,27 +150,27 @@ Kwaliteitseisen voor de vragen:
       // 4. Update progress
       completedCount++;
       const progressPercent = Math.min(Math.round((completedCount / totalSteps) * 100), 95);
-      await db('clients').where({ company }).update({
+      await db('projects').where({ company }).update({
         setup_status: 'processing',
         setup_progress: progressPercent
       });
     }
 
     // Done!
-    await db('clients').where({ company }).update({
+    await db('projects').where({ company }).update({
       setup_status: 'completed',
       setup_progress: 100
     });
   } catch (err) {
     console.error('Error in background setup runner:', err);
-    await db('clients').where({ company }).update({
+    await db('projects').where({ company }).update({
       setup_status: 'completed',
       setup_progress: 100
     });
   }
 }
 
-// POST /api/clients - Create a new client workspace
+// POST /api/projects - Create a new project workspace
 router.post('/', async (req, res) => {
   const { company, name, email, password, subscription, keywords } = req.body;
 
@@ -166,15 +179,15 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const existingClient = await db('clients').where('company', company.trim()).first();
-    if (existingClient) {
+    const existingProject = await db('projects').where('company', company.trim()).first();
+    if (existingProject) {
       return res.status(400).json({ error: 'Deze bedrijfsnaam/workspace bestaat al.' });
     }
 
     const hasKeywords = keywords && keywords.trim().length > 0;
 
-    // 1. Insert into clients table
-    const [clientId] = await db('clients').insert({
+    // 1. Insert into projects table
+    const [projectId] = await db('projects').insert({
       company: company.trim(),
       name: name.trim(),
       email: email.trim().toLowerCase(),
@@ -186,6 +199,7 @@ router.post('/', async (req, res) => {
     });
 
     // 2. Also insert into users table if password is provided
+    let userId;
     if (password) {
       const password_hash = await bcrypt.hash(password, 10);
       const klantRole = await db('roles').where('name', 'klant').first();
@@ -193,7 +207,7 @@ router.post('/', async (req, res) => {
 
       const existingUser = await db('users').where('email', email.trim().toLowerCase()).first();
       if (!existingUser) {
-        await db('users').insert({
+        const [insertedUserId] = await db('users').insert({
           username: name.trim(),
           email: email.trim().toLowerCase(),
           password_hash,
@@ -202,12 +216,28 @@ router.post('/', async (req, res) => {
           subscription: subscription || 'AI Pro',
           addon_prompts: 0
         });
+        userId = insertedUserId;
+      } else {
+        userId = existingUser.id;
+      }
+    } else {
+      const existingUser = await db('users').where('email', email.trim().toLowerCase()).first();
+      if (existingUser) {
+        userId = existingUser.id;
       }
     }
 
-    const newClient = await db('clients').where('id', clientId).first();
+    // 3. Link user to the project in user_projects table
+    if (userId) {
+      await db('user_projects').insert({
+        user_id: userId,
+        project_id: projectId
+      });
+    }
 
-    // Start supervisor background runner for keywords/prompts if any
+    const newProject = await db('projects').where('id', projectId).first();
+
+    // Start background keywords setup
     if (hasKeywords) {
       startBackgroundSetup(company.trim(), keywords).catch(err => {
         console.error('Error starting background setup:', err);
@@ -217,87 +247,93 @@ router.post('/', async (req, res) => {
     res.status(201).json({
       success: true,
       client: {
-        id: newClient.id,
-        company: newClient.company,
-        name: newClient.name,
-        email: newClient.email,
-        subscription: newClient.subscription,
-        promptsCount: newClient.prompts_count,
-        visibilityIndex: newClient.visibility_index,
-        setup_status: newClient.setup_status,
-        setup_progress: newClient.setup_progress
+        id: newProject.id,
+        company: newProject.company,
+        name: newProject.name,
+        email: newProject.email,
+        subscription: newProject.subscription,
+        promptsCount: newProject.prompts_count,
+        visibilityIndex: newProject.visibility_index,
+        setup_status: newProject.setup_status,
+        setup_progress: newProject.setup_progress
       }
     });
   } catch (err) {
-    console.error('Error creating client workspace:', err);
-    res.status(500).json({ error: 'Fout bij aanmaken van klant in database.' });
+    console.error('Error creating project workspace:', err);
+    res.status(500).json({ error: 'Fout bij aanmaken van project in database.' });
   }
 });
 
-// PUT /api/clients/:id - Edit an existing client workspace
+// PUT /api/projects/:id - Edit an existing project workspace
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
   const { name, email, subscription } = req.body;
 
   if (!name || !email) {
-    return res.status(400).json({ error: 'Klantnaam en e-mailadres zijn verplicht.' });
+    return res.status(400).json({ error: 'Projectnaam en e-mailadres zijn verplicht.' });
   }
 
   try {
-    const existingClient = await db('clients').where('id', id).first();
-    if (!existingClient) {
+    const existingProject = await db('projects').where('id', id).first();
+    if (!existingProject) {
       return res.status(404).json({ error: 'Project niet gevonden.' });
     }
 
-    // 1. Update clients table
-    await db('clients')
+    // 1. Update projects table
+    await db('projects')
       .where('id', id)
       .update({
         name: name.trim(),
         email: email.trim().toLowerCase(),
-        subscription: subscription || existingClient.subscription,
+        subscription: subscription || existingProject.subscription,
         updated_at: new Date().toISOString()
       });
 
     // 2. Also update associated user account in users table if the email matches the old one
     await db('users')
-      .where('email', existingClient.email)
+      .where('email', existingProject.email)
       .update({
         username: name.trim(),
         email: email.trim().toLowerCase(),
-        subscription: subscription || existingClient.subscription
+        subscription: subscription || existingProject.subscription
       });
 
-    const updatedClient = await db('clients').where('id', id).first();
+    const updatedProject = await db('projects').where('id', id).first();
 
     res.json({
       success: true,
       message: 'Project succesvol bijgewerkt.',
       client: {
-        id: updatedClient.id,
-        company: updatedClient.company,
-        name: updatedClient.name,
-        email: updatedClient.email,
-        subscription: updatedClient.subscription,
-        promptsCount: updatedClient.prompts_count,
-        visibilityIndex: updatedClient.visibility_index
+        id: updatedProject.id,
+        company: updatedProject.company,
+        name: updatedProject.name,
+        email: updatedProject.email,
+        subscription: updatedProject.subscription,
+        promptsCount: updatedProject.prompts_count,
+        visibilityIndex: updatedProject.visibility_index
       }
     });
   } catch (err) {
-    console.error('Error updating client workspace:', err);
+    console.error('Error updating project workspace:', err);
     res.status(500).json({ error: 'Fout bij bijwerken van project in database.' });
   }
 });
 
-// DELETE /api/clients/:company - Delete a client workspace and its associated data
+// DELETE /api/projects/:company - Delete a project workspace and its associated data
 router.delete('/:company', async (req, res) => {
   const { company } = req.params;
   const decodedCompany = decodeURIComponent(company).trim();
   const companyKey = decodedCompany.toLowerCase().replace('.nl', '').trim();
 
   try {
-    // Delete client workspace record
-    await db('clients').whereRaw('LOWER(company) = ?', [decodedCompany.toLowerCase()]).del();
+    const projRecord = await db('projects').whereRaw('LOWER(company) = ?', [decodedCompany.toLowerCase()]).first();
+    if (projRecord) {
+      // Delete user_projects mappings first (FK relation)
+      await db('user_projects').where({ project_id: projRecord.id }).del();
+    }
+
+    // Delete project workspace record
+    await db('projects').whereRaw('LOWER(company) = ?', [decodedCompany.toLowerCase()]).del();
     
     // Delete all linked keywords
     await db('keywords').where({ company_key: companyKey }).del();
@@ -316,12 +352,12 @@ router.delete('/:company', async (req, res) => {
 
     res.json({ success: true, message: `Project "${decodedCompany}" succesvol verwijderd.` });
   } catch (err) {
-    console.error('Error deleting client workspace:', err);
+    console.error('Error deleting project workspace:', err);
     res.status(500).json({ error: 'Fout bij verwijderen van project in database.' });
   }
 });
 
-// GET /api/clients/api-monitor/status - Fetch live API key status and history logs
+// GET /api/projects/api-monitor/status - Fetch live API key status and history logs
 router.get('/api-monitor/status', (req, res) => {
   try {
     const status = getApiStatus();

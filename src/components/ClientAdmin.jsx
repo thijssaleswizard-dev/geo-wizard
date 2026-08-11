@@ -75,7 +75,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const fetchApiMonitorData = async () => {
     setMonitorLoading(true);
     try {
-      const response = await fetch('/api/clients/api-monitor/status');
+      const response = await fetch('/api/projects/api-monitor/status');
       const data = await response.json();
       if (data.success) {
         setApiStatus(data.status);
@@ -124,7 +124,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const confirmDeleteProject = async () => {
     if (!projectToDelete) return;
     try {
-      const response = await fetch(`/api/clients/${encodeURIComponent(projectToDelete)}`, {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectToDelete)}`, {
         method: 'DELETE'
       });
       const data = await response.json();
@@ -159,7 +159,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
     setLoading(true);
 
     try {
-      const response = await fetch(`/api/clients/${editClient.id}`, {
+      const response = await fetch(`/api/projects/${editClient.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -223,7 +223,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
     setLoading(true);
 
     try {
-      const response = await fetch('/api/clients', {
+      const response = await fetch('/api/projects', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

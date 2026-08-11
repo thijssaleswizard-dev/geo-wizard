@@ -59,7 +59,6 @@ export default function Sidebar({
 
   const brandReportItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'prompts', label: 'Prompts', icon: Search },
     { id: 'recommendations', label: 'Recommendations', icon: RefreshCw },
     { id: 'agents', label: 'Agents analytics', icon: BarChart2 }
   ];
@@ -151,11 +150,11 @@ export default function Sidebar({
       <div style={{ padding: '16px 16px 8px', position: 'relative' }}>
         <button
           onClick={() => {
-            if (currentUser.role === 'medewerker') {
+            if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) {
               setIsWorkspaceOpen(!isWorkspaceOpen);
             }
           }}
-          disabled={currentUser.role !== 'medewerker'}
+          disabled={!(currentUser.role === 'medewerker' || (clients && clients.length > 1))}
           style={{
             width: '100%',
             padding: '10px 12px',
@@ -167,37 +166,37 @@ export default function Sidebar({
             justifyContent: 'between',
             gap: '8px',
             textAlign: 'left',
-            cursor: currentUser.role === 'medewerker' ? 'pointer' : 'default'
+            cursor: (currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? 'pointer' : 'default'
           }}
           onMouseEnter={(e) => {
-            if (currentUser.role === 'medewerker') e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+            if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
           }}
           onMouseLeave={(e) => {
-            if (currentUser.role === 'medewerker') e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
+            if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
           }}
         >
           <FaviconImage
             domain={activeWorkspace}
             fallbackLabel={activeWorkspace || 'P'}
-            fallbackBg={currentUser.role === 'medewerker' ? '#ec4899' : '#8b5cf6'}
+            fallbackBg={(currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? '#ec4899' : '#8b5cf6'}
             fallbackColor="white"
             size={24}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              {currentUser.role === 'medewerker' ? 'Actief Project' : 'Uw Project'}
+              {(currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? 'Actief Project' : 'Uw Project'}
             </div>
             <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeWorkspace ? 'white' : 'rgba(255,255,255,0.5)' }}>
               {activeWorkspace || 'Select a project'}
             </div>
           </div>
-          {currentUser.role === 'medewerker' && (
+          {(currentUser.role === 'medewerker' || (clients && clients.length > 1)) && (
             isWorkspaceOpen ? <ChevronUp size={16} style={{ opacity: 0.6 }} /> : <ChevronDown size={16} style={{ opacity: 0.6 }} />
           )}
         </button>
 
-        {/* Workspace Dropdown for Employees */}
-        {isWorkspaceOpen && currentUser.role === 'medewerker' && (
+        {/* Workspace Dropdown */}
+        {isWorkspaceOpen && (currentUser.role === 'medewerker' || (clients && clients.length > 1)) && (
           <div style={{
             position: 'absolute',
             top: '100%',

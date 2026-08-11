@@ -52,44 +52,60 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
 
 const EngineLogos = {
   chatgpt: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#000000', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 800 }}>
-      GPT
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=openai.com&sz=48"
+      alt="ChatGPT"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   aioverviews: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#e0e7ff', color: '#4f46e5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
-      ✨
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=google.com&sz=48"
+      alt="AI Overviews"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   aimode: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#ea4335', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 800 }}>
-      G
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=google.com&sz=48"
+      alt="AI Mode"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   gemini: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#dbeafe', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
-      ✦
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=gemini.google.com&sz=48"
+      alt="Gemini"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   perplexity: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#111827', color: '#38bdf8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
-      ✶
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=perplexity.ai&sz=48"
+      alt="Perplexity"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   claude: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#ffedd5', color: '#c2410c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
-      ✸
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=claude.ai&sz=48"
+      alt="Claude"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   copilot: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#fef08a', color: '#ca8a04', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800 }}>
-      ❖
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=copilot.microsoft.com&sz=48"
+      alt="Copilot"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   ),
   meta: (
-    <div style={{ width: 22, height: 22, borderRadius: '50%', backgroundColor: '#d0e1fd', color: '#0064e0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 800 }}>
-      O
-    </div>
+    <img
+      src="https://www.google.com/s2/favicons?domain=meta.ai&sz=48"
+      alt="Meta AI"
+      style={{ width: 22, height: 22, borderRadius: '4px', objectFit: 'contain' }}
+    />
   )
 };
 
@@ -830,9 +846,20 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 700, color: '#6b7280' }}>
                 <span>AI Search Engines</span>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  {['C', 'G', 'P', 'B'].map((e, idx) => (
-                    <span key={idx} style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 800 }}>{e}</span>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {[
+                    { domain: 'openai.com', name: 'ChatGPT' },
+                    { domain: 'gemini.google.com', name: 'Gemini' },
+                    { domain: 'perplexity.ai', name: 'Perplexity' },
+                    { domain: 'copilot.microsoft.com', name: 'Copilot' }
+                  ].map((e, idx) => (
+                    <img
+                      key={idx}
+                      src={`https://www.google.com/s2/favicons?domain=${e.domain}&sz=48`}
+                      alt={e.name}
+                      title={e.name}
+                      style={{ width: '18px', height: '18px', borderRadius: '4px', objectFit: 'contain' }}
+                    />
                   ))}
                 </div>
               </div>

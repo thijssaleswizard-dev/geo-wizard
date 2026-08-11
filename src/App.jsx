@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
-import Prompts from './components/Prompts';
 import Citations from './components/Citations';
 import Recommendations from './components/Recommendations';
 import AgentsAnalytics from './components/AgentsAnalytics';
@@ -81,9 +80,12 @@ function App() {
   const [clients, setClients] = useState([]);
   const [notifications, setNotifications] = useState([]);
 
-  // Fetch clients and notifications from database
-  useEffect(() => {
-    fetch('/api/clients')
+  // Fetch projects from database
+  const fetchProjects = (activeUser) => {
+    const userToUse = activeUser || currentUser;
+    if (!userToUse) return;
+
+    fetch(`/api/projects?userId=${userToUse.id}&role=${userToUse.role}`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.clients) {
@@ -102,6 +104,13 @@ function App() {
         }
       })
       .catch(console.error);
+  };
+
+  // Fetch clients and notifications from database
+  useEffect(() => {
+    if (currentUser) {
+      fetchProjects(currentUser);
+    }
 
     fetch('/api/notifications')
       .then(res => res.json())
@@ -111,7 +120,7 @@ function App() {
         }
       })
       .catch(console.error);
-  }, []);
+  }, [currentUser]);
 
   // Poll clients if any is processing setup
   useEffect(() => {
@@ -119,29 +128,11 @@ function App() {
     if (!hasProcessing) return;
 
     const interval = setInterval(() => {
-      fetch('/api/clients')
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.clients) {
-            setClients(data.clients.map(c => ({
-              id: c.id,
-              company: c.company,
-              name: c.name,
-              email: c.email,
-              subscription: c.subscription,
-              promptsCount: c.promptsCount,
-              keywordsCount: c.keywordsCount,
-              visibilityIndex: c.visibility_index,
-              setup_status: c.setup_status,
-              setup_progress: c.setup_progress
-            })));
-          }
-        })
-        .catch(console.error);
+      fetchProjects(currentUser);
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [clients]);
+  }, [clients, currentUser]);
 
   // Callback: User logs in
   const handleLogin = (user) => {
@@ -266,7 +257,6 @@ function App() {
     switch (activeTab) {
       case 'overview': return 'Overview Dashboard';
       case 'keywords': return 'Keywords';
-      case 'prompts': return 'Tracked Prompts';
       case 'citations': return 'Citations';
       case 'recommendations': return 'GEO Recommendations';
       case 'agents': return 'Agents Analytics';
@@ -287,8 +277,6 @@ function App() {
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'keywords':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
-      case 'prompts':
-        return <Prompts key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} />;
       case 'citations':
         return <Citations key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'recommendations':

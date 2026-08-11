@@ -75,7 +75,21 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const companyName = user.company_name || 'Saleswizard B.V.';
+    let companyName = 'Saleswizard B.V.';
+    if (user.role === 'klant') {
+      const firstProject = await db('user_projects')
+        .join('projects', 'user_projects.project_id', '=', 'projects.id')
+        .where('user_projects.user_id', user.id)
+        .select('projects.company')
+        .first();
+      if (firstProject) {
+        companyName = firstProject.company;
+      } else {
+        companyName = user.company_name || 'Saleswizard B.V.';
+      }
+    } else {
+      companyName = user.company_name || 'Saleswizard B.V.';
+    }
     const avatar = companyName[0] ? companyName[0].toUpperCase() : 'U';
 
     res.json({

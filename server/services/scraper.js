@@ -210,7 +210,16 @@ Schrijf een helder, objectief antwoord waarin je de relevante lokale partijen op
   // 3. Extract LLMrefs BRANDS and SOURCES per model
   const extractBrandsAndSources = (text, citationsList, engineKey) => {
     const words = (text || '').match(/\b[A-Z][a-z0-9&]+(?:\s+[A-Z][a-z0-9&]+)*\b/g) || [];
-    const filteredBrands = Array.from(new Set(words.filter(b => b.length > 2 && !['Nederland', 'MKB', 'SEO', 'GEO', 'AI', 'Google', 'ChatGPT', 'Gemini', 'Perplexity', 'Copilot', 'Claude', 'Arnhem', 'Duiven', 'Velp'].includes(b))));
+    const blacklist = [
+      'Nederland', 'MKB', 'SEO', 'GEO', 'AI', 'Google', 'ChatGPT', 'Gemini', 'Perplexity', 'Copilot', 'Claude', 'Arnhem', 'Duiven', 'Velp', 'Rheden',
+      'Als', 'Voor', 'Hun', 'Gebaseerd', 'Dit', 'Bron', 'Bij', 'Het', 'We', 'De', 'Een', 'Onze', 'Hier', 'Daarnaast', 'Je', 'Met', 'Na', 'In',
+      'Uit', 'En', 'Of', 'Zij', 'Hij', 'Ik', 'Wij', 'Jullie', 'U', 'Om', 'Te', 'Door', 'Over', 'Aan', 'Tot', 'Onder', 'Boven', 'Naast',
+      'Tussen', 'Achter', 'Voorbij', 'Langs', 'Tijdens', 'Sinds', 'Vanaf', 'Wanneer', 'Hoe', 'Waar', 'Waarom', 'Wat', 'Wie', 'Welke', 'Welk',
+      'Er', 'Ook', 'Niet', 'Wel', 'Geen', 'Elk', 'Ieder', 'Veel', 'Weinig', 'Alles', 'Niets', 'Iets', 'Deze', 'Die', 'Dat', 'Degenen',
+      'Zijn', 'Haar', 'Jouw', 'Mijn', 'Uw', 'Zich', 'Zelf', 'Zelfs', 'Alleen', 'Samen', 'Altijd', 'Nooit', 'Vaak', 'Uiterlijk', 'Elke',
+      'Doorgaans', 'Meestal', 'Soms', 'Vaak', 'Bovendien', 'Hoewel', 'Ondanks', 'Tevens', 'Kortom', 'Echter', 'Niettemin', 'Daardoor'
+    ];
+    const filteredBrands = Array.from(new Set(words.filter(b => b.length > 2 && !blacklist.includes(b))));
     
     const engineCitations = citationsList.filter(c => {
       try {
@@ -401,8 +410,8 @@ Schrijf een helder, objectief antwoord waarin je de relevante lokale partijen op
 
 async function cleanBrandsList(brandNamesList, promptText) {
   if (brandNamesList.length === 0) return [];
-  try {
-    const queryPrompt = `We hebben een lijst met mogelijke bedrijfsnamen die zijn geëxtraheerd uit AI-zoekresultaten voor de vraag: "${promptText}".
+  
+  const queryPrompt = `We hebben een lijst met mogelijke bedrijfsnamen die zijn geëxtraheerd uit AI-zoekresultaten voor de vraag: "${promptText}".
 Sommige van deze namen zijn foutief geëxtraheerd (het zijn gewone woorden zoals "Kijk", "Gemiddeld", "Tips", "Neem", of platformen zoals "Google", "ChatGPT", "Bing", "Trustoo").
 
 Hier is de lijst met kandidaat-bedrijven:
@@ -411,12 +420,24 @@ ${brandNamesList.join(', ')}
 Geef een gecorrigeerde lijst terug met alleen de ECHTE, relevante bedrijven/dienstverleners (zoals hoveniers of tuinontwerpers) die in de lijst staan.
 Antwoord met een komma-gescheiden lijst van de gecorrigeerde namen. Antwoord met "Geen" als er geen echte bedrijven overblijven.`;
 
+  try {
     const res = await queryGemini({ prompt: queryPrompt, companyName: 'Saleswizard' });
-    if (res && res.text && !res.text.includes('Geen')) {
+    if (res && res.text && !res.fallbackUsed && !res.text.includes('Geen')) {
       return res.text.split(',').map(b => b.trim()).filter(Boolean);
     }
   } catch (e) {
     console.error('Error cleaning brands list with Gemini:', e);
   }
+
+  // Fallback to OpenAI since it has credits/quota
+  try {
+    const res = await queryOpenAI({ prompt: queryPrompt, companyName: 'Saleswizard' });
+    if (res && res.text && !res.fallbackUsed && !res.text.includes('Geen')) {
+      return res.text.split(',').map(b => b.trim()).filter(Boolean);
+    }
+  } catch (e) {
+    console.error('Error cleaning brands list with OpenAI:', e);
+  }
+
   return brandNamesList;
 }

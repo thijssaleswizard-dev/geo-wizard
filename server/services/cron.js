@@ -57,8 +57,8 @@ export async function syncCompanyStats(companyName = 'Saleswizard') {
       });
     }
 
-    // 4. Update clients workspace visibility index
-    await db('clients')
+    // 4. Update projects workspace visibility index
+    await db('projects')
       .whereRaw('LOWER(company) LIKE ?', [`%${companyKey}%`])
       .update({
         visibility_index: calculatedGeoScore,
@@ -91,8 +91,8 @@ export function initCronScheduler() {
   cron.schedule('0 0 * * *', async () => {
     console.log('[Cron Job Triggered] Running daily automated GEO mention scan for all companies...');
     try {
-      const allClients = await db('clients').select('company');
-      for (const client of allClients) {
+      const allProjects = await db('projects').select('company');
+      for (const client of allProjects) {
         await syncCompanyStats(client.company);
       }
     } catch (e) {
