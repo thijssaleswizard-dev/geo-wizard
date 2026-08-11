@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  ChevronRight, ChevronDown, ChevronUp, Plus, Search, Archive, Trash2, 
+import {
+  ChevronRight, ChevronDown, ChevronUp, Plus, Search, Archive, Trash2,
   Sparkles, Play, Edit2, X, AlertTriangle, Loader2,
   ArrowLeft, Download, Share2
 } from 'lucide-react';
@@ -35,7 +35,7 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
   const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size * 2}`;
 
   return (
-    <img 
+    <img
       src={faviconUrl}
       alt={fallbackLabel}
       onError={() => setError(true)}
@@ -108,6 +108,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
   const [totalUsedPrompts, setTotalUsedPrompts] = useState(0);
   const [scanningPrompts, setScanningPrompts] = useState({});
   const [expandedPrompts, setExpandedPrompts] = useState({});
+  const [expandedEngines, setExpandedEngines] = useState({});
   const [selectedKeywordIds, setSelectedKeywordIds] = useState([]);
 
   const handleSelectAllKeywords = (e) => {
@@ -154,19 +155,24 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
     setExpandedPrompts(prev => ({ ...prev, [pId]: !prev[pId] }));
   };
 
+  const toggleExpandedEngine = (promptId, engineId) => {
+    const key = `${promptId}_${engineId}`;
+    setExpandedEngines(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   const handleRunPromptScan = async (promptId, promptText) => {
     setScanningPrompts(prev => ({ ...prev, [promptId]: true }));
     try {
       const response = await fetch('/api/scraper/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptText, company: activeWorkspace || 'Saleswizard.nl' })
+        body: JSON.stringify({ prompt: promptText, company: activeWorkspace || 'Saleswizard.nl', promptId: promptId })
       });
       const data = await response.json();
       if (data.success) {
         const updatedStatus = data.totalMentions > 0 ? 'Cited' : 'Not Cited';
         const newSummary = `${data.company} wordt door ${data.totalMentions} van de ${data.totalModels} AI-modellen aanbevolen.`;
-        
+
         const updatePromptObj = (p) => {
           if (p.id === promptId) {
             return {
@@ -262,14 +268,17 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             prompts: (k.prompts || []).map(p => ({
               id: p.id,
               text: p.prompt_text || p.text || '',
-              status: p.brand_mentioned ? 'Cited' : 'Not Cited',
-              engines: ['chatgpt', 'gemini', 'perplexity'],
-              brandsCount: p.brand_mentioned ? 1 : 0,
-              sourcesCount: p.citations_count || 0
+              status: p.status || 'Not Cited',
+              engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
+              brandsCount: p.brandsCount || 0,
+              sourcesCount: p.sourcesCount || 0,
+              modelMentions: p.modelMentions || null,
+              responseSummary: p.responseSummary || '',
+              citations: p.citations || null
             }))
           }));
           setKeywords(formatted);
-          
+
           let count = 0;
           formatted.forEach(f => {
             count += (f.prompts || []).length;
@@ -327,7 +336,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
         if (kwData.success) {
           const insertedKw = kwData.keyword;
-          
+
           // Generate 3 dynamic prompts using backend AI service
           const genResponse = await fetch('/api/prompts/generate', {
             method: 'POST',
@@ -458,7 +467,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
       if (kwData.success) {
         const insertedKw = kwData.keyword;
-        
+
         // Generate 3 dynamic prompts using backend AI service
         const genResponse = await fetch('/api/prompts/generate', {
           method: 'POST',
@@ -528,7 +537,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
   const getBrandRankings = (kwParam) => {
     if (!kwParam) return [];
-    
+
     let comps = [];
     if (kwParam && typeof kwParam === 'object' && Array.isArray(kwParam.competitors) && kwParam.competitors.length > 0) {
       comps = kwParam.competitors;
@@ -541,10 +550,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
         rank: `#${idx + 1}`,
         brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
         domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
-        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().includes((activeWorkspace || '').toLowerCase().replace('.nl', '')))),
+        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '')))),
         sov: c.sov || Math.max(10, Math.floor(45 / (idx + 1))),
         position: c.position || (idx + 1),
-        citations: c.citations || c.citationsCount || Math.max(1, 4 - idx)
+        citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
+        citationUrls: c.citationUrls || []
       }));
     }
 
@@ -680,7 +690,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
     }
   };
 
-  const filteredKeywords = keywords.filter(kw => 
+  const filteredKeywords = keywords.filter(kw =>
     kw && kw.text ? String(kw.text).toLowerCase().includes((searchQuery || '').toLowerCase()) : false
   );
 
@@ -734,9 +744,6 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '12px', padding: '6px 14px', borderRadius: '20px', border: '1px solid #e5e7eb', fontWeight: 600, color: '#374151' }}>
-              🇳🇱 Netherlands
-            </span>
             <button
               type="button"
               style={{
@@ -854,7 +861,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             </div>
 
             {/* Competitor Table */}
-            <div style={{ overflow: 'hidden', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#ffffff' }}>
+            <div style={{ overflow: 'visible', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#ffffff' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
@@ -877,9 +884,9 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     const avatarColor = colors[r.brand.charCodeAt(0) % colors.length];
 
                     return (
-                      <tr 
-                        key={rIdx} 
-                        style={{ 
+                      <tr
+                        key={rIdx}
+                        style={{
                           borderBottom: '1px solid #f3f4f6',
                           backgroundColor: r.isSelf ? '#fffbebf0' : 'transparent',
                           fontWeight: r.isSelf ? 700 : 400
@@ -888,12 +895,12 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                         <td style={{ padding: '14px 16px', fontWeight: 700, color: '#111827' }}>{r.rank}</td>
                         <td style={{ padding: '14px 16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <FaviconImage 
-                              domain={r.domain} 
-                              fallbackLabel={r.brand} 
-                              fallbackBg={avatarColor.bg} 
-                              fallbackColor={avatarColor.text} 
-                              size={26} 
+                            <FaviconImage
+                              domain={r.domain}
+                              fallbackLabel={r.brand}
+                              fallbackBg={avatarColor.bg}
+                              fallbackColor={avatarColor.text}
+                              size={26}
                             />
                             <div style={{ display: 'flex', flexDirection: 'column' }}>
                               <span style={{ color: '#111827', fontWeight: 600 }}>{r.brand}</span>
@@ -910,17 +917,73 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                           </div>
                         </td>
                         <td style={{ padding: '14px 16px', fontWeight: 600, color: '#374151' }}>{r.position}</td>
-                        <td style={{ padding: '14px 16px' }}>
-                          <span style={{
-                            fontSize: '11px',
-                            padding: '4px 10px',
-                            borderRadius: '12px',
-                            backgroundColor: r.citations > 0 ? '#fef3c7' : '#f3f4f6',
-                            color: r.citations > 0 ? '#b45309' : '#6b7280',
-                            fontWeight: 700
-                          }}>
-                            {r.citations} {r.citations === 1 ? 'URL' : 'URLs'}
-                          </span>
+                        <td style={{ padding: '14px 16px', position: 'relative' }}>
+                          {r.citationUrls && r.citationUrls.length > 0 ? (
+                            <div className="tooltip-container" style={{ display: 'inline-block' }}>
+                              <span style={{
+                                fontSize: '11px',
+                                padding: '4px 10px',
+                                borderRadius: '12px',
+                                backgroundColor: '#fef3c7',
+                                color: '#b45309',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                border: '1px solid rgba(180, 83, 9, 0.15)'
+                              }}>
+                                {r.citations} {r.citations === 1 ? 'URL' : 'URLs'}
+                              </span>
+                              <div className="tooltip-content" style={{
+                                position: 'absolute',
+                                bottom: '100%',
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                marginBottom: '8px',
+                                backgroundColor: '#1e1b4b',
+                                color: '#ffffff',
+                                padding: '8px 12px',
+                                borderRadius: '8px',
+                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.05)',
+                                zIndex: 100,
+                                width: 'max-content',
+                                maxWidth: '320px',
+                                pointerEvents: 'none',
+                                opacity: 0,
+                                visibility: 'hidden',
+                                transition: 'all 0.15s ease',
+                                fontSize: '11px',
+                                fontWeight: 500,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px',
+                                border: '1px solid rgba(255,255,255,0.1)'
+                              }}>
+                                <div style={{ fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px', marginBottom: '2px', color: '#fbbf24' }}>Geciteerde Bronnen:</div>
+                                {r.citationUrls.map((url, uIdx) => (
+                                  <a 
+                                    key={uIdx} 
+                                    href={url} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    style={{ color: '#60a5fa', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {url}
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{
+                              fontSize: '11px',
+                              padding: '4px 10px',
+                              borderRadius: '12px',
+                              backgroundColor: '#f3f4f6',
+                              color: '#6b7280',
+                              fontWeight: 700
+                            }}>
+                              0 URLs
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -964,7 +1027,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {(kw.prompts || []).map((p, pIdx) => {
                 const promptKey = p.id || pIdx;
-                const isOpen = expandedPrompts[promptKey] !== false;
+                const isOpen = !!expandedPrompts[promptKey];
                 const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending';
                 const isMentioned = p.status === 'Cited' || p.mentioned;
                 const brandsCount = p.brandsCount || (isMentioned ? (p.citations ? p.citations.length + 3 : 5) : 0);
@@ -972,20 +1035,20 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                 const mData = p.modelMentions || {};
 
                 const enginesList = [
-                  { id: 'chatgpt', name: 'OpenAI ChatGPT', mentioned: mData.chatgpt?.mentioned ?? isMentioned, brands: mData.chatgpt?.brands || (isMentioned ? 4 : 0), sources: mData.chatgpt?.sources || 1 },
-                  { id: 'aioverviews', name: 'Google AI Overviews', mentioned: mData.aioverviews?.mentioned ?? true, brands: mData.aioverviews?.brands || (sourcesCount > 0 ? 3 : 0), sources: mData.aioverviews?.sources || sourcesCount },
-                  { id: 'aimode', name: 'Google AI Mode', mentioned: mData.aimode?.mentioned ?? false, brands: mData.aimode?.brands || 0, sources: mData.aimode?.sources || 0 },
-                  { id: 'gemini', name: 'Google Gemini', mentioned: mData.gemini?.mentioned ?? isMentioned, brands: mData.gemini?.brands || (isMentioned ? 3 : 0), sources: mData.gemini?.sources || 0 },
-                  { id: 'perplexity', name: 'Perplexity AI', mentioned: mData.perplexity?.mentioned ?? isMentioned, brands: mData.perplexity?.brands || (isMentioned ? 4 : 0), sources: mData.perplexity?.sources || Math.min(sourcesCount, 3) },
-                  { id: 'claude', name: 'Anthropic Claude', mentioned: mData.claude?.mentioned ?? false, brands: mData.claude?.brands || 0, sources: mData.claude?.sources || 0 },
-                  { id: 'copilot', name: 'Microsoft Copilot', mentioned: mData.copilot?.mentioned ?? isMentioned, brands: mData.copilot?.brands || (isMentioned ? 3 : 0), sources: mData.copilot?.sources || 1 },
-                  { id: 'meta', name: 'Meta AI', mentioned: mData.meta?.mentioned ?? false, brands: mData.meta?.brands || 0, sources: mData.meta?.sources || 0 }
+                  { id: 'chatgpt', name: 'OpenAI ChatGPT', mentioned: mData.chatgpt?.mentioned ?? isMentioned, brands: mData.chatgpt?.brands || (isMentioned ? 4 : 0), sources: mData.chatgpt?.sources || 1, summary: mData.chatgpt?.summary },
+                  { id: 'aioverviews', name: 'Google AI Overviews', mentioned: mData.aioverviews?.mentioned ?? true, brands: mData.aioverviews?.brands || (sourcesCount > 0 ? 3 : 0), sources: mData.aioverviews?.sources || sourcesCount, summary: mData.aioverviews?.summary },
+                  { id: 'aimode', name: 'Google AI Mode', mentioned: mData.aimode?.mentioned ?? false, brands: mData.aimode?.brands || 0, sources: mData.aimode?.sources || 0, summary: mData.aimode?.summary },
+                  { id: 'gemini', name: 'Google Gemini', mentioned: mData.gemini?.mentioned ?? isMentioned, brands: mData.gemini?.brands || (isMentioned ? 3 : 0), sources: mData.gemini?.sources || 0, summary: mData.gemini?.summary },
+                  { id: 'perplexity', name: 'Perplexity AI', mentioned: mData.perplexity?.mentioned ?? isMentioned, brands: mData.perplexity?.brands || (isMentioned ? 4 : 0), sources: mData.perplexity?.sources || Math.min(sourcesCount, 3), summary: mData.perplexity?.summary },
+                  { id: 'claude', name: 'Anthropic Claude', mentioned: mData.claude?.mentioned ?? false, brands: mData.claude?.brands || 0, sources: mData.claude?.sources || 0, summary: mData.claude?.summary },
+                  { id: 'copilot', name: 'Microsoft Copilot', mentioned: mData.copilot?.mentioned ?? isMentioned, brands: mData.copilot?.brands || (isMentioned ? 3 : 0), sources: mData.copilot?.sources || 1, summary: mData.copilot?.summary },
+                  { id: 'meta', name: 'Meta AI', mentioned: mData.meta?.mentioned ?? false, brands: mData.meta?.brands || 0, sources: mData.meta?.sources || 0, summary: mData.meta?.summary }
                 ];
 
                 return (
-                  <div 
-                    key={pIdx} 
-                    style={{ 
+                  <div
+                    key={pIdx}
+                    style={{
                       backgroundColor: '#ffffff',
                       border: '1px solid #e5e7eb',
                       borderRadius: '10px',
@@ -994,12 +1057,12 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     }}
                   >
                     {/* LLMRefs Prompt Card Header */}
-                    <div 
-                      style={{ 
-                        padding: '14px 20px', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'space-between', 
+                    <div
+                      style={{
+                        padding: '14px 20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
                         backgroundColor: '#f9fafb',
                         cursor: 'pointer',
                         userSelect: 'none'
@@ -1111,63 +1174,103 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     {/* LLMRefs Engine Breakdown Rows */}
                     {isOpen && (
                       <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
-                        {enginesList.map((eng, engIdx) => (
-                          <div 
-                            key={engIdx} 
-                            style={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              justifyContent: 'space-between',
-                              padding: '10px 20px',
-                              borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              {EngineLogos[eng.id]}
-                              <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                                {eng.name}
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                              {eng.mentioned && (
-                                <span style={{
-                                  fontSize: '11px',
-                                  fontWeight: 800,
-                                  color: '#16a34a',
-                                  backgroundColor: '#dcfce7',
-                                  padding: '2px 8px',
-                                  borderRadius: '12px',
+                        {enginesList.map((eng, engIdx) => {
+                          const engKey = `${promptKey}_${eng.id}`;
+                          const isEngExpanded = !!expandedEngines[engKey];
+                          return (
+                            <div
+                              key={engIdx}
+                              style={{
+                                borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
+                              }}
+                            >
+                              <div
+                                style={{
                                   display: 'flex',
                                   alignItems: 'center',
-                                  gap: '2px'
+                                  justifyContent: 'space-between',
+                                  padding: '10px 20px',
+                                  cursor: eng.summary ? 'pointer' : 'default',
+                                  userSelect: 'none',
+                                  backgroundColor: isEngExpanded ? '#f9fafb' : 'transparent'
+                                }}
+                                onClick={() => eng.summary && toggleExpandedEngine(promptKey, eng.id)}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                  {EngineLogos[eng.id]}
+                                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                                    {eng.name}
+                                  </span>
+                                  {eng.summary && (
+                                    <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>
+                                      {isEngExpanded ? '(klik om antwoord te verbergen)' : '(klik om antwoord te tonen)'}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  {eng.mentioned && (
+                                    <span style={{
+                                      fontSize: '11px',
+                                      fontWeight: 800,
+                                      color: '#16a34a',
+                                      backgroundColor: '#dcfce7',
+                                      padding: '2px 8px',
+                                      borderRadius: '12px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '2px'
+                                    }}>
+                                      ✓
+                                    </span>
+                                  )}
+                                  <span style={{
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    color: '#2563eb',
+                                    backgroundColor: '#eff6ff',
+                                    padding: '2px 8px',
+                                    borderRadius: '12px'
+                                  }}>
+                                    • {eng.brands}
+                                  </span>
+                                  <span style={{
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    color: '#ea580c',
+                                    backgroundColor: '#fff7ed',
+                                    padding: '2px 8px',
+                                    borderRadius: '12px'
+                                  }}>
+                                    • {eng.sources}
+                                  </span>
+                                  {eng.summary && (
+                                    <div style={{ color: '#9ca3af', display: 'flex', alignItems: 'center', marginLeft: '2px' }}>
+                                      {isEngExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {isEngExpanded && eng.summary && (
+                                <div style={{
+                                  padding: '12px 20px 16px 52px',
+                                  backgroundColor: '#f9fafb',
+                                  fontSize: '13px',
+                                  color: '#4b5563',
+                                  borderTop: '1px solid #f3f4f6',
+                                  lineHeight: '1.5',
+                                  whiteSpace: 'pre-wrap'
                                 }}>
-                                  ✓
-                                </span>
+                                  <div style={{ fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '6px' }}>
+                                    AI Antwoord:
+                                  </div>
+                                  {eng.summary}
+                                </div>
                               )}
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#2563eb',
-                                backgroundColor: '#eff6ff',
-                                padding: '2px 8px',
-                                borderRadius: '12px'
-                              }}>
-                                • {eng.brands}
-                              </span>
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#ea580c',
-                                backgroundColor: '#fff7ed',
-                                padding: '2px 8px',
-                                borderRadius: '12px'
-                              }}>
-                                • {eng.sources}
-                              </span>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1323,7 +1426,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
       width: '100%',
       overflowY: 'auto'
     }}>
-      
+
       {/* Header bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
@@ -1389,7 +1492,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             <Sparkles size={16} style={{ color: 'var(--brand-primary)' }} />
             Add Keywords & Generate Prompts
           </h3>
-          
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>Keywords (comma-separated)</label>
@@ -1551,11 +1654,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
           <thead>
             <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
               <th style={{ padding: '12px 16px', width: '40px' }}>
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={filteredKeywords.length > 0 && selectedKeywordIds.length === filteredKeywords.length}
                   onChange={handleSelectAllKeywords}
-                  onClick={(e) => e.stopPropagation()} 
+                  onClick={(e) => e.stopPropagation()}
                 />
               </th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Het zoekwoord waarop de AI-zoekmachines worden gescand">Keyword</th>
@@ -1569,7 +1672,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
           </thead>
           <tbody>
             {filteredKeywords.map((kw) => (
-              <tr 
+              <tr
                 key={kw.id}
                 style={{
                   cursor: 'pointer',
@@ -1584,10 +1687,10 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
               >
                 <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
-                  <input 
-                    type="checkbox" 
+                  <input
+                    type="checkbox"
                     checked={selectedKeywordIds.includes(kw.id)}
-                    onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)} 
+                    onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
                   />
                 </td>
                 <td style={{ padding: '16px' }}>
@@ -1598,7 +1701,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     </span>
                   </div>
                 </td>
-                
+
                 <td style={{ padding: '16px', fontWeight: 700, color: kw.rank !== '-' ? '#111827' : '#9ca3af' }}>
                   {kw.rank}
                 </td>
@@ -1630,13 +1733,13 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     {(kw.brands || []).slice(0, 5).map((brandKey, bIdx) => {
                       const details = getBrandLogo(brandKey);
                       return (
-                        <FaviconImage 
+                        <FaviconImage
                           key={brandKey || bIdx}
-                          domain={details.domain} 
-                          fallbackLabel={details.label} 
-                          fallbackBg={details.color} 
-                          fallbackColor={details.text} 
-                          size={22} 
+                          domain={details.domain}
+                          fallbackLabel={details.label}
+                          fallbackBg={details.color}
+                          fallbackColor={details.text}
+                          size={22}
                           style={{ border: '1px solid #ffffff', borderRadius: '50%' }}
                         />
                       );

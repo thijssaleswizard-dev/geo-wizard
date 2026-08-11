@@ -3,6 +3,17 @@ import * as cheerio from 'cheerio';
 import db from '../db.js';
 import { queryOpenAI, queryGemini, queryPerplexity, queryAnthropic } from './aiEngine.js';
 
+function getDomain(url) {
+  if (!url) return '';
+  try {
+    const cleaned = url.trim().toLowerCase();
+    const withoutProtocol = cleaned.replace('https://', '').replace('http://', '').replace('www.', '');
+    return withoutProtocol.split('/')[0].split('?')[0];
+  } catch (e) {
+    return '';
+  }
+}
+
 export async function runScraper({ prompt, company }) {
   const promptText = prompt || 'Wat is het beste online marketing bureau in Arnhem?';
   const companyName = company || 'Saleswizard';
@@ -12,22 +23,7 @@ export async function runScraper({ prompt, company }) {
   crawlLogs.push(`[Hybrid Engine] Initiating multi-LLM & web scraping pipeline for "${companyName}"...`);
   crawlLogs.push(`[Query] Prompt: "${promptText}"`);
 
-  // 1. Concurrent Calls to Official LLM Engines
-  crawlLogs.push(`[AI Engines] Querying OpenAI (gpt-4o-mini), Gemini 1.5, Perplexity API & Claude 3.5 Sonnet...`);
-  
-  const [openAIRes, geminiRes, perplexityRes, anthropicRes] = await Promise.all([
-    queryOpenAI({ prompt: promptText, companyName }),
-    queryGemini({ prompt: promptText, companyName }),
-    queryPerplexity({ prompt: promptText, companyName }),
-    queryAnthropic({ prompt: promptText, companyName })
-  ]);
-
-  crawlLogs.push(`[OpenAI API] Result: ${openAIRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
-  crawlLogs.push(`[Gemini API] Result: ${geminiRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
-  crawlLogs.push(`[Perplexity API] Result: ${perplexityRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
-  crawlLogs.push(`[Anthropic API] Result: ${anthropicRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
-
-  // 2. Real Web Search Index Parsing for Grounding Sources
+  // 1. Real Web Search Index Parsing for Grounding Sources (RAG)
   crawlLogs.push(`[ScrapingBee Engine] Executing web search crawl for grounding sources...`);
   const extractedCitations = [];
 
@@ -59,12 +55,7 @@ export async function runScraper({ prompt, company }) {
           cleanUrl = 'https://' + cleanUrl;
         }
 
-        let domain = '';
-        try {
-          domain = new URL(cleanUrl).hostname.replace('www.', '');
-        } catch (e) {
-          domain = cleanUrl.split('/')[0].replace('www.', '');
-        }
+        const domain = getDomain(cleanUrl);
 
         if (domain && title) {
           let sourceType = 'Website';
@@ -92,7 +83,39 @@ export async function runScraper({ prompt, company }) {
     crawlLogs.push(`[ScrapingBee Note] Web search parsing note (${err.message}). Using knowledge graph.`);
   }
 
-  // Fallback citations if needed
+  // Try to use Perplexity AI as search-grounding fallback if DuckDuckGo failed/blocked
+  if (extractedCitations.length === 0 && process.env.PERPLEXITY_API_KEY) {
+    crawlLogs.push(`[Hybrid Engine] DuckDuckGo crawl blocked. Querying Perplexity AI for live search grounding...`);
+    try {
+      const pplxRes = await queryPerplexity({ prompt: promptText, companyName: companyName });
+      if (pplxRes && pplxRes.citations && pplxRes.citations.length > 0) {
+        pplxRes.citations.forEach((url, idx) => {
+          const domain = getDomain(url);
+          if (domain && domain.length > 3) {
+            const ignoredDomains = ['duckduckgo.com', 'google.com', 'wikipedia.org', 'facebook.com', 'instagram.com', 'linkedin.com', 'youtube.com'];
+            if (ignoredDomains.includes(domain.toLowerCase())) return;
+
+            extractedCitations.push({
+              company_key: companyKey,
+              title: `Bron: ${domain}`,
+              url: url,
+              domain: domain,
+              snippet: `Live zoekresultaat via Perplexity AI index voor: ${promptText}`,
+              type: 'Website',
+              sentiment: '+90',
+              cited_by: JSON.stringify(['perplexity']),
+              crawl_date: new Date().toISOString().split('T')[0]
+            });
+          }
+        });
+        crawlLogs.push(`[Hybrid Engine Success] Retrieved ${extractedCitations.length} live citations from Perplexity AI web search!`);
+      }
+    } catch (err) {
+      crawlLogs.push(`[Hybrid Engine Error] Perplexity search fallback failed: ${err.message}`);
+    }
+  }
+
+  // Fallback citations if needed (both DDG and Perplexity failed)
   if (extractedCitations.length === 0) {
     const today = new Date().toISOString().split('T')[0];
     const targetDomain = companyName.toLowerCase().includes('.') ? companyName.toLowerCase() : `${companyName.toLowerCase()}.nl`;
@@ -111,9 +134,9 @@ export async function runScraper({ prompt, company }) {
       {
         company_key: companyKey,
         title: `${companyName} op Trustoo / Beoordelingen`,
-        url: `https://trustoo.nl/gelderland/${companyKey}`,
+        url: `https://trustoo.nl/zoeken/?q=${encodeURIComponent(companyName)}`,
         domain: 'trustoo.nl',
-        snippet: `Klantbeoordelingen en ervaringen voor ${companyName}.`,
+        snippet: `Bekijk de profielen en beoordelingen voor ${companyName} op Trustoo.`,
         type: 'Review',
         sentiment: '+92',
         cited_by: JSON.stringify(['chatgpt', 'perplexity']),
@@ -122,9 +145,9 @@ export async function runScraper({ prompt, company }) {
       {
         company_key: companyKey,
         title: `${companyName} Bedrijfsprofiel op LinkedIn`,
-        url: `https://nl.linkedin.com/company/${companyKey}`,
+        url: `https://www.google.com/search?q=${encodeURIComponent(companyName + ' linkedin')}`,
         domain: 'linkedin.com',
-        snippet: `LinkedIn: ${companyName} geverifieerde case studies en publicaties.`,
+        snippet: `Zoek naar het LinkedIn profiel, case studies en publicaties van ${companyName}.`,
         type: 'Social',
         sentiment: '+92',
         cited_by: JSON.stringify(['chatgpt', 'copilot', 'gemini']),
@@ -134,6 +157,55 @@ export async function runScraper({ prompt, company }) {
   }
 
   crawlLogs.push(`[ScrapingBee] Extracted ${extractedCitations.length} grounding web sources.`);
+
+  // Check if we only have fallbacks (target domain and general platforms)
+  const selfDomain = companyName.toLowerCase().includes('.') ? companyName.toLowerCase() : `${companyKey}.nl`;
+  const isFallbackOnly = extractedCitations.every(c => 
+    c.domain === 'trustoo.nl' || 
+    c.domain === selfDomain || 
+    c.domain === 'linkedin.com' || 
+    c.domain === 'google.com' ||
+    c.domain.startsWith('https:')
+  );
+
+  let enrichedPrompt = '';
+  if (!isFallbackOnly && extractedCitations.length > 0) {
+    const webContext = extractedCitations
+      .map((c, i) => `BRON ${i+1}:\nTitel: ${c.title}\nDomein: ${c.domain}\nBeschrijving: ${c.snippet}\nLink: ${c.url}`)
+      .join('\n\n');
+
+    enrichedPrompt = `Je bent een assistent die vragen beantwoordt op basis van live internet-zoekresultaten. Hieronder staan de zoekresultaten voor de vraag van de gebruiker. Gebruik deze resultaten om een natuurlijk, vloeiend en gedetailleerd antwoord te schrijven. Vermeld de relevante bedrijven en hun specialiteit zoals die in de zoekresultaten staan.
+
+--- LIVE ZOEKRESULTATEN ---
+${webContext}
+---------------------------
+
+Vraag van de gebruiker: ${promptText}
+
+Schrijf een helder, objectief antwoord in het Nederlands waarin je de gevonden partijen (inclusief details over hun diensten en links/websites indien van toepassing) opsomt.`;
+  } else {
+    // Search failed or only has target fallback. Tell LLM to use its own pre-trained knowledge database!
+    enrichedPrompt = `Beantwoord de volgende vraag van de gebruiker zo gedetailleerd en specifiek mogelijk in het Nederlands. Noem meerdere echte, relevante lokale bedrijven/dienstverleners en hun specialiteiten in de regio die passen bij de vraag.
+
+Vraag van de gebruiker: ${promptText}
+
+Schrijf een helder, objectief antwoord waarin je de relevante lokale partijen opsomt.`;
+  }
+
+  // 2. Concurrent Calls to Official LLM Engines with RAG prompt
+  crawlLogs.push(`[AI Engines] Querying OpenAI (gpt-4o-mini), Gemini 1.5, Perplexity API & Claude 3.5 Sonnet...`);
+  
+  const [openAIRes, geminiRes, perplexityRes, anthropicRes] = await Promise.all([
+    queryOpenAI({ prompt: enrichedPrompt, companyName }),
+    queryGemini({ prompt: enrichedPrompt, companyName }),
+    queryPerplexity({ prompt: enrichedPrompt, companyName }),
+    queryAnthropic({ prompt: enrichedPrompt, companyName })
+  ]);
+
+  crawlLogs.push(`[OpenAI API] Result: ${openAIRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
+  crawlLogs.push(`[Gemini API] Result: ${geminiRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
+  crawlLogs.push(`[Perplexity API] Result: ${perplexityRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
+  crawlLogs.push(`[Anthropic API] Result: ${anthropicRes.mentioned ? 'BRAND MENTIONED' : 'Not mentioned'}`);
 
   // 3. Extract LLMrefs BRANDS and SOURCES per model
   const extractBrandsAndSources = (text, citationsList, engineKey) => {
@@ -261,7 +333,9 @@ export async function runScraper({ prompt, company }) {
   [chatgptStats, geminiStats, perplexityStats, claudeStats].forEach(s => s.brandsList.forEach(b => allBrandsSet.add(b)));
   allBrandsSet.add(companyName);
 
-  const parsedBrands = Array.from(allBrandsSet).map((brandName, idx) => {
+  const cleanedBrandsArray = await cleanBrandsList(Array.from(allBrandsSet), promptText);
+
+  const parsedBrands = cleanedBrandsArray.map((brandName, idx) => {
     const isTarget = brandName.toLowerCase().includes(companyKey);
     return {
       name: brandName,
@@ -323,4 +397,26 @@ export async function runScraper({ prompt, company }) {
     modelMentions: modelMentions,
     logs: crawlLogs
   };
+}
+
+async function cleanBrandsList(brandNamesList, promptText) {
+  if (brandNamesList.length === 0) return [];
+  try {
+    const queryPrompt = `We hebben een lijst met mogelijke bedrijfsnamen die zijn geëxtraheerd uit AI-zoekresultaten voor de vraag: "${promptText}".
+Sommige van deze namen zijn foutief geëxtraheerd (het zijn gewone woorden zoals "Kijk", "Gemiddeld", "Tips", "Neem", of platformen zoals "Google", "ChatGPT", "Bing", "Trustoo").
+
+Hier is de lijst met kandidaat-bedrijven:
+${brandNamesList.join(', ')}
+
+Geef een gecorrigeerde lijst terug met alleen de ECHTE, relevante bedrijven/dienstverleners (zoals hoveniers of tuinontwerpers) die in de lijst staan.
+Antwoord met een komma-gescheiden lijst van de gecorrigeerde namen. Antwoord met "Geen" als er geen echte bedrijven overblijven.`;
+
+    const res = await queryGemini({ prompt: queryPrompt, companyName: 'Saleswizard' });
+    if (res && res.text && !res.text.includes('Geen')) {
+      return res.text.split(',').map(b => b.trim()).filter(Boolean);
+    }
+  } catch (e) {
+    console.error('Error cleaning brands list with Gemini:', e);
+  }
+  return brandNamesList;
 }

@@ -1,6 +1,48 @@
 import React, { useState } from 'react';
 import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal, Sparkles } from 'lucide-react';
 
+const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
+  const [error, setError] = React.useState(false);
+  const cleanDomain = (domain || '').toLowerCase().replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0];
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=${size * 2}`;
+
+  if (error || !cleanDomain) {
+    return (
+      <div style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: '6px',
+        backgroundColor: fallbackBg || '#f3f4f6',
+        color: fallbackColor || '#4b5563',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: `${Math.max(10, size - 12)}px`,
+        fontWeight: 800,
+        fontFamily: "'Outfit', sans-serif",
+        ...style
+      }}>
+        {fallbackLabel ? fallbackLabel.charAt(0).toUpperCase() : '?'}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={faviconUrl}
+      onError={() => setError(true)}
+      alt=""
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: '6px',
+        objectFit: 'contain',
+        ...style
+      }}
+    />
+  );
+};
+
 export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient }) {
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -376,21 +418,13 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
               >
                 {/* Left Side: Logo & Info */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <div style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '8px',
-                    backgroundColor: logoColor.bg,
-                    color: logoColor.text,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontWeight: 800,
-                    fontSize: '16px',
-                    fontFamily: "'Outfit', sans-serif"
-                  }}>
-                    {client.company[0].toUpperCase()}
-                  </div>
+                  <FaviconImage
+                    domain={client.company}
+                    fallbackLabel={client.company}
+                    fallbackBg={logoColor.bg}
+                    fallbackColor={logoColor.text}
+                    size={40}
+                  />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                     <span style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>
                       {client.company}
@@ -539,14 +573,40 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
                       Website URL (met https://) *
                     </label>
-                    <input
-                      type="text"
-                      placeholder="bijv. https://dehoutbouwers.nl"
-                      value={company}
-                      onChange={(e) => setCompany(e.target.value)}
-                      disabled={loading}
-                      required
-                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
+                      <div style={{ flex: 1 }}>
+                        <input
+                          type="text"
+                          placeholder="bijv. https://dehoutbouwers.nl"
+                          value={company}
+                          onChange={(e) => setCompany(e.target.value)}
+                          disabled={loading}
+                          required
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      {company && company.length > 8 && (
+                        <div style={{ 
+                          width: '40px', 
+                          height: '40px', 
+                          borderRadius: '8px', 
+                          backgroundColor: '#f3f4f6', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          border: '1px solid #e5e7eb',
+                          flexShrink: 0
+                        }}>
+                          <FaviconImage
+                            domain={company}
+                            fallbackLabel={company}
+                            fallbackBg="#f3f4f6"
+                            fallbackColor="#9ca3af"
+                            size={24}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>

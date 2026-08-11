@@ -12,56 +12,9 @@ router.get('/', async (req, res) => {
   const companyKey = (req.query.company || 'saleswizard').toLowerCase().replace('.nl', '');
   try {
     const rawKeywords = await db('keywords').where({ company_key: companyKey }).orderBy('id', 'desc');
+    const dbCitations = await db('citations').where({ company_key: companyKey });
 
     const keywords = await Promise.all(rawKeywords.map(async (k) => {
-      let competitors = [];
-      if (k.competitors_json) {
-        try {
-          competitors = JSON.parse(k.competitors_json);
-        } catch (e) {
-          competitors = [];
-        }
-      }
-
-      if (!competitors || competitors.length === 0) {
-        // Run scrape in background
-        getOrScrapeCompetitors(k.id, k.keyword, companyKey).catch(e => console.error(e));
-
-        // Use clean domain and company name to return fallback list instantly
-        const cleanDomain = companyKey.includes('.') ? companyKey : `${companyKey}.nl`;
-        const selfName = companyKey.charAt(0).toUpperCase() + companyKey.slice(1);
-        
-        let nicheFallbacks = [
-          { brand: 'DoubleSmart', domain: 'doublesmart.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-          { brand: 'Traffic Builders', domain: 'trafficbuilders.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-          { brand: 'Inoma ICT', domain: 'inoma.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
-        ];
-
-        const kwLower = (k.keyword || '').toLowerCase();
-        if (kwLower.includes('uitvaart') || kwLower.includes('condoleance') || kwLower.includes('graf') || kwLower.includes('crematie') || companyKey.includes('ugna')) {
-          nicheFallbacks = [
-            { brand: 'Dela', domain: 'dela.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-            { brand: 'Monuta', domain: 'monuta.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-            { brand: 'Yarden', domain: 'yarden.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
-          ];
-        } else if (kwLower.includes('drank') || kwLower.includes('slijter')) {
-          nicheFallbacks = [
-            { brand: 'Gall & Gall', domain: 'gall.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-            { brand: 'Drankgigant', domain: 'drankgigant.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
-          ];
-        } else if (kwLower.includes('groen') || kwLower.includes('hovenier') || kwLower.includes('tuin')) {
-          nicheFallbacks = [
-            { brand: 'GroenRijk', domain: 'groenrijk.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
-            { brand: 'Hovenier Nederland', domain: 'hoveniernederland.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
-          ];
-        }
-
-        competitors = [
-          { brand: selfName, domain: cleanDomain, isSelf: true, sov: 0, position: '-', citations: 0 },
-          ...nicheFallbacks
-        ];
-      }
-
       const kwText = k.keyword || k.keyword_text || '';
 
       // Fetch prompts linked to this keyword
@@ -76,29 +29,291 @@ router.get('/', async (req, res) => {
           .orderBy('id', 'asc');
       }
 
-      const citedPrompts = prompts.filter(p => p.brand_mentioned || p.status === 'Cited');
-      const companySov = prompts.length > 0 ? Math.round((citedPrompts.length / prompts.length) * 100) : 0;
+      // 1. Compile competitor stats dynamically from prompt scraper results
+      let competitors = [];
+      const brandStats = {};
+      const allCitations = [];
+      const selfKey = companyKey.toLowerCase();
+      const selfDomain = companyKey.includes('.') ? companyKey : `${companyKey}.nl`;
+      const selfBrandName = companyKey.charAt(0).toUpperCase() + companyKey.slice(1);
+      
+      let totalScans = 0;
 
-      const updatedCompetitors = competitors.map(c => {
-        if (c.isSelf) {
-          return { ...c, sov: companySov };
+      // Collect citations and scans first
+      for (const p of prompts) {
+        if (!p.results) continue;
+        let resObj = null;
+        try {
+          resObj = typeof p.results === 'string' ? JSON.parse(p.results) : p.results;
+        } catch (e) {
+          continue;
         }
-        return c;
-      });
+        if (!resObj || !resObj.modelMentions) continue;
+
+        const promptCitations = resObj.citations || resObj.sources || [];
+        allCitations.push(...promptCitations);
+
+        const modelKeys = Object.keys(resObj.modelMentions);
+        totalScans += modelKeys.length;
+      }
+
+      if (totalScans > 0) {
+        // Build candidate list from unique domains in all citations + self
+        const candidateDomains = new Map();
+        
+        // Add self
+        candidateDomains.set(selfDomain, {
+          brand: selfBrandName,
+          domain: selfDomain,
+          isSelf: true
+        });
+
+        // Add others from citations
+        for (const cit of allCitations) {
+          const dom = (cit.domain || '').toLowerCase().trim();
+          if (!dom || dom.length <= 3) continue;
+          
+          const ignoredDomains = ['duckduckgo.com', 'google.com', 'wikipedia.org', 'facebook.com', 'instagram.com', 'linkedin.com', 'youtube.com'];
+          if (ignoredDomains.includes(dom)) continue;
+
+          if (!candidateDomains.has(dom)) {
+            let brandName = cit.title || '';
+            brandName = brandName.split('-')[0].split('|')[0].split(':')[0].trim();
+            if (brandName.length > 25 || !brandName) {
+              brandName = dom.split('.')[0].toUpperCase();
+            }
+
+            candidateDomains.set(dom, {
+              brand: brandName,
+              domain: dom,
+              isSelf: dom.includes(selfKey) || selfKey.includes(dom.split('.')[0])
+            });
+          }
+        }
+
+        for (const p of prompts) {
+          if (!p.results) continue;
+          let resObj = null;
+          try {
+            resObj = typeof p.results === 'string' ? JSON.parse(p.results) : p.results;
+          } catch (e) {
+            continue;
+          }
+          if (!resObj || !resObj.brands) continue;
+
+          resObj.brands.forEach(b => {
+            const brandName = b.name || b;
+            if (typeof brandName !== 'string') return;
+
+            const normKey = brandName.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+            if (normKey.length <= 2) return;
+
+            const isSelf = normKey.includes(selfKey.replace(/[^a-z0-9]/g, '')) || selfKey.replace(/[^a-z0-9]/g, '').includes(normKey);
+            const finalKey = isSelf ? selfKey.replace(/[^a-z0-9]/g, '') : normKey;
+            const dom = isSelf ? selfDomain : (b.domain || `${finalKey}.nl`);
+
+            if (!candidateDomains.has(dom)) {
+              candidateDomains.set(dom, {
+                brand: isSelf ? selfBrandName : brandName,
+                domain: dom,
+                isSelf: isSelf
+              });
+            }
+          });
+        }
+
+        // Loop over candidate domains to calculate stats
+        candidateDomains.forEach((cand, domKey) => {
+          const stats = {
+            brand: cand.brand,
+            domain: cand.domain,
+            isSelf: cand.isSelf,
+            mentionsCount: 0,
+            totalPositionSum: 0,
+            positionMentionsCount: 0,
+            citationsCount: 0
+          };
+
+          const cleanBrandName = cand.brand.toLowerCase();
+          const cleanDomWithoutSuffix = cand.domain.split('.')[0];
+
+          for (const p of prompts) {
+            if (!p.results) continue;
+            let resObj = null;
+            try {
+              resObj = typeof p.results === 'string' ? JSON.parse(p.results) : p.results;
+            } catch (e) {
+              continue;
+            }
+            if (!resObj || !resObj.modelMentions) continue;
+
+            const modelKeys = Object.keys(resObj.modelMentions);
+            modelKeys.forEach(mKey => {
+              const mMention = resObj.modelMentions[mKey];
+              if (!mMention) return;
+
+              const summary = (mMention.summary || '').toLowerCase();
+              
+              const isMentioned = summary.includes(cleanBrandName) || 
+                                  summary.includes(cleanDomWithoutSuffix) ||
+                                  summary.replace(/[^a-z0-9]/g, '').includes(cleanBrandName.replace(/[^a-z0-9]/g, ''));
+
+              if (isMentioned) {
+                stats.mentionsCount += 1;
+                
+                // Determine position
+                let pos = mMention.position || 3;
+                if (!stats.isSelf) {
+                  const idxOfBrand = summary.indexOf(cleanBrandName);
+                  const matchesBefore = (summary.substring(0, idxOfBrand).match(/\d+\.\s/g) || []);
+                  pos = matchesBefore.length > 0 ? matchesBefore.length : 3;
+                }
+                stats.totalPositionSum += pos;
+                stats.positionMentionsCount += 1;
+              }
+            });
+          }
+
+          // Count unique citations from dbCitations
+          const matchedCitations = dbCitations.filter(c => {
+            const dom = (c.domain || '').toLowerCase();
+            return dom === domKey || dom.includes(domKey) || domKey.includes(dom);
+          });
+          const uniqueUrls = Array.from(new Set(matchedCitations.map(c => c.url)));
+          stats.citationsCount = uniqueUrls.length;
+          stats.citationUrls = uniqueUrls;
+
+          stats.sov = Math.round((stats.mentionsCount / totalScans) * 100);
+          stats.position = stats.positionMentionsCount > 0 
+            ? parseFloat((stats.totalPositionSum / stats.positionMentionsCount).toFixed(1)) 
+            : 3.0;
+
+          brandStats[domKey] = stats;
+        });
+
+        competitors = Object.values(brandStats)
+          .filter(c => c.isSelf || c.sov > 0 || c.citationsCount > 0)
+          .map(c => ({
+            brand: c.brand,
+            domain: c.domain,
+            isSelf: c.isSelf,
+            sov: c.sov,
+            position: c.position.toString(),
+            citations: c.citationsCount,
+            citationUrls: c.citationUrls || []
+          }));
+
+        // Sort: SOV descending, then citations descending, then position ascending
+        competitors.sort((a, b) => {
+          if (b.sov !== a.sov) return b.sov - a.sov;
+          if (b.citations !== a.citations) return b.citations - a.citations;
+          return parseFloat(a.position) - parseFloat(b.position);
+        });
+
+        // Persist the computed rankings and target SOV directly to the keywords table
+        try {
+          const selfComp = competitors.find(c => c.isSelf);
+          const visibilityIndex = selfComp ? selfComp.sov : 0;
+          await db('keywords').where({ id: k.id }).update({
+            competitors_json: JSON.stringify(competitors),
+            visibility_index: visibilityIndex,
+            updated_at: new Date().toISOString()
+          });
+        } catch (dbErr) {
+          console.error(`Failed to persist computed competitors for keyword #${k.id}:`, dbErr.message);
+        }
+      } else {
+        // Fallback to static competitors_json or background scraper
+        if (k.competitors_json) {
+          try {
+            competitors = JSON.parse(k.competitors_json);
+          } catch (e) {
+            competitors = [];
+          }
+        }
+
+        if (competitors.length === 0) {
+          getOrScrapeCompetitors(k.id, kwText, companyKey).catch(e => console.error(e));
+
+          // Use clean domain and company name to return fallback list instantly
+          const cleanDomain = companyKey.includes('.') ? companyKey : `${companyKey}.nl`;
+          const selfName = companyKey.charAt(0).toUpperCase() + companyKey.slice(1);
+          
+          let nicheFallbacks = [
+            { brand: 'DoubleSmart', domain: 'doublesmart.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+            { brand: 'Traffic Builders', domain: 'trafficbuilders.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+            { brand: 'Inoma ICT', domain: 'inoma.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+          ];
+
+          const kwLower = kwText.toLowerCase();
+          if (kwLower.includes('uitvaart') || kwLower.includes('condoleance') || kwLower.includes('graf') || kwLower.includes('crematie') || companyKey.includes('ugna')) {
+            nicheFallbacks = [
+              { brand: 'Dela', domain: 'dela.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+              { brand: 'Monuta', domain: 'monuta.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+              { brand: 'Yarden', domain: 'yarden.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+            ];
+          } else if (kwLower.includes('drank') || kwLower.includes('slijter')) {
+            nicheFallbacks = [
+              { brand: 'Gall & Gall', domain: 'gall.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+              { brand: 'Drankgigant', domain: 'drankgigant.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+            ];
+          } else if (kwLower.includes('groen') || kwLower.includes('hovenier') || kwLower.includes('tuin')) {
+            nicheFallbacks = [
+              { brand: 'GroenRijk', domain: 'groenrijk.nl', isSelf: false, sov: 0, position: '-', citations: 0 },
+              { brand: 'Hovenier Nederland', domain: 'hoveniernederland.nl', isSelf: false, sov: 0, position: '-', citations: 0 }
+            ];
+          }
+
+          competitors = [
+            { brand: selfName, domain: cleanDomain, isSelf: true, sov: 0, position: '-', citations: 0 },
+            ...nicheFallbacks
+          ];
+        }
+      }
+
+      const updatedCompetitors = competitors;
 
       return {
         ...k,
         keyword_text: kwText,
         competitors: updatedCompetitors,
         brands_mentioned: updatedCompetitors.map(c => c.domain.split('.')[0]).join(','),
-        prompts: prompts.map(p => ({
-          id: p.id,
-          text: p.prompt_text,
-          status: p.brand_mentioned ? 'Cited' : 'Not Cited',
-          engines: ['chatgpt', 'gemini', 'perplexity'],
-          brandsCount: p.brand_mentioned ? 1 : 0,
-          sourcesCount: p.citations_count || 0
-        }))
+        prompts: prompts.map(p => {
+          let modelMentions = null;
+          let citations = null;
+          let totalBrandsCount = p.brand_mentioned ? 1 : 0;
+          let totalSourcesCount = p.citations_count || 0;
+          let engines = ['chatgpt', 'gemini', 'perplexity'];
+
+          if (p.results) {
+            try {
+              const resObj = typeof p.results === 'string' ? JSON.parse(p.results) : p.results;
+              if (resObj) {
+                modelMentions = resObj.modelMentions || null;
+                citations = resObj.citations || resObj.sources || null;
+                totalBrandsCount = resObj.totalBrandsCount || totalBrandsCount;
+                totalSourcesCount = resObj.totalSourcesCount || (citations ? citations.length : totalSourcesCount);
+                if (modelMentions) {
+                  engines = Object.keys(modelMentions).filter(m => modelMentions[m].mentioned);
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing prompt results from DB:', e);
+            }
+          }
+
+          return {
+            id: p.id,
+            text: p.prompt_text,
+            status: p.brand_mentioned ? 'Cited' : 'Not Cited',
+            engines,
+            brandsCount: totalBrandsCount,
+            sourcesCount: totalSourcesCount,
+            modelMentions,
+            citations,
+            responseSummary: p.response_summary || ''
+          };
+        })
       };
     }));
 

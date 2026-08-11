@@ -5,6 +5,47 @@ import {
   HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck
 } from 'lucide-react';
 
+const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
+  const [error, setError] = React.useState(false);
+  const cleanDomain = (domain || '').toLowerCase().replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0];
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=${size * 2}`;
+
+  if (error || !cleanDomain) {
+    return (
+      <div style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: '4px',
+        backgroundColor: fallbackBg || '#f3f4f6',
+        color: fallbackColor || 'white',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: `${Math.max(10, size - 12)}px`,
+        fontWeight: 700,
+        ...style
+      }}>
+        {fallbackLabel ? fallbackLabel.charAt(0).toUpperCase() : '?'}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={faviconUrl}
+      onError={() => setError(true)}
+      alt=""
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: '4px',
+        objectFit: 'contain',
+        ...style
+      }}
+    />
+  );
+};
+
 export default function Sidebar({ 
   activeTab, 
   setActiveTab, 
@@ -135,20 +176,13 @@ export default function Sidebar({
             if (currentUser.role === 'medewerker') e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
           }}
         >
-          <div style={{
-            width: '24px',
-            height: '24px',
-            borderRadius: '4px',
-            backgroundColor: currentUser.role === 'medewerker' ? '#ec4899' : '#8b5cf6',
-            color: 'white',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 700,
-            fontSize: '11px'
-          }}>
-            {activeWorkspace ? activeWorkspace[0] : 'P'}
-          </div>
+          <FaviconImage
+            domain={activeWorkspace}
+            fallbackLabel={activeWorkspace || 'P'}
+            fallbackBg={currentUser.role === 'medewerker' ? '#ec4899' : '#8b5cf6'}
+            fallbackColor="white"
+            size={24}
+          />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               {currentUser.role === 'medewerker' ? 'Actief Project' : 'Uw Project'}
@@ -192,12 +226,21 @@ export default function Sidebar({
                   fontWeight: activeWorkspace === client.company ? 600 : 400,
                   backgroundColor: activeWorkspace === client.company ? 'rgba(255,255,255,0.06)' : 'transparent',
                   color: activeWorkspace === client.company ? 'white' : 'rgba(255,255,255,0.7)',
-                  display: 'block'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = activeWorkspace === client.company ? 'rgba(255,255,255,0.06)' : 'transparent'}
               >
-                {client.company}
+                <FaviconImage
+                  domain={client.company}
+                  fallbackLabel={client.company}
+                  fallbackBg="rgba(255,255,255,0.1)"
+                  fallbackColor="white"
+                  size={16}
+                />
+                <span>{client.company}</span>
               </button>
             ))}
           </div>

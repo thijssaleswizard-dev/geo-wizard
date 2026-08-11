@@ -182,3 +182,13 @@
     border-right-color: var(--border);
   }
 }
+
+.tooltip-container {
+  position: relative;
+}
+
+.tooltip-container:hover .tooltip-content {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}

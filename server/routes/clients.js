@@ -296,9 +296,23 @@ router.delete('/:company', async (req, res) => {
   const companyKey = decodedCompany.toLowerCase().replace('.nl', '').trim();
 
   try {
+    // Delete client workspace record
     await db('clients').whereRaw('LOWER(company) = ?', [decodedCompany.toLowerCase()]).del();
+    
+    // Delete all linked keywords
     await db('keywords').where({ company_key: companyKey }).del();
+    
+    // Delete all linked prompts
     await db('prompts').where({ company_key: companyKey }).del();
+
+    // Delete all linked citations
+    await db('citations').where({ company_key: companyKey }).del();
+
+    // Delete all linked client users
+    await db('users')
+      .whereRaw('LOWER(company_name) = ?', [decodedCompany.toLowerCase()])
+      .orWhereRaw('LOWER(company_name) = ?', [companyKey])
+      .del();
 
     res.json({ success: true, message: `Project "${decodedCompany}" succesvol verwijderd.` });
   } catch (err) {
