@@ -1,16 +1,22 @@
 import { defineConfig } from 'vite';
+import laravel from 'laravel-vite-plugin';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
-// https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:5002',
-        changeOrigin: true,
-        secure: false
-      }
-    }
-  }
+    cacheDir: path.resolve(__dirname, 'node_modules/.vite'),
+    plugins: [
+        laravel({
+            input: 'resources/js/app.jsx',
+            refresh: true,
+        }),
+        react(),
+    ],
+    server: {
+        host: '0.0.0.0',
+        port: 5173,
+        watch: {
+            usePolling: true,
+        },
+    },
 });
