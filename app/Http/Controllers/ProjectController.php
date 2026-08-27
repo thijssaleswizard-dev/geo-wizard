@@ -11,6 +11,7 @@ use App\Models\Prompt;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\AiEngineService;
+use App\Services\GeoLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -56,7 +57,9 @@ class ProjectController extends Controller
             if ($pendingPrompts > 0 && $prCount > 0) {
                 $status = 'processing';
                 $completed = $prCount - $pendingPrompts;
-                $progress = max(20, min(95, (int) round(($completed / $prCount) * 100)));
+                $base = 25;
+                $portion = (int) round(($completed / $prCount) * 70);
+                $progress = min(96, $base + $portion);
             } elseif ($status === 'processing' && $pendingPrompts === 0) {
                 $status = 'completed';
                 $progress = 100;
@@ -108,6 +111,15 @@ class ProjectController extends Controller
             'visibility_index' => 74,
             'setup_status' => $hasKeywords ? 'processing' : 'completed',
             'setup_progress' => $hasKeywords ? 20 : 100,
+        ]);
+
+        GeoLog::section("NIEUW PROJECT AANGEMAAKT: {$company}");
+        GeoLog::box("PROJECT INFORMATIE", [
+            "Project ID: #{$project->id}",
+            "Bedrijfsnaam: {$company}",
+            "Contactpersoon: {$name} ({$email})",
+            "Pakket: {$subscription}",
+            "Keywords: " . ($hasKeywords ? $keywords : 'Geen'),
         ]);
 
         $userId = null;
@@ -171,7 +183,10 @@ class ProjectController extends Controller
             return;
         }
 
-        foreach ($rawKeywords as $kw) {
+        GeoLog::subSection("KEYWORDS & PROMPT SETUP VOOR PROJECT #{$project->id} ({$project->company})");
+        GeoLog::info("Verwerken van " . count($rawKeywords) . " zoekwoorden...");
+
+        foreach ($rawKeywords as $idx => $kw) {
             $cleanKw = strtolower(trim($kw));
 
             $keyword = Keyword::create([
@@ -191,14 +206,15 @@ class ProjectController extends Controller
             ProcessKeywordCompetitorsJob::dispatch($keyword->id, $keyword->keyword, $companyKey);
 
             // Generate 3 natural human search prompts
+            GeoLog::info("🤖 Genereren van 3 natuurlijke zoekvragen voor keyword: \"{$cleanKw}\"...");
             $prompts = PromptController::generateNaturalPrompts($cleanKw, $project->company);
 
             $defaultEngines = ['chatgpt' => true, 'gemini' => true, 'perplexity' => true, 'copilot' => true, 'claude' => true, 'aio' => true];
-            foreach ($prompts as $pText) {
+            $promptLines = [];
+            foreach ($prompts as $pIdx => $pText) {
                 $promptRecord = Prompt::create([
                     'project_id' => $project->id,
                     'keyword_id' => $keyword->id,
-                    'company_key' => $companyKey,
                     'prompt_text' => trim($pText),
                     'category' => 'AI Generated',
                     'response_summary' => 'Wachtend op achtergrond scan...',
@@ -212,7 +228,14 @@ class ProjectController extends Controller
 
                 // Asynchronously dispatch prompt scan to the queue
                 ProcessPromptJob::dispatch($promptRecord->id);
+                $promptLines[] = ($pIdx + 1) . ". [ID #{$promptRecord->id}] \"{$pText}\"";
             }
+
+            GeoLog::box("KEYWORD #{$keyword->id} TOEGEVOEGD (" . ($idx + 1) . "/" . count($rawKeywords) . ")", array_merge([
+                "Zoekwoord: \"{$cleanKw}\"",
+                "Competitor Scraper Job: Gedispatcht naar queue",
+                "Aangemaakte Prompts & Scanjobs:",
+            ], $promptLines));
         }
     }
 

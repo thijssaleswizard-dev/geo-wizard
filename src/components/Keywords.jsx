@@ -328,7 +328,7 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             }
           })
           .catch(err => console.error('Polling error:', err));
-      }, 2500);
+      }, 1200);
     } else if (crawlingStatus?.active) {
       setCrawlingStatus({
         active: false,
@@ -919,9 +919,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
         flexDirection: 'column',
         gap: '24px',
         backgroundColor: '#ffffff',
-        minHeight: '100vh',
+        minHeight: '100%',
         width: '100%',
-        overflowY: 'auto'
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+        flex: 1
       }}>
         {renderPromptLimitAlert()}
 
@@ -995,13 +997,16 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
 
         {/* Subtabs Header */}
         <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', gap: '8px' }}>
-          {[
-            { id: 'rankings', label: 'Rankings' },
-            { id: 'prompts', label: `Prompts (${(kw.prompts || []).length})` },
-            { id: 'sources', label: 'Sources' },
-            { id: 'shopping', label: 'Shopping' },
-            { id: 'settings', label: 'Settings' }
-          ].map(t => (
+          {(() => {
+            const kwCrawlingCount = (kw.prompts || []).filter(p => !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling').length;
+            return [
+              { id: 'rankings', label: 'Rankings' },
+              { id: 'prompts', label: kwCrawlingCount > 0 ? `Prompts (${(kw.prompts || []).length}) ⏳ (${kwCrawlingCount} bezig...)` : `Prompts (${(kw.prompts || []).length})` },
+              { id: 'sources', label: 'Sources' },
+              { id: 'shopping', label: 'Shopping' },
+              { id: 'settings', label: 'Settings' }
+            ];
+          })().map(t => (
             <button
               key={t.id}
               onClick={() => setDetailTab(t.id)}
@@ -1242,10 +1247,36 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {(() => {
+                const kwCrawlingCount = (kw.prompts || []).filter(p => !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling').length;
+                return kwCrawlingCount > 0 ? (
+                  <div style={{
+                    backgroundColor: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    borderRadius: '10px',
+                    padding: '12px 18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <Loader2 size={18} className="spin" style={{ color: '#2563eb' }} />
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e40af' }}>
+                        AI Zoekmachines doorzoeken... ({kwCrawlingCount} prompt{kwCrawlingCount === 1 ? '' : 's'} actief aan het crawlen)
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#2563eb', fontWeight: 700, backgroundColor: '#ffffff', padding: '4px 10px', borderRadius: '12px', border: '1px solid #bfdbfe' }}>
+                      Live Scannen
+                    </span>
+                  </div>
+                ) : null;
+              })()}
+
               {(kw.prompts || []).map((p, pIdx) => {
                 const promptKey = p.id || pIdx;
                 const isOpen = !!expandedPrompts[promptKey];
-                const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending';
+                const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling';
                 const isMentioned = p.status === 'Cited' || p.mentioned;
                 const brandsCount = p.brandsCount || (isMentioned ? (p.citations ? p.citations.length + 3 : 5) : 0);
                 const sourcesCount = p.sourcesCount || (p.citations ? p.citations.length : 0);
@@ -1267,10 +1298,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                     key={pIdx}
                     style={{
                       backgroundColor: '#ffffff',
-                      border: '1px solid #e5e7eb',
+                      border: isCrawling ? '1px solid #93c5fd' : '1px solid #e5e7eb',
                       borderRadius: '10px',
                       overflow: 'hidden',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                      boxShadow: isCrawling ? '0 2px 8px rgba(37, 99, 235, 0.08)' : '0 1px 3px rgba(0,0,0,0.02)',
+                      transition: 'all 0.2s ease'
                     }}
                   >
                     {/* LLMRefs Prompt Card Header */}
@@ -1280,72 +1312,99 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        backgroundColor: '#f9fafb',
+                        backgroundColor: isCrawling ? '#f0f7ff' : '#f9fafb',
                         cursor: 'pointer',
                         userSelect: 'none'
                       }}
                       onClick={() => toggleExpandedPrompt(promptKey)}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, paddingRight: '12px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, paddingRight: '12px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>
                           {p.text}
                         </span>
                         {isCrawling && (
-                          <span style={{ fontSize: '12px', color: '#6b7280', display: 'flex', alignItems: 'center', gap: '4px', fontStyle: 'italic', fontWeight: 500 }}>
-                            <Loader2 size={12} className="spin" /> crawling...
+                          <span style={{
+                            fontSize: '11px',
+                            padding: '3px 10px',
+                            borderRadius: '16px',
+                            backgroundColor: '#dbeafe',
+                            color: '#1d4ed8',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            border: '1px solid #bfdbfe'
+                          }}>
+                            <Loader2 size={11} className="spin" /> AI Crawl & Grounding actief
                           </span>
                         )}
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        {isMentioned ? (
+                        {isCrawling ? (
                           <span style={{
                             fontSize: '11px',
                             fontWeight: 700,
-                            color: '#16a34a',
-                            backgroundColor: '#dcfce7',
-                            padding: '3px 10px',
+                            color: '#2563eb',
+                            backgroundColor: '#eff6ff',
+                            padding: '3px 12px',
                             borderRadius: '16px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px'
+                            border: '1px solid #bfdbfe'
                           }}>
-                            ✓ Mentioned
+                            Wachten op AI modellen...
                           </span>
                         ) : (
-                          <span style={{
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            color: '#6b7280',
-                            backgroundColor: '#f3f4f6',
-                            padding: '3px 10px',
-                            borderRadius: '16px'
-                          }}>
-                            Not Mentioned
-                          </span>
+                          <>
+                            {isMentioned ? (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: '#16a34a',
+                                backgroundColor: '#dcfce7',
+                                padding: '3px 10px',
+                                borderRadius: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}>
+                                ✓ Mentioned
+                              </span>
+                            ) : (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                color: '#6b7280',
+                                backgroundColor: '#f3f4f6',
+                                padding: '3px 10px',
+                                borderRadius: '16px'
+                              }}>
+                                Not Mentioned
+                              </span>
+                            )}
+
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#2563eb',
+                              backgroundColor: '#eff6ff',
+                              padding: '3px 10px',
+                              borderRadius: '16px'
+                            }}>
+                              • {brandsCount} Brands
+                            </span>
+
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#ea580c',
+                              backgroundColor: '#fff7ed',
+                              padding: '3px 10px',
+                              borderRadius: '16px'
+                            }}>
+                              • {sourcesCount} Sources
+                            </span>
+                          </>
                         )}
-
-                        <span style={{
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          color: '#2563eb',
-                          backgroundColor: '#eff6ff',
-                          padding: '3px 10px',
-                          borderRadius: '16px'
-                        }}>
-                          • {brandsCount} Brands
-                        </span>
-
-                        <span style={{
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          color: '#ea580c',
-                          backgroundColor: '#fff7ed',
-                          padding: '3px 10px',
-                          borderRadius: '16px'
-                        }}>
-                          • {sourcesCount} Sources
-                        </span>
 
                         {isEditMode ? (
                           <button
@@ -1359,26 +1418,26 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                         ) : (
                           <button
                             type="button"
-                            disabled={scanningPrompts[p.id]}
+                            disabled={isCrawling}
                             onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
                             style={{
                               padding: '5px 12px',
                               borderRadius: '6px',
-                              backgroundColor: '#000000',
+                              backgroundColor: isCrawling ? '#93c5fd' : '#000000',
                               color: '#ffffff',
                               fontSize: '11px',
                               fontWeight: 700,
                               display: 'flex',
                               alignItems: 'center',
                               gap: '6px',
-                              cursor: scanningPrompts[p.id] ? 'not-allowed' : 'pointer',
+                              cursor: isCrawling ? 'not-allowed' : 'pointer',
                               border: 'none',
-                              opacity: scanningPrompts[p.id] ? 0.7 : 1,
+                              opacity: isCrawling ? 0.8 : 1,
                               marginLeft: '4px'
                             }}
                           >
-                            {scanningPrompts[p.id] ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
-                            {scanningPrompts[p.id] ? 'Crawling...' : 'Crawl'}
+                            {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
+                            {isCrawling ? 'Crawling...' : 'Crawl'}
                           </button>
                         )}
 
@@ -1388,106 +1447,111 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                       </div>
                     </div>
 
-                    {/* LLMRefs Engine Breakdown Rows */}
+                    {/* LLMRefs Engine Breakdown Rows or Crawling state */}
                     {isOpen && (
                       <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
-                        {enginesList.map((eng, engIdx) => {
-                          const engKey = `${promptKey}_${eng.id}`;
-                          const isEngExpanded = !!expandedEngines[engKey];
-                          return (
-                            <div
-                              key={engIdx}
-                              style={{
-                                borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
-                              }}
-                            >
+                        {isCrawling && !p.modelMentions ? (
+                          <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', backgroundColor: '#f8fafc' }}>
+                            <Loader2 size={24} className="spin" style={{ color: '#2563eb' }} />
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e293b' }}>
+                              Prompt wordt momenteel live uitgevoerd in AI zoekmachines...
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', maxWidth: '480px' }}>
+                              OpenAI SearchGPT, Google AI Mode, Gemini en Perplexity analyseren het web op zoek naar actuele citaties, reviews en merkvermeldingen. Resultaten verschijnen automatisch zodra de scan gereed is.
+                            </span>
+                          </div>
+                        ) : (
+                          enginesList.map((eng, engIdx) => {
+                            const engKey = `${promptKey}_${eng.id}`;
+                            const isEngExpanded = !!expandedEngines[engKey];
+                            return (
                               <div
+                                key={engIdx}
                                 style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  padding: '10px 20px',
-                                  cursor: eng.summary ? 'pointer' : 'default',
-                                  userSelect: 'none',
-                                  backgroundColor: isEngExpanded ? '#f9fafb' : 'transparent'
+                                  borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
                                 }}
-                                onClick={() => eng.summary && toggleExpandedEngine(promptKey, eng.id)}
                               >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                  {EngineLogos[eng.id]}
-                                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                                    {eng.name}
-                                  </span>
-                                  {eng.summary && (
-                                    <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>
-                                      {isEngExpanded ? '(klik om antwoord te verbergen)' : '(klik om antwoord te tonen)'}
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    padding: '10px 20px',
+                                    cursor: eng.summary ? 'pointer' : 'default',
+                                    userSelect: 'none',
+                                    backgroundColor: isEngExpanded ? '#f9fafb' : 'transparent'
+                                  }}
+                                  onClick={() => eng.summary && toggleExpandedEngine(promptKey, eng.id)}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    {EngineLogos[eng.id]}
+                                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                                      {eng.name}
                                     </span>
-                                  )}
-                                </div>
+                                    {eng.summary && (
+                                      <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>
+                                        {isEngExpanded ? '(klik om antwoord te verbergen)' : '(klik om antwoord te tonen)'}
+                                      </span>
+                                    )}
+                                  </div>
 
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  {eng.mentioned && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    {eng.mentioned && (
+                                      <span style={{
+                                        fontSize: '11px',
+                                        fontWeight: 800,
+                                        color: '#16a34a',
+                                        backgroundColor: '#dcfce7',
+                                        padding: '2px 8px',
+                                        borderRadius: '12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '2px'
+                                      }}>
+                                        ✓
+                                      </span>
+                                    )}
                                     <span style={{
                                       fontSize: '11px',
-                                      fontWeight: 800,
-                                      color: '#16a34a',
-                                      backgroundColor: '#dcfce7',
+                                      fontWeight: 700,
+                                      color: '#2563eb',
+                                      backgroundColor: '#eff6ff',
                                       padding: '2px 8px',
-                                      borderRadius: '12px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '2px'
+                                      borderRadius: '12px'
                                     }}>
-                                      ✓
+                                      • {eng.brands} Brands
                                     </span>
-                                  )}
-                                  <span style={{
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    color: '#2563eb',
-                                    backgroundColor: '#eff6ff',
-                                    padding: '2px 8px',
-                                    borderRadius: '12px'
-                                  }}>
-                                    • {eng.brands}
-                                  </span>
-                                  <span style={{
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    color: '#ea580c',
-                                    backgroundColor: '#fff7ed',
-                                    padding: '2px 8px',
-                                    borderRadius: '12px'
-                                  }}>
-                                    • {eng.sources}
-                                  </span>
-                                  {eng.summary && (
-                                    <div style={{ color: '#9ca3af', display: 'flex', alignItems: 'center', marginLeft: '2px' }}>
-                                      {isEngExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {isEngExpanded && eng.summary && (
-                                <div style={{
-                                  padding: '12px 20px 16px 52px',
-                                  backgroundColor: '#f9fafb',
-                                  fontSize: '13px',
-                                  color: '#4b5563',
-                                  borderTop: '1px solid #f3f4f6',
-                                  lineHeight: '1.5',
-                                  whiteSpace: 'pre-wrap'
-                                }}>
-                                  <div style={{ fontWeight: 700, fontSize: '11px', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '6px' }}>
-                                    AI Antwoord:
+                                    <span style={{
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      color: '#ea580c',
+                                      backgroundColor: '#fff7ed',
+                                      padding: '2px 8px',
+                                      borderRadius: '12px'
+                                    }}>
+                                      • {eng.sources} Sources
+                                    </span>
                                   </div>
-                                  {eng.summary}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
+
+                                {isEngExpanded && eng.summary && (
+                                  <div style={{
+                                    padding: '12px 20px 16px 52px',
+                                    backgroundColor: '#f8fafc',
+                                    fontSize: '13px',
+                                    lineHeight: '1.6',
+                                    color: '#334155',
+                                    borderTop: '1px solid #f1f5f9'
+                                  }}>
+                                    <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+                                      {eng.summary}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     )}
                   </div>
@@ -1639,9 +1703,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
       flexDirection: 'column',
       gap: '32px',
       backgroundColor: '#ffffff',
-      minHeight: '100vh',
+      minHeight: '100%',
       width: '100%',
-      overflowY: 'auto'
+      maxWidth: '100%',
+      boxSizing: 'border-box',
+      flex: 1
     }}>
 
       {renderPromptLimitAlert()}
@@ -1854,6 +1920,62 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
         </form>
       )}
 
+      {/* Active Crawl Status Banner */}
+      {(() => {
+        let totalActive = 0;
+        (keywords || []).forEach(k => {
+          (k.prompts || []).forEach(p => {
+            if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
+              totalActive++;
+            }
+          });
+        });
+
+        if (totalActive > 0) {
+          return (
+            <div style={{
+              backgroundColor: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: '12px',
+              padding: '14px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px',
+              boxShadow: '0 2px 8px rgba(37, 99, 235, 0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  backgroundColor: '#dbeafe',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#2563eb',
+                  flexShrink: 0
+                }}>
+                  <Loader2 size={18} className="spin" />
+                </div>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#1e40af' }}>
+                    AI Zoekmachines doorzoeken... ({totalActive} prompt{totalActive === 1 ? '' : 's'} actief aan het crawlen)
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#3b82f6', marginTop: '2px' }}>
+                    ChatGPT (SearchGPT), Google AI Mode, Gemini en Perplexity analyseren het live web. Resultaten en Share of Voice worden automatisch bijgewerkt.
+                  </div>
+                </div>
+              </div>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8', backgroundColor: '#ffffff', padding: '4px 12px', borderRadius: '12px', border: '1px solid #bfdbfe', whiteSpace: 'nowrap' }}>
+                Live Scannen
+              </span>
+            </div>
+          );
+        }
+        return null;
+      })()}
+
       {/* Filter box */}
       <div style={{ position: 'relative', width: '100%' }}>
         <Search size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
@@ -1936,90 +2058,94 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
             </tr>
           </thead>
           <tbody>
-            {filteredKeywords.map((kw) => (
-              <tr
-                key={kw.id}
-                style={{
-                  cursor: 'pointer',
-                  borderBottom: '1px solid #f3f4f6',
-                  transition: 'background-color 0.15s ease'
-                }}
-                onClick={() => {
-                  setSelectedKeyword(kw);
-                  setDetailTab('rankings');
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-              >
-                <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={selectedKeywordIds.includes(kw.id)}
-                    onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
-                  />
-                </td>
-                <td style={{ padding: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
-                    {(kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending')) && (
-                      <span style={{
-                        fontSize: '11px',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        backgroundColor: '#eff6ff',
-                        color: '#2563eb',
-                        fontWeight: 600,
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        border: '1px solid #bfdbfe'
-                      }}>
-                        <Loader2 size={10} className="spin" /> AI Crawl
-                      </span>
-                    )}
-                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f3f4f6', color: '#6b7280', fontWeight: 700 }}>
-                      🇳🇱 NL
-                    </span>
-                  </div>
-                </td>
+            {filteredKeywords.map((kw) => {
+              const isKwScanning = kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
 
-                <td style={{ padding: '16px', fontWeight: 700, color: kw.rank !== '-' ? '#111827' : '#9ca3af' }}>
-                  {kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending') ? (
-                    <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
-                      <Loader2 size={12} className="spin" /> Scannen...
-                    </span>
-                  ) : (
-                    kw.rank
-                  )}
-                </td>
-
-                <td style={{ padding: '16px' }}>
-                  {kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending') ? (
-                    <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
-                      <Loader2 size={12} className="spin" /> Analyseren...
-                    </span>
-                  ) : (
+              return (
+                <tr
+                  key={kw.id}
+                  style={{
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #f3f4f6',
+                    backgroundColor: isKwScanning ? '#f8faff' : 'transparent',
+                    transition: 'background-color 0.15s ease'
+                  }}
+                  onClick={() => {
+                    setSelectedKeyword(kw);
+                    setDetailTab('rankings');
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f0f7ff' : '#f9fafb'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f8faff' : 'transparent'}
+                >
+                  <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedKeywordIds.includes(kw.id)}
+                      onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
+                    />
+                  </td>
+                  <td style={{ padding: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '32px', color: '#111827' }}>{kw.sov}%</span>
-                      <div style={{ width: '80px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
-                        <div style={{
-                          width: `${kw.sov}%`,
-                          height: '100%',
-                          backgroundColor: '#f59e0b',
-                          borderRadius: '2px'
-                        }}></div>
-                      </div>
+                      <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
+                      {isKwScanning && (
+                        <span style={{
+                          fontSize: '11px',
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          backgroundColor: '#eff6ff',
+                          color: '#2563eb',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          border: '1px solid #bfdbfe'
+                        }}>
+                          <Loader2 size={10} className="spin" /> AI Crawl
+                        </span>
+                      )}
+                      <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f3f4f6', color: '#6b7280', fontWeight: 700 }}>
+                        🇳🇱 NL
+                      </span>
                     </div>
-                  )}
-                </td>
+                  </td>
 
-                <td style={{ padding: '16px', fontWeight: 600, color: '#374151' }}>
-                  {kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending') ? (
-                    <span style={{ color: '#9ca3af' }}>-</span>
-                  ) : (
-                    kw.position
-                  )}
-                </td>
+                  <td style={{ padding: '16px', fontWeight: 700, color: kw.rank !== '-' ? '#111827' : '#9ca3af' }}>
+                    {isKwScanning ? (
+                      <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
+                        <Loader2 size={12} className="spin" /> Scannen...
+                      </span>
+                    ) : (
+                      kw.rank
+                    )}
+                  </td>
+
+                  <td style={{ padding: '16px' }}>
+                    {isKwScanning ? (
+                      <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
+                        <Loader2 size={12} className="spin" /> Analyseren...
+                      </span>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '32px', color: '#111827' }}>{kw.sov}%</span>
+                        <div style={{ width: '80px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${kw.sov}%`,
+                            height: '100%',
+                            backgroundColor: '#f59e0b',
+                            borderRadius: '2px'
+                          }}></div>
+                        </div>
+                      </div>
+                    )}
+                  </td>
+
+                  <td style={{ padding: '16px', fontWeight: 600, color: '#374151' }}>
+                    {isKwScanning ? (
+                      <span style={{ color: '#9ca3af' }}>-</span>
+                    ) : (
+                      kw.position
+                    )}
+                  </td>
 
                 <td style={{ padding: '16px', color: '#6b7280' }}>
                   {kw.volume}
@@ -2069,7 +2195,8 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                   </div>
                 </td>
               </tr>
-            ))}
+            );
+          })}
           </tbody>
         </table>
       </div>

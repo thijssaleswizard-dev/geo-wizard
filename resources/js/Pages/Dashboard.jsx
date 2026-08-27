@@ -139,7 +139,7 @@ export default function Dashboard({ auth, projects: initialProjects }) {
 
     const interval = setInterval(() => {
       fetchProjects(currentUser);
-    }, 3000);
+    }, 1200);
 
     return () => clearInterval(interval);
   }, [clients, currentUser]);
@@ -532,7 +532,7 @@ export default function Dashboard({ auth, projects: initialProjects }) {
         </header>
 
         {/* Dynamic subview */}
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, width: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           {renderContent()}
         </div>
 

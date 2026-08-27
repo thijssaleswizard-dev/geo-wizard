@@ -10,7 +10,6 @@ class Prompt extends Model
 {
     protected $fillable = [
         'project_id',
-        'company_key',
         'keyword_id',
         'prompt_text',
         'category',

@@ -416,7 +416,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             return (
               <div
                 key={client.company}
-                onClick={client.setup_status === 'processing' ? null : () => onSelectClient(client.company)}
+                onClick={() => onSelectClient(client.company)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -425,18 +425,15 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   border: '1px solid #e5e7eb',
                   borderRadius: '12px',
                   padding: '16px 20px',
-                  cursor: client.setup_status === 'processing' ? 'default' : 'pointer',
+                  cursor: 'pointer',
                   transition: 'all 0.2s ease',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-                  opacity: client.setup_status === 'processing' ? 0.85 : 1
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
                 }}
                 className="project-card"
                 onMouseEnter={(e) => {
-                  if (client.setup_status !== 'processing') {
-                    e.currentTarget.style.borderColor = 'var(--brand-primary)';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                    e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.05)';
-                  }
+                  e.currentTarget.style.borderColor = 'var(--brand-primary)';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.05)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = '#e5e7eb';
@@ -463,18 +460,22 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   </div>
                 </div>
 
-                {/* Right Side: Keywords Count & Actions OR Progress Indicator */}
+                {/* Right Side: Keywords Count & Actions OR Clean Loader */}
                 {client.setup_status === 'processing' ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', minWidth: '180px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Loader2 size={12} className="spin" style={{ color: 'var(--brand-primary)' }} />
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        AI Prompts opzetten... {client.setup_progress}%
-                      </span>
-                    </div>
-                    <div style={{ width: '120px', height: '4px', backgroundColor: '#e5e7eb', borderRadius: '2px', overflow: 'hidden' }}>
-                      <div style={{ width: `${client.setup_progress}%`, height: '100%', backgroundColor: 'var(--brand-primary)', transition: 'width 0.4s ease' }} />
-                    </div>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 14px',
+                    backgroundColor: '#f0fdf4',
+                    border: '1px solid #bbf7d0',
+                    borderRadius: '20px',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                  }}>
+                    <Loader2 size={13} className="spin" style={{ color: '#16a34a' }} />
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#15803d' }}>
+                      AI Prompts opzetten...
+                    </span>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Citation;
+use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -10,18 +11,9 @@ class CitationController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $projectId = $request->query('project_id');
         $query = strtolower($request->query('query', 'saleswizard'));
-        $companyKey = 'saleswizard';
-
-        if (str_contains($query, 'doublesmart')) {
-            $companyKey = 'doublesmart';
-        } elseif (str_contains($query, 'inoma')) {
-            $companyKey = 'inoma';
-        } elseif (str_contains($query, 'aanpoters')) {
-            $companyKey = 'aanpoters';
-        } else {
-            $companyKey = strtolower(trim(str_replace('.nl', '', $query)));
-        }
+        $companyKey = strtolower(trim(str_replace('.nl', '', $query)));
 
         $crawlLogs = [
             "[Scraping Proxy] Connecting to scraping proxy tunnel (tunnel_id: sb_nl_8921)...",
@@ -31,7 +23,7 @@ class CitationController extends Controller
             "[Scraping Proxy] Successfully verified web citations from MySQL database.",
         ];
 
-        $project = Project::whereRaw('LOWER(company) = ?', [strtolower($query)])
+        $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($query)])
             ->orWhereRaw('LOWER(company) = ?', [strtolower("{$query}.nl")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();

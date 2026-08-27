@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessPromptJob;
+use App\Models\Keyword;
 use App\Models\Project;
 use App\Models\Prompt;
 use App\Services\AiEngineService;
+use App\Services\GeoLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -32,7 +34,6 @@ class PromptController extends Controller
         } elseif ($company) {
             $decoded = trim(urldecode($company));
             $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
-            $cleanKey = strtolower(preg_replace('/[^a-z0-9]/', '', $companyKey));
 
             $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
@@ -41,12 +42,6 @@ class PromptController extends Controller
 
             if ($project) {
                 $query->where('project_id', $project->id);
-            } else {
-                $query->where(function ($q) use ($companyKey, $cleanKey, $decoded) {
-                    $q->where('company_key', $companyKey)
-                      ->orWhere('company_key', $cleanKey)
-                      ->orWhere('company_key', strtolower($decoded));
-                });
             }
         }
 
@@ -120,6 +115,7 @@ STRIKTE REGELS:
 
 Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder nummering of inleidende tekst.";
 
+                $startTime = microtime(true);
                 $response = Http::withToken($apiKey)
                     ->timeout(10)
                     ->post('https://api.openai.com/v1/chat/completions', [
@@ -129,26 +125,32 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
                         'temperature' => 0.4,
                     ]);
 
+                $duration = (int) round((microtime(true) - $startTime) * 1000);
+
                 if ($response->successful()) {
                     $text = trim($response->json('choices.0.message.content') ?? '');
                     if (str_contains($text, '|')) {
                         $parts = array_values(array_filter(array_map('trim', explode('|', $text))));
                         if (count($parts) >= 2) {
-                            return array_slice($parts, 0, 3);
+                            $resPrompts = array_slice($parts, 0, 3);
+                            GeoLog::info("✅ [AI Prompt Gen] 3 prompts gegenereerd via OpenAI gpt-4o-mini in {$duration}ms voor keyword \"{$keyword}\"");
+                            return $resPrompts;
                         }
                     }
                 }
             } catch (\Exception $e) {
-                Log::warning("[Natural Prompt Gen Warning] {$e->getMessage()}");
+                GeoLog::warning("⚠️ [AI Prompt Gen Waarschuwing] {$e->getMessage()}");
             }
         }
 
         $kwLower = strtolower(trim($keyword));
-        return [
+        $fallback = [
             "Wat zijn de beste {$kwLower} opties?",
             "Welke partij gespecialiseerd in {$kwLower} raden jullie aan?",
             "Top aanbevolen specialisten voor {$kwLower}",
         ];
+        GeoLog::info("ℹ️ [AI Prompt Gen] Standaard prompt templates gebruikt voor keyword \"{$keyword}\"");
+        return $fallback;
     }
 
     public function store(Request $request): JsonResponse
@@ -167,16 +169,27 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
         $decoded = trim(urldecode($company));
         $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
 
+        if ($keywordId) {
+            $kw = Keyword::find($keywordId);
+            if ($kw && $kw->project_id) {
+                $projectId = $kw->project_id;
+            }
+        }
+
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
             ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 
+        if ($project) {
+            $projectId = $project->id;
+            $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
+        }
+
         $defaultEngines = $engines ?: ['chatgpt' => true, 'gemini' => true, 'perplexity' => true, 'copilot' => true, 'claude' => true, 'aio' => true];
 
         $prompt = Prompt::create([
-            'project_id' => $project ? $project->id : null,
-            'company_key' => $companyKey,
+            'project_id' => $projectId,
             'keyword_id' => $keywordId ? (int) $keywordId : null,
             'prompt_text' => $text,
             'category' => $tag,
@@ -188,6 +201,8 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
             'status' => 'pending',
             'engines' => $defaultEngines,
         ]);
+
+        GeoLog::info("📝 [PROMPT AANGEMAAKT] ID #{$prompt->id} gekoppeld aan Project ID: #" . ($projectId ?? 'geen') . " (Keyword ID: #" . ($keywordId ?? 'geen') . ")");
 
         ProcessPromptJob::dispatch($prompt->id);
 
@@ -215,6 +230,8 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
         if (!$promptRecord) {
             return response()->json(['error' => 'Prompt niet gevonden'], 404);
         }
+
+        GeoLog::info("🔄 [HANDMATIGE SCAN] Handmatige scan gestart voor Prompt #{$id}: \"{$promptRecord->prompt_text}\"");
 
         $promptRecord->update([
             'status' => 'pending',
