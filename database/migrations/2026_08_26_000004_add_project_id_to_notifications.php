@@ -36,10 +36,25 @@ return new class extends Migration
     public function down(): void
     {
         if (Schema::hasTable('notifications') && Schema::hasColumn('notifications', 'project_id')) {
+            Schema::disableForeignKeyConstraints();
+
+            if (DB::getDriverName() === 'sqlite') {
+                DB::statement("DROP INDEX IF EXISTS notifications_project_id_index");
+            } else {
+                try {
+                    Schema::table('notifications', function (Blueprint $table) {
+                        $table->dropForeign(['project_id']);
+                        $table->dropIndex(['project_id']);
+                    });
+                } catch (\Throwable $e) {
+                }
+            }
+
             Schema::table('notifications', function (Blueprint $table) {
-                $table->dropForeign(['project_id']);
                 $table->dropColumn('project_id');
             });
+
+            Schema::enableForeignKeyConstraints();
         }
     }
 };
