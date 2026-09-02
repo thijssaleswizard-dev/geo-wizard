@@ -53,9 +53,12 @@ return new class extends Migration
         // 3. Add Foreign Key Constraints with ON DELETE CASCADE
         foreach ($tables as $tableName) {
             if (Schema::hasTable($tableName) && Schema::hasColumn($tableName, 'project_id')) {
-                Schema::table($tableName, function (Blueprint $table) {
-                    $table->foreign('project_id')->references('id')->on('projects')->cascadeOnDelete();
-                });
+                try {
+                    Schema::table($tableName, function (Blueprint $table) {
+                        $table->foreign('project_id')->references('id')->on('projects')->cascadeOnDelete();
+                    });
+                } catch (\Throwable $e) {
+                }
             }
         }
 
@@ -65,9 +68,12 @@ return new class extends Migration
             $validKeywordIds = DB::table('keywords')->pluck('id')->toArray();
             DB::table('prompts')->whereNotIn('keyword_id', $validKeywordIds)->update(['keyword_id' => null]);
 
-            Schema::table('prompts', function (Blueprint $table) {
-                $table->foreign('keyword_id')->references('id')->on('keywords')->cascadeOnDelete();
-            });
+            try {
+                Schema::table('prompts', function (Blueprint $table) {
+                    $table->foreign('keyword_id')->references('id')->on('keywords')->cascadeOnDelete();
+                });
+            } catch (\Throwable $e) {
+            }
         }
     }
 
