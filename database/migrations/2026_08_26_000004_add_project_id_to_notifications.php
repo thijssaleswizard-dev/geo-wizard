@@ -9,11 +9,30 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasTable('notifications') && !Schema::hasColumn('notifications', 'project_id')) {
-            Schema::table('notifications', function (Blueprint $table) {
-                $table->unsignedBigInteger('project_id')->nullable()->after('id')->index();
-                $table->foreign('project_id')->references('id')->on('projects')->cascadeOnDelete();
-            });
+        if (Schema::hasTable('notifications')) {
+            if (!Schema::hasColumn('notifications', 'project_id')) {
+                $isBigInt = true;
+                try {
+                    $colType = Schema::getColumnType('projects', 'id');
+                    $isBigInt = str_contains(strtolower($colType), 'bigint');
+                } catch (\Throwable $e) {
+                }
+
+                Schema::table('notifications', function (Blueprint $table) use ($isBigInt) {
+                    if ($isBigInt) {
+                        $table->unsignedBigInteger('project_id')->nullable()->after('id')->index();
+                    } else {
+                        $table->unsignedInteger('project_id')->nullable()->after('id')->index();
+                    }
+                });
+            }
+
+            try {
+                Schema::table('notifications', function (Blueprint $table) {
+                    $table->foreign('project_id')->references('id')->on('projects')->cascadeOnDelete();
+                });
+            } catch (\Throwable $e) {
+            }
 
             // Map any existing company_key notifications to matching project_id
             $projects = DB::table('projects')->get();
