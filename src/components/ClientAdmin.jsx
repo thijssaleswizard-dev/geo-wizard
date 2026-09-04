@@ -3,8 +3,12 @@ import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal, Sparkles }
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
   const [error, setError] = React.useState(false);
-  const cleanDomain = (domain || '').toLowerCase().replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0];
+  const cleanDomain = (domain || '').toLowerCase().replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0].split('?')[0].trim();
   const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=${size * 2}`;
+
+  React.useEffect(() => {
+    setError(false);
+  }, [cleanDomain]);
 
   if (error || !cleanDomain) {
     return (
@@ -58,6 +62,34 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [step, setStep] = useState(1);
   const [keywordInput, setKeywordInput] = useState('');
   const [projectToDelete, setProjectToDelete] = useState(null);
+
+  const handleOpenCreateModal = () => {
+    setCompany('https://');
+    setName('');
+    setEmail('');
+    setPassword('');
+    setSubscription('AI Pro');
+    setKeywordInput('');
+    setStep(1);
+    setError('');
+    setLoading(false);
+    setRecommending(false);
+    setShowModal(true);
+  };
+
+  const handleCloseCreateModal = () => {
+    setShowModal(false);
+    setCompany('https://');
+    setName('');
+    setEmail('');
+    setPassword('');
+    setSubscription('AI Pro');
+    setKeywordInput('');
+    setStep(1);
+    setError('');
+    setLoading(false);
+    setRecommending(false);
+  };
 
   // Edit Client Modal state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -316,7 +348,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             </button>
 
             <button
-              onClick={() => { setShowModal(true); setError(''); setStep(1); setKeywordInput(''); setCompany('https://'); }}
+              onClick={handleOpenCreateModal}
               style={{
                 backgroundColor: '#000000',
                 color: '#ffffff',
@@ -531,7 +563,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             position: 'relative'
           }}>
             <button
-              onClick={() => setShowModal(false)}
+              onClick={handleCloseCreateModal}
               style={{
                 position: 'absolute',
                 right: '20px',
@@ -552,7 +584,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     Nieuwe Klant Workspace Toevoegen
                   </h3>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    Maak een nieuw klantproject aan in de SQLite database.
+                    Maak een nieuw klantproject aan in de database.
                   </p>
                 </div>
 
@@ -669,7 +701,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   <div style={{ display: 'flex', gap: '12px', marginTop: '12px', justifyContent: 'flex-end' }}>
                     <button
                       type="button"
-                      onClick={() => setShowModal(false)}
+                      onClick={handleCloseCreateModal}
                       style={{
                         padding: '10px 16px',
                         borderRadius: 'var(--border-radius-sm)',
@@ -1202,7 +1234,9 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     gap: '6px',
                     backgroundColor: '#fafafa'
                   }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>{eng.name.split(' ')[0]}</span>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
+                      {eng.engine === 'copilot' ? 'Copilot (MS)' : eng.name.split(' ')[0]}
+                    </span>
                     <span style={{
                       alignSelf: 'flex-start',
                       fontSize: '10px',
@@ -1214,6 +1248,11 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     }}>
                       {label}
                     </span>
+                    {eng.engine === 'copilot' && eng.status === 'NOT_CONFIGURED' && (
+                      <span style={{ fontSize: '9px', color: '#6b7280' }}>
+                        Verbergd in UI totdat COPILOT_API_KEY is ingesteld
+                      </span>
+                    )}
                     {eng.lastError && (
                       <span style={{ fontSize: '9px', color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={eng.lastError}>
                         {eng.lastError}
