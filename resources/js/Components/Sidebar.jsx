@@ -7,8 +7,12 @@ import {
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
   const [error, setError] = React.useState(false);
-  const cleanDomain = (domain || '').toLowerCase().replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0];
+  const cleanDomain = (domain || '').toLowerCase().replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0].split('?')[0].trim();
   const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=${size * 2}`;
+
+  React.useEffect(() => {
+    setError(false);
+  }, [cleanDomain]);
 
   if (error || !cleanDomain) {
     return (

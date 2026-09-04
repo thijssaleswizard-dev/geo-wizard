@@ -3,14 +3,22 @@ import {
   ChevronDown, HelpCircle, Check, Info, ArrowUpRight, 
   TrendingUp, Star, Award, ShieldAlert, Sparkles, MessageSquare,
   RefreshCw, Loader2, CheckCircle2
-} from 'lucide-react';const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
-  const [error, setError] = useState(!domain);
+} from 'lucide-react';
+const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
+  const [error, setError] = useState(false);
+  const cleanDomain = (domain || '')
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .split('?')[0]
+    .trim();
 
   useEffect(() => {
-    setError(!domain);
-  }, [domain]);
+    setError(false);
+  }, [cleanDomain]);
 
-  if (error) {
+  if (error || !cleanDomain) {
     return (
       <span style={{
         width: `${size}px`,
@@ -30,12 +38,12 @@ import {
     );
   }
 
-  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=${size * 2}`;
+  const faviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=${size * 2}`;
 
   return (
     <img 
       src={faviconUrl}
-      alt={fallbackLabel}
+      alt={fallbackLabel || cleanDomain}
       onError={() => setError(true)}
       style={{
         width: `${size}px`,
