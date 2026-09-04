@@ -65,8 +65,8 @@ export default function Citations() {
     ]);
 
     try {
-      // Connect to the local crawler server
-      const res = await fetch(`http://localhost:5001/api/citations?query=${encodeURIComponent(crawlTarget)}`);
+      // Connect to citations endpoint
+      const res = await fetch(`/api/citations?query=${encodeURIComponent(crawlTarget)}&crawl=true`);
       const data = await res.json();
       
       if (data.success) {

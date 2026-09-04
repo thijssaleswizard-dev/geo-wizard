@@ -275,12 +275,12 @@ class AiEngineService
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
-        GeoLog::aiCall('Google Gemini', 'gemini-3.5-flash', $promptSnippet, 'START', null, "Querying live model & Google Search Grounding for [{$companyName}]");
+        GeoLog::aiCall('Google Gemini', 'gemini-2.0-flash', $promptSnippet, 'START', null, "Querying live model & Google Search Grounding for [{$companyName}]");
 
         if ($apiKey) {
             try {
                 $response = Http::timeout(50)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={$apiKey}", [
+                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => $prompt]]]
                         ],
@@ -306,11 +306,11 @@ class AiEngineService
                     $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
 
                     self::logApiCall('gemini', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Google Gemini', 'gemini-3.5-flash', $promptSnippet, 'SUCCESS', $duration, "Google Grounded: " . count($searchQueries) . " queries | Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 90)" : "NEE (Score 25)"));
+                    GeoLog::aiCall('Google Gemini', 'gemini-2.0-flash', $promptSnippet, 'SUCCESS', $duration, "Google Grounded: " . count($searchQueries) . " queries | Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 90)" : "NEE (Score 25)"));
 
                     return [
-                        'method' => 'Gemini API (gemini-3.5-flash + Google Grounding)',
-                        'name' => 'Gemini 3.5 Flash',
+                        'method' => 'Gemini API (gemini-2.0-flash + Google Grounding)',
+                        'name' => 'Gemini 2.0 Flash',
                         'text' => $content,
                         'citations' => array_values(array_unique($citations)),
                         'mentioned' => $mentionsBrand,
@@ -323,18 +323,18 @@ class AiEngineService
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
                 self::logApiCall('gemini', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('Google Gemini', 'gemini-3.5-flash', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                GeoLog::aiCall('Google Gemini', 'gemini-2.0-flash', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
                 self::logApiCall('gemini', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('Google Gemini', 'gemini-3.5-flash', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                GeoLog::aiCall('Google Gemini', 'gemini-2.0-flash', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
-        GeoLog::aiCall('Google Gemini', 'gemini-3.5-flash', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        GeoLog::aiCall('Google Gemini', 'gemini-2.0-flash', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
             'method' => 'Gemini API Simulator',
-            'name' => 'Gemini 3.5 Flash',
+            'name' => 'Gemini 2.0 Flash',
             'text' => "Gebaseerd op klantbeoordelingen en online autoriteit is {$companyName} een van de best scorende specialisten voor deze zoekopdracht.",
             'mentioned' => true,
             'position' => 1,
@@ -352,12 +352,12 @@ class AiEngineService
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
-        GeoLog::aiCall('Google AI Mode', 'gemini-3.5-flash (Live Search)', $promptSnippet, 'START', null, "Querying Google AI Mode for [{$companyName}]");
+        GeoLog::aiCall('Google AI Mode', 'gemini-2.0-flash (Live Search)', $promptSnippet, 'START', null, "Querying Google AI Mode for [{$companyName}]");
 
         if ($apiKey) {
             try {
                 $response = Http::timeout(50)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={$apiKey}", [
+                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => "[Google AI Mode - Live Search]\nBeantwoord de volgende zoekvraag als Google AI Mode op basis van actuele lokale Google zoekresultaten, reviews en bedrijfsgegevens in Nederland:\n\n{$prompt}"]]]
                         ],
@@ -382,10 +382,10 @@ class AiEngineService
                     $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
 
                     self::logApiCall('aimode', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Google AI Mode', 'gemini-3.5-flash (Live Search)', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 91)" : "NEE (Score 25)"));
+                    GeoLog::aiCall('Google AI Mode', 'gemini-2.0-flash (Live Search)', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 91)" : "NEE (Score 25)"));
 
                     return [
-                        'method' => 'Google AI Mode (Gemini 3.5 + Google Search)',
+                        'method' => 'Google AI Mode (Gemini 2.0 + Google Search)',
                         'name' => 'Google AI Mode',
                         'text' => $content,
                         'citations' => array_values(array_unique($citations)),
@@ -422,12 +422,12 @@ class AiEngineService
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
-        GeoLog::aiCall('Google AI Overviews', 'gemini-3.5-flash (SGE)', $promptSnippet, 'START', null, "Querying Google AI Overviews for [{$companyName}]");
+        GeoLog::aiCall('Google AI Overviews', 'gemini-2.0-flash (SGE)', $promptSnippet, 'START', null, "Querying Google AI Overviews for [{$companyName}]");
 
         if ($apiKey) {
             try {
                 $response = Http::timeout(50)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key={$apiKey}", [
+                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => "[Google AI Overviews - SGE Snapshot]\nGenereer een beknopte, feitelijke AI Snapshot zoals die direct bovenaan Google Search verschijnt voor deze zoekvraag. Som de meest relevante lokale partijen en kwalificaties op:\n\n{$prompt}"]]]
                         ],
