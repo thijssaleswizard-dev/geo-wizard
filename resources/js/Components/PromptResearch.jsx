@@ -4,7 +4,7 @@ import {
   HelpCircle, RefreshCw, BarChart2, MessageSquare, ExternalLink, Terminal, ShieldCheck 
 } from 'lucide-react';
 
-export default function PromptResearch({ activeWorkspace }) {
+export default function PromptResearch({ activeWorkspace, enabledEngines }) {
   const targetCompany = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '');
   const [query, setQuery] = useState('Zoek een betrouwbaar online marketing bureau voor mijn webshop');
   const [loading, setLoading] = useState(false);
@@ -16,7 +16,7 @@ export default function PromptResearch({ activeWorkspace }) {
     chatgpt: true,
     gemini: true,
     perplexity: true,
-    copilot: true,
+    copilot: !!enabledEngines?.copilot,
     claude: true,
     aio: true
   });

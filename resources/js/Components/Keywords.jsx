@@ -109,7 +109,7 @@ const EngineLogos = {
   )
 };
 
-export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPrompts }) {
+export default function Keywords({ currentUser, activeWorkspace, enabledEngines, onUpdateAddonPrompts }) {
   const [keywords, setKeywords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedKeyword, setSelectedKeyword] = useState(null);
@@ -1043,11 +1043,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                 <span>AI Search Engines</span>
                 <div style={{ display: 'flex', gap: '6px' }}>
                   {[
-                    { domain: 'openai.com', name: 'ChatGPT' },
-                    { domain: 'gemini.google.com', name: 'Gemini' },
-                    { domain: 'perplexity.ai', name: 'Perplexity' },
-                    { domain: 'copilot.microsoft.com', name: 'Copilot' }
-                  ].map((e, idx) => (
+                    { id: 'chatgpt', domain: 'openai.com', name: 'ChatGPT' },
+                    { id: 'gemini', domain: 'gemini.google.com', name: 'Gemini' },
+                    { id: 'perplexity', domain: 'perplexity.ai', name: 'Perplexity' },
+                    { id: 'copilot', domain: 'copilot.microsoft.com', name: 'Copilot' }
+                  ].filter(e => !enabledEngines || enabledEngines[e.id] !== false).map((e, idx) => (
                     <img
                       key={idx}
                       src={`https://www.google.com/s2/favicons?domain=${e.domain}&sz=48`}
@@ -1291,7 +1291,11 @@ export default function Keywords({ currentUser, activeWorkspace, onUpdateAddonPr
                   { id: 'claude', name: 'Anthropic Claude', mentioned: mData.claude?.mentioned ?? false, brands: mData.claude?.brands || 0, sources: mData.claude?.sources || 0, summary: mData.claude?.summary },
                   { id: 'copilot', name: 'Microsoft Copilot', mentioned: mData.copilot?.mentioned ?? isMentioned, brands: mData.copilot?.brands || (isMentioned ? 3 : 0), sources: mData.copilot?.sources || 1, summary: mData.copilot?.summary },
                   { id: 'meta', name: 'Meta AI', mentioned: mData.meta?.mentioned ?? false, brands: mData.meta?.brands || 0, sources: mData.meta?.sources || 0, summary: mData.meta?.summary }
-                ];
+                ].filter(e => {
+                  if (enabledEngines && enabledEngines[e.id] === false) return false;
+                  if (p.modelMentions && !(e.id in p.modelMentions) && (!enabledEngines || !enabledEngines[e.id])) return false;
+                  return true;
+                });
 
                 return (
                   <div

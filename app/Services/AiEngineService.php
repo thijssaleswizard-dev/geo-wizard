@@ -28,6 +28,101 @@ class AiEngineService
         return self::$apiCallHistory;
     }
 
+    public static function getEngineConfigs(): array
+    {
+        return [
+            'chatgpt' => [
+                'key' => 'chatgpt',
+                'apiKey' => env('OPENAI_API_KEY'),
+                'envKey' => 'OPENAI_API_KEY',
+                'name' => 'OpenAI (gpt-4o-mini)',
+                'shortName' => 'ChatGPT',
+                'alwaysAvailable' => true,
+                'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-'),
+            ],
+            'gemini' => [
+                'key' => 'gemini',
+                'apiKey' => env('GEMINI_API_KEY'),
+                'envKey' => 'GEMINI_API_KEY',
+                'name' => 'Gemini (gemini-2.5-flash)',
+                'shortName' => 'Gemini',
+                'alwaysAvailable' => true,
+                'check' => fn($k) => !empty($k),
+            ],
+            'perplexity' => [
+                'key' => 'perplexity',
+                'apiKey' => env('PERPLEXITY_API_KEY'),
+                'envKey' => 'PERPLEXITY_API_KEY',
+                'name' => 'Perplexity API',
+                'shortName' => 'Perplexity',
+                'alwaysAvailable' => true,
+                'check' => fn($k) => !empty($k),
+            ],
+            'claude' => [
+                'key' => 'claude',
+                'apiKey' => env('ANTHROPIC_API_KEY'),
+                'envKey' => 'ANTHROPIC_API_KEY',
+                'name' => 'Anthropic Claude 3.5',
+                'shortName' => 'Claude',
+                'alwaysAvailable' => true,
+                'check' => fn($k) => !empty($k),
+            ],
+            'aio' => [
+                'key' => 'aio',
+                'apiKey' => null,
+                'envKey' => null,
+                'name' => 'Google AI Overviews',
+                'shortName' => 'AI Overviews',
+                'alwaysAvailable' => true,
+                'check' => fn($k) => true,
+            ],
+            'copilot' => [
+                'key' => 'copilot',
+                'apiKey' => env('COPILOT_API_KEY'),
+                'envKey' => 'COPILOT_API_KEY',
+                'name' => 'Microsoft Copilot',
+                'shortName' => 'Copilot',
+                'alwaysAvailable' => false, // Conditioneel: alleen als COPILOT_API_KEY geconfigureerd is
+                'check' => fn($k) => !empty($k),
+            ],
+            'meta' => [
+                'key' => 'meta',
+                'apiKey' => env('META_API_KEY'),
+                'envKey' => 'META_API_KEY',
+                'name' => 'Meta AI',
+                'shortName' => 'Meta AI',
+                'alwaysAvailable' => false, // Conditioneel: alleen als META_API_KEY geconfigureerd is
+                'check' => fn($k) => !empty($k),
+            ],
+        ];
+    }
+
+    public static function isEngineEnabled(string $key): bool
+    {
+        $configs = self::getEngineConfigs();
+        $normalized = strtolower(trim($key));
+        if (!isset($configs[$normalized])) {
+            return false;
+        }
+
+        $cfg = $configs[$normalized];
+        if (!empty($cfg['apiKey'])) {
+            return ($cfg['check'])($cfg['apiKey']);
+        }
+
+        return !empty($cfg['alwaysAvailable']);
+    }
+
+    public static function getEnabledEngines(): array
+    {
+        $configs = self::getEngineConfigs();
+        $enabled = [];
+        foreach ($configs as $k => $cfg) {
+            $enabled[$k] = self::isEngineEnabled($k);
+        }
+        return $enabled;
+    }
+
     public static function getApiStatus(): array
     {
         $engines = [
@@ -35,6 +130,7 @@ class AiEngineService
             ['key' => 'gemini', 'name' => 'Gemini (gemini-2.5-flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'perplexity', 'name' => 'Perplexity API', 'envKey' => 'PERPLEXITY_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'anthropic', 'name' => 'Anthropic Claude 3.5', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
+            ['key' => 'copilot', 'name' => 'Microsoft Copilot', 'envKey' => 'COPILOT_API_KEY', 'check' => fn($k) => !empty($k)],
         ];
 
         return array_map(function ($eng) {

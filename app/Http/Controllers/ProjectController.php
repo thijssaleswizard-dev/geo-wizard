@@ -209,7 +209,7 @@ class ProjectController extends Controller
             GeoLog::info("🤖 Genereren van 3 natuurlijke zoekvragen voor keyword: \"{$cleanKw}\"...");
             $prompts = PromptController::generateNaturalPrompts($cleanKw, $project->company);
 
-            $defaultEngines = ['chatgpt' => true, 'gemini' => true, 'perplexity' => true, 'copilot' => true, 'claude' => true, 'aio' => true];
+            $defaultEngines = AiEngineService::getEnabledEngines();
             $promptLines = [];
             foreach ($prompts as $pIdx => $pText) {
                 $promptRecord = Prompt::create([
@@ -326,7 +326,13 @@ class ProjectController extends Controller
     {
         $status = AiEngineService::getApiStatus();
         $history = AiEngineService::getApiHistory();
+        $enabledEngines = AiEngineService::getEnabledEngines();
 
-        return response()->json(['success' => true, 'status' => $status, 'history' => $history]);
+        return response()->json([
+            'success' => true,
+            'status' => $status,
+            'history' => $history,
+            'enabledEngines' => $enabledEngines
+        ]);
     }
 }

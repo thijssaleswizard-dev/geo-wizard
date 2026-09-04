@@ -1230,7 +1230,9 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     gap: '6px',
                     backgroundColor: '#fafafa'
                   }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>{eng.name.split(' ')[0]}</span>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
+                      {eng.engine === 'copilot' ? 'Copilot (MS)' : eng.name.split(' ')[0]}
+                    </span>
                     <span style={{
                       alignSelf: 'flex-start',
                       fontSize: '10px',
@@ -1242,6 +1244,11 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     }}>
                       {label}
                     </span>
+                    {eng.engine === 'copilot' && eng.status === 'NOT_CONFIGURED' && (
+                      <span style={{ fontSize: '9px', color: '#6b7280' }}>
+                        Verbergd in UI totdat COPILOT_API_KEY is ingesteld
+                      </span>
+                    )}
                     {eng.lastError && (
                       <span style={{ fontSize: '9px', color: '#ef4444', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={eng.lastError}>
                         {eng.lastError}

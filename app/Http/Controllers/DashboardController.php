@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Services\AiEngineService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -19,6 +20,7 @@ class DashboardController extends Controller
                 'user' => $user,
             ],
             'projects' => $projects,
+            'enabledEngines' => AiEngineService::getEnabledEngines(),
         ]);
     }
 }

@@ -48,7 +48,7 @@ import {
   );
 };
 
-export default function Overview({ activeWorkspace }) {
+export default function Overview({ activeWorkspace, enabledEngines }) {
   const currentCompany = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '');
   
   // Filters state
@@ -575,7 +575,7 @@ export default function Overview({ activeWorkspace }) {
               <option>ChatGPT</option>
               <option>Gemini</option>
               <option>Perplexity</option>
-              <option>Copilot</option>
+              {enabledEngines?.copilot && <option>Copilot</option>}
               <option>Google AI Overviews</option>
             </select>
             <ChevronDown size={14} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', opacity: 0.6 }} />

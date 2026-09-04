@@ -4,11 +4,11 @@ import {
   CheckCircle, ArrowUpRight, Zap, RefreshCw 
 } from 'lucide-react';
 
-export default function AgentsAnalytics() {
+export default function AgentsAnalytics({ enabledEngines }) {
   const [activeEngine, setActiveEngine] = useState('All');
 
   // Engines database
-  const enginesData = {
+  const allEnginesData = {
     chatgpt: {
       name: 'ChatGPT (OpenAI)',
       visibility: 25,
@@ -70,6 +70,17 @@ export default function AgentsAnalytics() {
       topCitations: ['Google Reviews', 'Frankwatching.nl', 'Emerce.nl']
     }
   };
+
+  const enginesData = Object.keys(allEnginesData).reduce((acc, key) => {
+    if (key === 'copilot' && (!enabledEngines || enabledEngines.copilot === false)) {
+      return acc;
+    }
+    if (key === 'meta' && (!enabledEngines || enabledEngines.meta === false)) {
+      return acc;
+    }
+    acc[key] = allEnginesData[key];
+    return acc;
+  }, {});
 
   const getEnginesToRender = () => {
     if (activeEngine === 'All') {

@@ -53,7 +53,7 @@ class PromptController extends Controller
                 $engines = json_decode($engines, true);
             }
             if (!$engines) {
-                $engines = ['chatgpt' => true, 'gemini' => true, 'perplexity' => true, 'copilot' => true, 'claude' => true, 'aio' => true];
+                $engines = AiEngineService::getEnabledEngines();
             }
 
             $logs = $p->logs;
@@ -186,7 +186,7 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
             $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
         }
 
-        $defaultEngines = $engines ?: ['chatgpt' => true, 'gemini' => true, 'perplexity' => true, 'copilot' => true, 'claude' => true, 'aio' => true];
+        $defaultEngines = $engines ?: AiEngineService::getEnabledEngines();
 
         $prompt = Prompt::create([
             'project_id' => $projectId,

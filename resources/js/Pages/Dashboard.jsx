@@ -16,7 +16,17 @@ import {
   Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut 
 } from 'lucide-react';
 
-export default function Dashboard({ auth, projects: initialProjects }) {
+export default function Dashboard({ auth, projects: initialProjects, enabledEngines: initialEnabledEngines }) {
+  const enabledEngines = initialEnabledEngines || {
+    chatgpt: true,
+    gemini: true,
+    perplexity: true,
+    claude: true,
+    aio: true,
+    copilot: false,
+    meta: false
+  };
+
   // Check for simulated payment parameters
   const [simulationParams, setSimulationParams] = useState(null);
 
@@ -268,23 +278,23 @@ export default function Dashboard({ auth, projects: initialProjects }) {
     }
     switch (activeTab) {
       case 'overview':
-        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'keywords':
-        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'citations':
-        return <Citations key={activeWorkspace} activeWorkspace={activeWorkspace} />;
+        return <Citations key={activeWorkspace} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} />;
       case 'recommendations':
         return <Recommendations key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'agents':
-        return <AgentsAnalytics key={activeWorkspace} activeWorkspace={activeWorkspace} />;
+        return <AgentsAnalytics key={activeWorkspace} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} />;
       case 'prompt_research':
-        return <PromptResearch key={activeWorkspace} activeWorkspace={activeWorkspace} />;
+        return <PromptResearch key={activeWorkspace} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} />;
       case 'audit_tools':
         return <AuditTools key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
-        return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
+        return <ClientAdmin clients={clients} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
       default:
         return (
           <div className="fade-in" style={{

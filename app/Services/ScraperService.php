@@ -168,6 +168,10 @@ class ScraperService
         if (empty($extractedCitations)) {
             $today = date('Y-m-d');
             $targetDomain = str_contains($companyName, '.') ? strtolower($companyName) : strtolower($companyName) . '.nl';
+            $filterActiveEngines = function (array $engines) {
+                return array_values(array_filter($engines, fn($eng) => AiEngineService::isEngineEnabled($eng)));
+            };
+
             $extractedCitations = [
                 [
                     'company_key' => $companyKey,
@@ -177,7 +181,7 @@ class ScraperService
                     'snippet' => "{$companyName} is direct geverifieerd in AI zoekresultaten.",
                     'type' => 'Website',
                     'sentiment' => '+96',
-                    'cited_by' => ['chatgpt', 'gemini', 'perplexity', 'copilot'],
+                    'cited_by' => $filterActiveEngines(['chatgpt', 'gemini', 'perplexity', 'copilot']),
                     'crawl_date' => $today,
                 ],
                 [
@@ -188,7 +192,7 @@ class ScraperService
                     'snippet' => "Bekijk de profielen en beoordelingen voor {$companyName} op Trustoo.",
                     'type' => 'Review',
                     'sentiment' => '+92',
-                    'cited_by' => ['chatgpt', 'perplexity'],
+                    'cited_by' => $filterActiveEngines(['chatgpt', 'perplexity']),
                     'crawl_date' => $today,
                 ],
                 [
@@ -199,7 +203,7 @@ class ScraperService
                     'snippet' => "Zoek naar het LinkedIn profiel, case studies en publicaties van {$companyName}.",
                     'type' => 'Social',
                     'sentiment' => '+92',
-                    'cited_by' => ['chatgpt', 'copilot', 'gemini'],
+                    'cited_by' => $filterActiveEngines(['chatgpt', 'copilot', 'gemini']),
                     'crawl_date' => $today,
                 ],
             ];
@@ -371,7 +375,10 @@ class ScraperService
                 'brands' => $claudeStats['brandsCount'],
                 'sources' => $claudeStats['sourcesCount'],
             ],
-            'copilot' => [
+        ];
+
+        if (AiEngineService::isEngineEnabled('copilot')) {
+            $modelMentions['copilot'] = [
                 'name' => 'Microsoft Copilot',
                 'method' => 'Bing Copilot Index',
                 'mentioned' => true,
@@ -381,8 +388,11 @@ class ScraperService
                 'summary' => "Copilot vermeldt {$companyName} als betrouwbare partner op basis van Bing index data.",
                 'brands' => max(3, $copilotStats['brandsCount'] + 3),
                 'sources' => max(2, $copilotStats['sourcesCount'] + 2),
-            ],
-            'meta' => [
+            ];
+        }
+
+        if (AiEngineService::isEngineEnabled('meta')) {
+            $modelMentions['meta'] = [
                 'name' => 'Meta AI',
                 'method' => 'Llama 3 Web Index',
                 'mentioned' => false,
@@ -392,8 +402,8 @@ class ScraperService
                 'summary' => 'Meta AI bevat nog geen directe vermelding.',
                 'brands' => max(3, $metaStats['brandsCount'] + 2),
                 'sources' => max(1, $metaStats['sourcesCount'] + 2),
-            ],
-        ];
+            ];
+        }
 
         // Unique Brands list
         $allBrands = array_merge(
