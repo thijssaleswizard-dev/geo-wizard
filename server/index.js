@@ -25,6 +25,7 @@ app.use(express.json());
 // Register API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectsRoutes);
+app.use('/api/clients', projectsRoutes);
 app.use('/api/citations', citationsRoutes);
 app.use('/api/keywords', keywordsRoutes);
 app.use('/api/prompts', promptsRoutes);
