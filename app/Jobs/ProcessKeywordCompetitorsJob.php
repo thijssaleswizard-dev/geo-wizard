@@ -18,6 +18,21 @@ class ProcessKeywordCompetitorsJob implements ShouldQueue
     public string $companyKey;
 
     /**
+     * The number of seconds the job can run before timing out.
+     */
+    public int $timeout = 180;
+
+    /**
+     * The number of times the job may be attempted.
+     */
+    public int $tries = 1;
+
+    /**
+     * Indicate if the job should fail on timeout.
+     */
+    public bool $failOnTimeout = true;
+
+    /**
      * Create a new job instance.
      */
     public function __construct(int $keywordId, string $keywordText, string $companyKey)
@@ -46,5 +61,14 @@ class ProcessKeywordCompetitorsJob implements ShouldQueue
         } catch (\Exception $e) {
             GeoLog::error("❌ [ProcessKeywordCompetitorsJob Fout] Keyword #{$this->keywordId}: {$e->getMessage()}");
         }
+    }
+
+    /**
+     * Handle a job failure.
+     */
+    public function failed(?\Throwable $exception): void
+    {
+        $errorMsg = $exception ? $exception->getMessage() : 'Job timeout overschreden.';
+        GeoLog::error("❌ [ProcessKeywordCompetitorsJob Failure] Keyword #{$this->keywordId}: {$errorMsg}");
     }
 }

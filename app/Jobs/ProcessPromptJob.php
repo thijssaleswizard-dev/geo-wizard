@@ -16,6 +16,21 @@ class ProcessPromptJob implements ShouldQueue
     public int $promptId;
 
     /**
+     * The number of seconds the job can run before timing out.
+     */
+    public int $timeout = 300;
+
+    /**
+     * The number of times the job may be attempted.
+     */
+    public int $tries = 1;
+
+    /**
+     * Indicate if the job should fail on timeout.
+     */
+    public bool $failOnTimeout = true;
+
+    /**
      * Create a new job instance.
      */
     public function __construct(int $promptId)
@@ -78,6 +93,28 @@ class ProcessPromptJob implements ShouldQueue
                 'logs' => ["[ProcessPromptJob Error] {$e->getMessage()}"],
                 'updated_at' => now(),
             ]);
+        }
+    }
+
+    /**
+     * Handle a job failure or timeout gracefully.
+     */
+    public function failed(?\Throwable $exception): void
+    {
+        $errorMsg = $exception ? $exception->getMessage() : 'Job timeout overschreden.';
+        GeoLog::error("❌ [ProcessPromptJob Worker Failure] Prompt #{$this->promptId}: {$errorMsg}");
+
+        try {
+            $promptRecord = Prompt::find($this->promptId);
+            if ($promptRecord && $promptRecord->status !== 'completed') {
+                $promptRecord->update([
+                    'status' => 'failed',
+                    'logs' => ["[Worker Timeout/Failure] {$errorMsg}"],
+                    'updated_at' => now(),
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error("Failed to update prompt status on failure: " . $e->getMessage());
         }
     }
 }

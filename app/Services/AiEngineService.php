@@ -194,7 +194,7 @@ class AiEngineService
             try {
                 // Official OpenAI Web Search Grounding (Responses API)
                 $response = Http::withToken($apiKey)
-                    ->timeout(45)
+                    ->timeout(25)
                     ->post('https://api.openai.com/v1/responses', [
                         'model' => 'gpt-4o',
                         'input' => $prompt,
@@ -292,7 +292,7 @@ class AiEngineService
 
         if ($apiKey) {
             try {
-                $response = Http::timeout(50)
+                $response = Http::timeout(25)
                     ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => $prompt]]]
@@ -369,7 +369,7 @@ class AiEngineService
 
         if ($apiKey) {
             try {
-                $response = Http::timeout(50)
+                $response = Http::timeout(25)
                     ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => "[Google AI Mode - Live Search]\nBeantwoord de volgende zoekvraag als Google AI Mode op basis van actuele lokale Google zoekresultaten, reviews en bedrijfsgegevens in Nederland:\n\n{$prompt}"]]]
@@ -439,7 +439,7 @@ class AiEngineService
 
         if ($apiKey) {
             try {
-                $response = Http::timeout(50)
+                $response = Http::timeout(25)
                     ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => "[Google AI Overviews - SGE Snapshot]\nGenereer een beknopte, feitelijke AI Snapshot zoals die direct bovenaan Google Search verschijnt voor deze zoekvraag. Som de meest relevante lokale partijen en kwalificaties op:\n\n{$prompt}"]]]
@@ -511,7 +511,7 @@ class AiEngineService
         if ($apiKey) {
             try {
                 $response = Http::withToken($apiKey)
-                    ->timeout(30)
+                    ->timeout(20)
                     ->post('https://api.perplexity.ai/chat/completions', [
                         'model' => 'sonar',
                         'messages' => [
@@ -583,7 +583,7 @@ class AiEngineService
                 $response = Http::withHeaders([
                     'x-api-key' => $apiKey,
                     'anthropic-version' => '2023-06-01',
-                ])->timeout(30)->post('https://api.anthropic.com/v1/messages', [
+                ])->timeout(20)->post('https://api.anthropic.com/v1/messages', [
                             'model' => 'claude-3-5-sonnet-20241022',
                             'max_tokens' => 2500,
                             'messages' => [
