@@ -409,7 +409,8 @@ class CompetitorScraperService
         // 1. Try extracting brand name from live HTML title
         if (!empty($title)) {
             $cleaned = preg_replace('/(www\.[^\s]+|https?:\/\/[^\s]+)/i', '', $title);
-            $delimiters = [' | ', ' - ', ' – ', ' — ', ' : ', ' » ', ' › ', ' • '];
+            $cleaned = preg_replace('/^(bron|source)\s*:\s*/i', '', trim($cleaned));
+            $delimiters = [' | ', ' - ', ' – ', ' — ', ' : ', ':', ' » ', ' › ', ' • '];
             $parts = [$cleaned];
             
             foreach ($delimiters as $d) {
@@ -428,19 +429,20 @@ class CompetitorScraperService
             $noise = [
                 'home', 'welkom', 'officiële website', 'officiele website', 'contact',
                 'over ons', 'diensten', 'openingstijden', 'vacatures', 'blog', 'tarieven',
-                'kosten', 'review', 'reviews', 'vergelijk', 'afspraak maken', 'spoed', '24/7'
+                'kosten', 'review', 'reviews', 'vergelijk', 'afspraak maken', 'spoed', '24/7',
+                'bron', 'source', 'website', 'zoekmachine'
             ];
             
             foreach ($parts as $part) {
                 $pLower = strtolower($part);
                 $isNoise = false;
                 foreach ($noise as $n) {
-                    if ($pLower === $n || str_starts_with($pLower, $n . ' ')) {
+                    if ($pLower === $n || str_starts_with($pLower, $n . ' ') || str_starts_with($pLower, $n . ':')) {
                         $isNoise = true;
                         break;
                     }
                 }
-                if (!$isNoise && strlen($part) >= 2 && strlen($part) <= 45 && !str_contains($pLower, 'http')) {
+                if (!$isNoise && strlen($part) >= 3 && strlen($part) <= 45 && !str_contains($pLower, 'http') && !str_contains($part, '.')) {
                     return $part;
                 }
             }

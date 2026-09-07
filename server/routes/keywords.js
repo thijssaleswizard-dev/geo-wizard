@@ -68,19 +68,38 @@ router.get('/', async (req, res) => {
           isSelf: true
         });
 
+        // Comprehensive portal, directory & non-competitor domain blacklist
+        const isPortalOrDirectory = (domain) => {
+          const dom = (domain || '').toLowerCase().replace('www.', '');
+          const portalList = [
+            'duckduckgo.', 'google.', 'wikipedia.', 'facebook.', 'instagram.', 'linkedin.', 'youtube.', 'twitter.', 'x.com',
+            'trustoo.', 'sortlist.', 'werkspot.', 'dofollow.', 'marketingkiezer.', 'semrush.', 'hostingradar.',
+            'telefoongids.', 'telefoonboek.', 'openingstijden.', 'bedrijvenpagina.', 'kvk.nl', 'yelp.', 'trustpilot.',
+            'cylex.', 'marktplaats.', 'indebuurt.', 'capterra.', 'goudengids.', 'offertevergelijker.', 'slimster.', 'zoofy.',
+            'emerce.', 'frankwatching.', 'top40.', 'radionl.', 'indeed.', 'nationaleberoepengids.'
+          ];
+          return portalList.some(p => dom.includes(p));
+        };
+
         // Add others from citations
         for (const cit of allCitations) {
           const dom = (cit.domain || '').toLowerCase().trim();
           if (!dom || dom.length <= 3) continue;
           
-          const ignoredDomains = ['duckduckgo.com', 'google.com', 'wikipedia.org', 'facebook.com', 'instagram.com', 'linkedin.com', 'youtube.com'];
-          if (ignoredDomains.includes(dom)) continue;
+          if (isPortalOrDirectory(dom)) continue;
 
           if (!candidateDomains.has(dom)) {
-            let brandName = cit.title || '';
-            brandName = brandName.split('-')[0].split('|')[0].split(':')[0].trim();
-            if (brandName.length > 25 || !brandName) {
-              brandName = dom.split('.')[0].toUpperCase();
+            let rawTitle = (cit.title || '').trim();
+            // Remove "Bron:" or "Source:" prefix
+            rawTitle = rawTitle.replace(/^(bron|source)\s*:\s*/i, '').trim();
+
+            let brandName = rawTitle.split('-')[0].split('|')[0].split('–')[0].split('—')[0].split(':')[0].trim();
+            
+            const badNames = ['bron', 'source', 'website', 'home', 'contact', 'over ons', 'diensten', 'reviews', 'officiële website'];
+            if (!brandName || brandName.length > 25 || badNames.includes(brandName.toLowerCase()) || brandName.includes('.')) {
+              // Convert domain base (e.g. inoma, pittigbakkie, onwise) to Title Case
+              const domBase = dom.split('.')[0].replace(/[-_]/g, ' ');
+              brandName = domBase.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             }
 
             candidateDomains.set(dom, {
@@ -134,8 +153,9 @@ router.get('/', async (req, res) => {
             citationsCount: 0
           };
 
-          const cleanBrandName = cand.brand.toLowerCase();
-          const cleanDomWithoutSuffix = cand.domain.split('.')[0];
+          const cleanBrandName = (cand.brand || '').toLowerCase().trim();
+          const cleanDomWithoutSuffix = (cand.domain || '').split('.')[0].toLowerCase().trim();
+          const isGenericBrand = ['bron', 'source', 'website', 'home', 'diensten', 'over ons'].includes(cleanBrandName) || cleanBrandName.length <= 2;
 
           for (const p of prompts) {
             if (!p.results) continue;
@@ -154,9 +174,11 @@ router.get('/', async (req, res) => {
 
               const summary = (mMention.summary || '').toLowerCase();
               
-              const isMentioned = summary.includes(cleanBrandName) || 
-                                  summary.includes(cleanDomWithoutSuffix) ||
-                                  summary.replace(/[^a-z0-9]/g, '').includes(cleanBrandName.replace(/[^a-z0-9]/g, ''));
+              const isMentioned = !isGenericBrand && (
+                summary.includes(cleanBrandName) || 
+                (cleanDomWithoutSuffix.length >= 4 && summary.includes(cleanDomWithoutSuffix)) ||
+                summary.replace(/[^a-z0-9]/g, '').includes(cleanBrandName.replace(/[^a-z0-9]/g, ''))
+              );
 
               if (isMentioned) {
                 stats.mentionsCount += 1;
