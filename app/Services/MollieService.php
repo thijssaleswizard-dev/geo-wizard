@@ -13,7 +13,7 @@ class MollieService
 
     public function __construct()
     {
-        $this->apiKey = env('MOLLIE_KEY') ?: env('MOLLIE_API_KEY');
+        $this->apiKey = config('services.mollie.key') ?: env('MOLLIE_KEY') ?: env('MOLLIE_API_KEY');
         $this->isMockMode = empty($this->apiKey);
     }
 
@@ -126,7 +126,7 @@ class MollieService
                     'amount' => ['currency' => 'EUR', 'value' => $amount],
                     'interval' => $interval,
                     'description' => $description,
-                    'webhookUrl' => env('MOLLIE_WEBHOOK_URL'),
+                    'webhookUrl' => config('services.mollie.webhook_url') ?: env('MOLLIE_WEBHOOK_URL'),
                 ]);
 
             if ($response->successful()) {

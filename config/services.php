@@ -35,4 +35,33 @@ return [
         ],
     ],
 
+    'openai' => [
+        'key' => env('OPENAI_API_KEY'),
+    ],
+
+    'gemini' => [
+        'key' => env('GEMINI_API_KEY'),
+    ],
+
+    'perplexity' => [
+        'key' => env('PERPLEXITY_API_KEY'),
+    ],
+
+    'anthropic' => [
+        'key' => env('ANTHROPIC_API_KEY'),
+    ],
+
+    'copilot' => [
+        'key' => env('COPILOT_API_KEY'),
+    ],
+
+    'meta' => [
+        'key' => env('META_API_KEY'),
+    ],
+
+    'mollie' => [
+        'key' => env('MOLLIE_KEY') ?: env('MOLLIE_API_KEY'),
+        'webhook_url' => env('MOLLIE_WEBHOOK_URL'),
+    ],
+
 ];

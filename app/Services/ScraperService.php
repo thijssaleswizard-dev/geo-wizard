@@ -134,7 +134,7 @@ class ScraperService
         }
 
         // Perplexity fallback for search grounding
-        if (empty($extractedCitations) && env('PERPLEXITY_API_KEY')) {
+        if (empty($extractedCitations) && (config('services.perplexity.key') ?: env('PERPLEXITY_API_KEY'))) {
             GeoLog::info("🌐 [WEB GROUNDING] DDG geblokkeerd -> Perplexity AI sonar aanroepen voor live zoekindex...");
             $crawlLogs[] = "[Hybrid Engine] DDG crawl blocked. Querying Perplexity AI for live search grounding...";
             try {
@@ -225,7 +225,7 @@ class ScraperService
         // Query AI engines with native live web search grounding (Mode B)
         GeoLog::info("🧠 [FASE 2: AI ENGINE PIPELINE] Start live web-grounded LLM aanroepen (OpenAI SearchGPT, Google AI Mode, Google AI Overviews, Gemini, Perplexity Sonar)...");
         $crawlLogs[] = "[AI Engines] Querying OpenAI (gpt-4o + SearchGPT), Google AI Mode, Google AI Overviews, Gemini 3.6, Perplexity (Sonar) & Claude 3.5 Sonnet...";
-        
+
         $openAIRes = $this->aiEngine->queryOpenAI($promptText, $companyName);
         $geminiRes = $this->aiEngine->queryGemini($promptText, $companyName);
         $aiModeRes = $this->aiEngine->queryGoogleAiMode($promptText, $companyName);
@@ -280,10 +280,72 @@ class ScraperService
             preg_match_all('/\b[A-Z][a-z0-9&]+(?:\s+[A-Z][a-z0-9&]+)*\b/', $text, $matches);
             $words = $matches[0] ?? [];
             $blacklist = [
-                'Nederland', 'MKB', 'SEO', 'GEO', 'AI', 'Google', 'ChatGPT', 'Gemini', 'Perplexity', 'Copilot', 'Claude', 'Arnhem', 'Duiven', 'Velp', 'Rheden',
-                'Als', 'Voor', 'Hun', 'Gebaseerd', 'Dit', 'Bron', 'Bij', 'Het', 'We', 'De', 'Een', 'Onze', 'Hier', 'Daarnaast', 'Je', 'Met', 'Na', 'In',
-                'Uit', 'En', 'Of', 'Zij', 'Hij', 'Ik', 'Wij', 'Jullie', 'U', 'Om', 'Te', 'Door', 'Over', 'Aan', 'Tot', 'Onder', 'Boven', 'Naast',
-                'Tussen', 'Achter', 'Voorbij', 'Langs', 'Tijdens', 'Sinds', 'Vanaf', 'Wanneer', 'Hoe', 'Waar', 'Waarom', 'Wat', 'Wie', 'Welke', 'Welk',
+                'Nederland',
+                'MKB',
+                'SEO',
+                'GEO',
+                'AI',
+                'Google',
+                'ChatGPT',
+                'Gemini',
+                'Perplexity',
+                'Copilot',
+                'Claude',
+                'Arnhem',
+                'Duiven',
+                'Velp',
+                'Rheden',
+                'Als',
+                'Voor',
+                'Hun',
+                'Gebaseerd',
+                'Dit',
+                'Bron',
+                'Bij',
+                'Het',
+                'We',
+                'De',
+                'Een',
+                'Onze',
+                'Hier',
+                'Daarnaast',
+                'Je',
+                'Met',
+                'Na',
+                'In',
+                'Uit',
+                'En',
+                'Of',
+                'Zij',
+                'Hij',
+                'Ik',
+                'Wij',
+                'Jullie',
+                'U',
+                'Om',
+                'Te',
+                'Door',
+                'Over',
+                'Aan',
+                'Tot',
+                'Onder',
+                'Boven',
+                'Naast',
+                'Tussen',
+                'Achter',
+                'Voorbij',
+                'Langs',
+                'Tijdens',
+                'Sinds',
+                'Vanaf',
+                'Wanneer',
+                'Hoe',
+                'Waar',
+                'Waarom',
+                'Wat',
+                'Wie',
+                'Welke',
+                'Welk',
             ];
             $filtered = array_values(array_unique(array_filter($words, fn($b) => strlen($b) > 2 && !in_array($b, $blacklist))));
 

@@ -99,7 +99,7 @@ class PromptController extends Controller
      */
     public static function generateNaturalPrompts(string $keyword, string $company = 'Saleswizard'): array
     {
-        $apiKey = env('OPENAI_API_KEY');
+        $apiKey = config('services.openai.key') ?: env('OPENAI_API_KEY');
 
         if (!empty($apiKey)) {
             try {
