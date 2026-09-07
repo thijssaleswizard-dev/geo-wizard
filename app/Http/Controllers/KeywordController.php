@@ -56,10 +56,10 @@ class KeywordController extends Controller
             $prompts = $k->prompts ?? collect();
 
             $isCrawling = false;
-            $hasPendingPrompts = $prompts->contains(fn($p) => in_array($p->status, ['pending', 'processing', 'crawling']));
+            $hasPendingPrompts = $prompts->isEmpty() || $prompts->contains(fn($p) => in_array($p->status, ['pending', 'processing', 'crawling']));
 
             $competitors = is_array($k->competitors_json) ? $k->competitors_json : json_decode($k->competitors_json, true);
-            if (empty($competitors) || count($competitors) < 3) {
+            if ((empty($competitors) || count($competitors) < 3) && !$hasPendingPrompts) {
                 $isCrawling = true;
                 $competitors = $this->competitorScraper->getOrScrapeCompetitors($k->id, $kwText, $k->company_key);
             }
@@ -82,8 +82,8 @@ class KeywordController extends Controller
                 'share_of_voice' => $calculatedSov,
                 'average_position' => $calculatedPos,
                 'is_crawling' => $isCrawling || $hasPendingPrompts,
-                'competitors' => $competitors,
-                'brands_mentioned' => implode(',', array_map(fn($c) => explode('.', $c['domain'] ?? '')[0], $competitors)),
+                'competitors' => $hasPendingPrompts && empty($k->competitors_json) ? [] : ($competitors ?: []),
+                'brands_mentioned' => implode(',', array_map(fn($c) => explode('.', $c['domain'] ?? '')[0], $competitors ?: [])),
                 'prompts' => $prompts->map(function ($p) {
                     $resObj = !empty($p->results) ? (is_array($p->results) ? $p->results : json_decode($p->results, true)) : null;
                     $modelMentions = $resObj['modelMentions'] ?? null;
@@ -94,7 +94,7 @@ class KeywordController extends Controller
                         $engines = array_values(array_filter(array_keys($modelMentions), fn($m) => $modelMentions[$m]['mentioned'] ?? false));
                     }
 
-                    $status = $p->status ?: 'completed';
+                    $status = $p->status ?: 'pending';
                     if (!empty($p->results)) {
                         $status = $p->brand_mentioned ? 'Cited' : 'Not Cited';
                     }
