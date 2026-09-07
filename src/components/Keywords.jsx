@@ -275,7 +275,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
   // Smart background polling when prompts are being crawled / analyzed
   useEffect(() => {
     let interval = null;
-    const hasPending = (keywords || []).some(k => (k.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]));
+    const hasPending = (keywords || []).some(k => k.is_crawling || (k.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]));
 
     if (hasPending) {
       let pendingCount = 0;
@@ -294,7 +294,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         pending: pendingCount,
         completed: Math.max(0, totalCount - pendingCount),
         total: totalCount,
-        message: `${pendingCount} prompt(s) worden gecrawld over ChatGPT, Gemini en Perplexity...`
+        message: `${pendingCount || 'Zoek'} prompt(s) worden gecrawld over ChatGPT, Gemini en Perplexity...`
       });
 
       interval = setInterval(() => {
@@ -310,13 +310,13 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                 sov: k.share_of_voice || (k.competitors && k.competitors[0] ? k.competitors[0].sov : 0),
                 position: k.average_position || (k.competitors && k.competitors[0] ? k.competitors[0].position : '-'),
                 volume: k.search_volume || k.monthly_searches || '-',
-            is_crawling: !!k.is_crawling,
+                is_crawling: !!k.is_crawling,
                 brands: k.brands_mentioned ? String(k.brands_mentioned).split(',').map(b => b.trim()) : [],
                 competitors: k.competitors || [],
                 prompts: (k.prompts || []).map(p => ({
                   id: p.id,
                   text: p.prompt_text || p.text || '',
-                  status: p.status || 'Not Cited',
+                  status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
                   engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
                   brandsCount: p.brandsCount || 0,
                   sourcesCount: p.sourcesCount || 0,
@@ -326,16 +326,11 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                 }))
               }));
               setKeywords(formatted);
-              if (selectedKeyword) {
-                const updatedSelected = formatted.find(f => f.id === selectedKeyword.id);
-                if (updatedSelected) {
-                  setSelectedKeyword(updatedSelected);
-                }
-              }
+              setSelectedKeyword(prev => prev ? (formatted.find(f => f.id === prev.id) || prev) : null);
             }
           })
           .catch(err => console.error('Polling error:', err));
-      }, 1200);
+      }, 1500);
     } else if (crawlingStatus?.active) {
       setCrawlingStatus({
         active: false,
@@ -373,7 +368,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
             prompts: (k.prompts || []).map(p => ({
               id: p.id,
               text: p.prompt_text || p.text || '',
-              status: p.status || 'Not Cited',
+              status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
               engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
               brandsCount: p.brandsCount || 0,
               sourcesCount: p.sourcesCount || 0,
@@ -488,11 +483,12 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
             id: insertedKw.id,
             text: kwText,
             rank: '-',
-            sov: 35,
-            position: '1.7',
+            sov: 0,
+            position: '-',
             volume: 100,
+            is_crawling: true,
             brands: [workspace.replace('.nl', '').toLowerCase()],
-            competitors: insertedKw.competitors || [],
+            competitors: [],
             prompts: savedPrompts.map(p => ({
               id: p.id,
               text: p.text,
@@ -669,49 +665,14 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
         domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
         isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '')))),
-        sov: c.sov || Math.max(10, Math.floor(45 / (idx + 1))),
-        position: c.position || (idx + 1),
+        sov: typeof c.sov === 'number' ? c.sov : 0,
+        position: c.position || '-',
         citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
         citationUrls: (c.citationUrls && c.citationUrls.length > 0) ? c.citationUrls : (c.domain ? [`https://${c.domain}/`] : [])
       }));
     }
 
-    const keywordText = typeof kwParam === 'string' ? kwParam : (kwParam?.text || '');
-    const workspace = activeWorkspace || 'Saleswizard.nl';
-    const cleanWorkspace = workspace.replace('.nl', '').trim();
-    const domain = workspace.toLowerCase().includes('.') ? workspace.toLowerCase() : `${workspace.toLowerCase()}.nl`;
-
-    let competitors = [
-      { name: 'Donker Groen', domain: 'donkergroen.nl' },
-      { name: 'Hovenier Rheden', domain: 'hovenierrheden.nl' },
-      { name: 'Werkspot Hoveniers', domain: 'werkspot.nl' }
-    ];
-
-    const allBrands = [
-      { name: cleanWorkspace, domain: domain, isSelf: true },
-      ...competitors.map(c => ({ ...c, isSelf: false }))
-    ];
-
-    const seed = keywordText ? keywordText.length : 10;
-    const sorted = allBrands.map((b, idx) => {
-      const sov = Math.max(15, Math.round(((seed + idx * 7) % 35) + 15));
-      const posVal = (((seed + idx * 3) % 40) / 10 + 1.0).toFixed(1);
-      const urlsCount = Math.max(1, Math.round((seed + idx * 2) % 6));
-
-      return {
-        brand: b.name,
-        domain: b.domain,
-        isSelf: b.isSelf,
-        sov,
-        position: posVal,
-        citations: urlsCount
-      };
-    }).sort((a, b) => b.sov - a.sov);
-
-    return sorted.map((item, idx) => ({
-      rank: `#${idx + 1}`,
-      ...item
-    }));
+    return [];
   };
 
   const handleAddCustomPrompt = async (kwId) => {
@@ -743,20 +704,23 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       const data = await response.json();
 
       if (data.success) {
+        const newPromptObj = {
+          id: data.prompt.id,
+          text: data.prompt.prompt_text || input,
+          status: 'pending',
+          engines: ['chatgpt', 'gemini', 'perplexity'],
+          brandsCount: 0,
+          sourcesCount: 0
+        };
+
         setKeywords(prev => prev.map(k => {
           if (k.id === kwId) {
             return {
               ...k,
+              is_crawling: true,
               prompts: [
                 ...(k.prompts || []),
-                {
-                  id: data.prompt.id,
-                  text: data.prompt.prompt_text,
-                  status: 'Not Cited',
-                  engines: ['chatgpt', 'gemini', 'perplexity'],
-                  brandsCount: 0,
-                  sourcesCount: 0
-                }
+                newPromptObj
               ]
             };
           }
@@ -766,16 +730,10 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         if (selectedKeyword && selectedKeyword.id === kwId) {
           setSelectedKeyword(prev => ({
             ...prev,
+            is_crawling: true,
             prompts: [
               ...(prev.prompts || []),
-              {
-                id: data.prompt.id,
-                text: data.prompt.prompt_text,
-                status: 'Not Cited',
-                engines: ['chatgpt', 'gemini', 'perplexity'],
-                brandsCount: 0,
-                sourcesCount: 0
-              }
+              newPromptObj
             ]
           }));
         }
@@ -1089,137 +1047,196 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
               </div>
             </div>
 
-            {/* Competitor Table */}
-            <div style={{ overflow: 'visible', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#ffffff' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
-                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Rank</th>
-                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Brand</th>
-                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Share of Voice</th>
-                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Position</th>
-                    <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Citations</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {getBrandRankings(kw).map((r, rIdx) => {
-                    const colors = [
-                      { bg: '#fee2e2', text: '#ef4444' },
-                      { bg: '#e0e7ff', text: '#6366f1' },
-                      { bg: '#dcfce7', text: '#22c55e' },
-                      { bg: '#fef9c3', text: '#eab308' },
-                      { bg: '#f3e8ff', text: '#a855f7' }
-                    ];
-                    const avatarColor = colors[r.brand.charCodeAt(0) % colors.length];
+            {/* Competitor Table or Crawling Placeholder */}
+            {(() => {
+              const isKwScanning = kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
+              const brandRankings = getBrandRankings(kw);
 
-                    return (
-                      <tr
-                        key={rIdx}
-                        style={{
-                          borderBottom: '1px solid #f3f4f6',
-                          backgroundColor: r.isSelf ? '#fffbebf0' : 'transparent',
-                          fontWeight: r.isSelf ? 700 : 400
-                        }}
-                      >
-                        <td style={{ padding: '14px 16px', fontWeight: 700, color: '#111827' }}>{r.rank}</td>
-                        <td style={{ padding: '14px 16px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <FaviconImage
-                              domain={r.domain}
-                              fallbackLabel={r.brand}
-                              fallbackBg={avatarColor.bg}
-                              fallbackColor={avatarColor.text}
-                              size={26}
-                            />
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                              <span style={{ color: '#111827', fontWeight: 600 }}>{r.brand}</span>
-                              <span style={{ fontSize: '11px', color: '#6b7280' }}>{r.domain}</span>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 16px' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ fontWeight: 700, color: '#111827' }}>{r.sov}%</span>
-                            <div style={{ width: '100px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
-                              <div style={{ width: `${r.sov}%`, height: '100%', backgroundColor: '#f59e0b', borderRadius: '2px' }}></div>
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ padding: '14px 16px', fontWeight: 600, color: '#374151' }}>{r.position}</td>
-                        <td style={{ padding: '14px 16px', position: 'relative' }}>
-                          {r.citationUrls && r.citationUrls.length > 0 ? (
-                            <div className="tooltip-container" style={{ display: 'inline-block' }}>
-                              <span style={{
-                                fontSize: '11px',
-                                padding: '4px 10px',
-                                borderRadius: '12px',
-                                backgroundColor: '#fef3c7',
-                                color: '#b45309',
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                border: '1px solid rgba(180, 83, 9, 0.15)'
-                              }}>
-                                {r.citations} {r.citations === 1 ? 'URL' : 'URLs'}
-                              </span>
-                              <div className="tooltip-content" style={{
-                                position: 'absolute',
-                                bottom: '100%',
-                                left: '50%',
-                                transform: 'translateX(-50%)',
-                                marginBottom: '8px',
-                                backgroundColor: '#1e1b4b',
-                                color: '#ffffff',
-                                padding: '8px 12px',
-                                borderRadius: '8px',
-                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.05)',
-                                zIndex: 100,
-                                width: 'max-content',
-                                maxWidth: '320px',
-                                pointerEvents: 'none',
-                                opacity: 0,
-                                visibility: 'hidden',
-                                transition: 'all 0.15s ease',
-                                fontSize: '11px',
-                                fontWeight: 500,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '4px',
-                                border: '1px solid rgba(255,255,255,0.1)'
-                              }}>
-                                <div style={{ fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px', marginBottom: '2px', color: '#fbbf24' }}>Geciteerde Bronnen:</div>
-                                {r.citationUrls.map((url, uIdx) => (
-                                  <a 
-                                    key={uIdx} 
-                                    href={url} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    style={{ color: '#60a5fa', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {url}
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <span style={{
-                              fontSize: '11px',
-                              padding: '4px 10px',
-                              borderRadius: '12px',
-                              backgroundColor: '#f3f4f6',
-                              color: '#6b7280',
-                              fontWeight: 700
-                            }}>
-                              0 URLs
-                            </span>
-                          )}
-                        </td>
+              if (isKwScanning || brandRankings.length === 0) {
+                return (
+                  <div style={{
+                    padding: '48px 24px',
+                    textAlign: 'center',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '16px'
+                  }}>
+                    <div style={{
+                      width: '52px',
+                      height: '52px',
+                      borderRadius: '50%',
+                      backgroundColor: '#eff6ff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px solid #bfdbfe'
+                    }}>
+                      <Loader2 size={26} className="spin" style={{ color: '#2563eb' }} />
+                    </div>
+                    <div>
+                      <h4 style={{ fontSize: '16px', fontWeight: 700, color: '#111827', margin: 0 }}>
+                        {isKwScanning ? 'AI Zoekmachines worden live gecrawld...' : 'Wachten op analyse van zoekvragen...'}
+                      </h4>
+                      <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '6px', maxWidth: '440px', lineHeight: 1.5 }}>
+                        De merkrangschikking, gemiddelde posities en Share of Voice worden berekend en zichtbaar zodra de AI-zoekvragen zijn voltooid.
+                      </p>
+                    </div>
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '6px 16px',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '20px',
+                      border: '1px solid #e2e8f0',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: '#475569'
+                    }}>
+                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#2563eb', display: 'inline-block' }}></span>
+                      Live multi-engine evaluatie (ChatGPT, Gemini, Perplexity)
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ overflow: 'visible', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#ffffff' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb' }}>
+                        <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Rank</th>
+                        <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Brand</th>
+                        <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Share of Voice</th>
+                        <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Position</th>
+                        <th style={{ padding: '12px 16px', fontSize: '11px', fontWeight: 600, color: '#4b5563', textTransform: 'uppercase' }}>Citations</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {brandRankings.map((r, rIdx) => {
+                        const colors = [
+                          { bg: '#fee2e2', text: '#ef4444' },
+                          { bg: '#e0e7ff', text: '#6366f1' },
+                          { bg: '#dcfce7', text: '#22c55e' },
+                          { bg: '#fef9c3', text: '#eab308' },
+                          { bg: '#f3e8ff', text: '#a855f7' }
+                        ];
+                        const avatarColor = colors[r.brand.charCodeAt(0) % colors.length];
+
+                        return (
+                          <tr
+                            key={rIdx}
+                            style={{
+                              borderBottom: '1px solid #f3f4f6',
+                              backgroundColor: r.isSelf ? '#fffbebf0' : 'transparent',
+                              fontWeight: r.isSelf ? 700 : 400
+                            }}
+                          >
+                            <td style={{ padding: '14px 16px', fontWeight: 700, color: '#111827' }}>{r.rank}</td>
+                            <td style={{ padding: '14px 16px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <FaviconImage
+                                  domain={r.domain}
+                                  fallbackLabel={r.brand}
+                                  fallbackBg={avatarColor.bg}
+                                  fallbackColor={avatarColor.text}
+                                  size={26}
+                                />
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                  <span style={{ color: '#111827', fontWeight: 600 }}>{r.brand}</span>
+                                  <span style={{ fontSize: '11px', color: '#6b7280' }}>{r.domain}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '14px 16px' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ fontWeight: 700, color: '#111827' }}>{r.sov}%</span>
+                                <div style={{ width: '100px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
+                                  <div style={{ width: `${r.sov}%`, height: '100%', backgroundColor: '#f59e0b', borderRadius: '2px' }}></div>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '14px 16px', fontWeight: 600, color: '#374151' }}>{r.position}</td>
+                            <td style={{ padding: '14px 16px', position: 'relative' }}>
+                              {r.citationUrls && r.citationUrls.length > 0 ? (
+                                <div className="tooltip-container" style={{ display: 'inline-block' }}>
+                                  <span style={{
+                                    fontSize: '11px',
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    backgroundColor: '#fef3c7',
+                                    color: '#b45309',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    border: '1px solid rgba(180, 83, 9, 0.15)'
+                                  }}>
+                                    {r.citations} {r.citations === 1 ? 'URL' : 'URLs'}
+                                  </span>
+                                  <div className="tooltip-content" style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    marginBottom: '8px',
+                                    backgroundColor: '#1e1b4b',
+                                    color: '#ffffff',
+                                    padding: '8px 12px',
+                                    borderRadius: '8px',
+                                    boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3), 0 4px 6px -2px rgba(0,0,0,0.05)',
+                                    zIndex: 100,
+                                    width: 'max-content',
+                                    maxWidth: '320px',
+                                    pointerEvents: 'none',
+                                    opacity: 0,
+                                    visibility: 'hidden',
+                                    transition: 'all 0.15s ease',
+                                    fontSize: '11px',
+                                    fontWeight: 500,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '4px',
+                                    border: '1px solid rgba(255,255,255,0.1)'
+                                  }}>
+                                    <div style={{ fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px', marginBottom: '2px', color: '#fbbf24' }}>Geciteerde Bronnen:</div>
+                                    {r.citationUrls.map((url, uIdx) => (
+                                      <a 
+                                        key={uIdx} 
+                                        href={url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        style={{ color: '#60a5fa', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {url}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span style={{
+                                  fontSize: '11px',
+                                  padding: '4px 10px',
+                                  borderRadius: '12px',
+                                  backgroundColor: '#f3f4f6',
+                                  color: '#6b7280',
+                                  fontWeight: 700
+                                }}>
+                                  0 URLs
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 

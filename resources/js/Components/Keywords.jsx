@@ -665,8 +665,8 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
         domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
         isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '')))),
-        sov: c.sov || Math.max(10, Math.floor(45 / (idx + 1))),
-        position: c.position || (idx + 1),
+        sov: typeof c.sov === 'number' ? c.sov : 0,
+        position: c.position || '-',
         citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
         citationUrls: (c.citationUrls && c.citationUrls.length > 0) ? c.citationUrls : (c.domain ? [`https://${c.domain}/`] : [])
       }));

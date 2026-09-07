@@ -57,7 +57,9 @@ router.get('/', async (req, res) => {
         totalScans += modelKeys.length;
       }
 
-      if (totalScans > 0) {
+      const hasPendingPrompts = prompts.length === 0 || prompts.some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || !p.results);
+
+      if (totalScans > 0 && !hasPendingPrompts) {
         // Build candidate list from unique domains in all citations + self
         const candidateDomains = new Map();
         
@@ -244,8 +246,8 @@ router.get('/', async (req, res) => {
         } catch (dbErr) {
           console.error(`Failed to persist computed competitors for keyword #${k.id}:`, dbErr.message);
         }
-      } else {
-        // Fallback to static competitors_json or background scraper
+      } else if (!hasPendingPrompts) {
+        // Fallback to static competitors_json or background scraper only when prompts are completed
         if (k.competitors_json) {
           try {
             competitors = JSON.parse(k.competitors_json);
@@ -291,13 +293,16 @@ router.get('/', async (req, res) => {
             ...nicheFallbacks
           ];
         }
+      } else {
+        competitors = [];
       }
 
-      const updatedCompetitors = competitors;
+      const updatedCompetitors = hasPendingPrompts ? [] : competitors;
 
       return {
         ...k,
         keyword_text: kwText,
+        is_crawling: hasPendingPrompts,
         competitors: updatedCompetitors,
         brands_mentioned: updatedCompetitors.map(c => c.domain.split('.')[0]).join(','),
         prompts: prompts.map(p => {
@@ -324,10 +329,12 @@ router.get('/', async (req, res) => {
             }
           }
 
+          const promptStatus = p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending');
+
           return {
             id: p.id,
             text: p.prompt_text,
-            status: p.brand_mentioned ? 'Cited' : 'Not Cited',
+            status: promptStatus,
             engines,
             brandsCount: totalBrandsCount,
             sourcesCount: totalSourcesCount,
