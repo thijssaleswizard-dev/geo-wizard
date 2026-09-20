@@ -33,6 +33,11 @@ Artisan::command('geo:sync-all', function (ScraperService $scraperService) {
                 $scraperService->runScraper($defaultPrompt, $project->company, $project->id);
             } else {
                 foreach ($prompts as $p) {
+                    if ($p->status === 'completed' && $p->updated_at && $p->updated_at->gt(now()->subHours(20))) {
+                        $this->line("  - Skipping prompt #{$p->id} (already completed within last 20 hours)");
+                        continue;
+                    }
+
                     $this->line("  - Scanning prompt #{$p->id}: \"{$p->prompt_text}\"");
                     $res = $scraperService->runScraper($p->prompt_text, $project->company, $project->id, $p->id);
 

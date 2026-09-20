@@ -297,7 +297,17 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         message: `${pendingCount || 'Zoek'} prompt(s) worden gecrawld over ChatGPT, Gemini en Perplexity...`
       });
 
+      let pollCount = 0;
+      const maxPolls = 60; // Max 90s safety timeout
+
       interval = setInterval(() => {
+        pollCount++;
+        if (pollCount > maxPolls) {
+          clearInterval(interval);
+          setCrawlingStatus(null);
+          return;
+        }
+
         const workspace = activeWorkspace || 'Saleswizard.nl';
         fetch(`/api/keywords?company=${encodeURIComponent(workspace)}`)
           .then(res => res.json())
@@ -1383,7 +1393,21 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                           </span>
                         ) : (
                           <>
-                            {isMentioned ? (
+                            {p.status === 'failed' ? (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: '#dc2626',
+                                backgroundColor: '#fee2e2',
+                                padding: '3px 10px',
+                                borderRadius: '16px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}>
+                                ✕ Mislukt
+                              </span>
+                            ) : isMentioned ? (
                               <span style={{
                                 fontSize: '11px',
                                 fontWeight: 700,

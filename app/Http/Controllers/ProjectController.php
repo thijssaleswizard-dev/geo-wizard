@@ -40,6 +40,15 @@ class ProjectController extends Controller
             });
         }
 
+        // Auto-recover stale prompts that timed out or got interrupted (> 5 minutes)
+        \App\Models\Prompt::whereIn('status', ['pending', 'processing', 'crawling'])
+            ->where('updated_at', '<', now()->subMinutes(5))
+            ->update([
+                'status' => 'failed',
+                'logs' => ['[Timeout Herstel] Automatisch gemarkeerd als mislukt na 5 minuten inactiviteit.'],
+                'updated_at' => now(),
+            ]);
+
         $projects = $query->get();
 
         $projectsWithCounts = $projects->map(function ($proj) {

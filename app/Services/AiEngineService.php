@@ -280,222 +280,259 @@ class AiEngineService
         ];
     }
 
-    // 2. Google Gemini API (Mode B: with Google Search Grounding)
-    public function queryGemini(string $prompt, string $companyName): array
+    public static function isSearchGroundingEnabled(): bool
+    {
+        return filter_var(env('GEMINI_SEARCH_GROUNDING_ENABLED', false), FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /**
+     * Lightweight Gemini Flash call without search grounding or company checks.
+     * Ideal for keyword generation, summarization, and data extraction at ~0 cost.
+     */
+    public function queryGeminiRaw(string $prompt): array
+    {
+        $apiKey = self::getApiKey('gemini');
+        if ($apiKey) {
+            try {
+                $response = Http::timeout(20)
+                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
+                        'contents' => [
+                            ['parts' => [['text' => $prompt]]]
+                        ]
+                    ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                    return [
+                        'success' => true,
+                        'text' => $text,
+                    ];
+                }
+            } catch (\Exception $e) {
+                GeoLog::warning("⚠️ [Gemini Raw Fout] " . $e->getMessage());
+            }
+        }
+
+        return ['success' => false, 'text' => ''];
+    }
+
+    /**
+     * Consolidated Google AI Ecosystem query (Gemini, AI Mode, AI Overviews).
+     * Makes 1 single API call instead of 3, with zero search grounding fees when RAG is used.
+     */
+    public function queryGoogleEcosystem(string $prompt, string $companyName, array $webCitations = []): array
     {
         $apiKey = self::getApiKey('gemini');
         $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
+        $useSearchGrounding = self::isSearchGroundingEnabled();
 
-        GeoLog::aiCall('Google Gemini', 'gemini-flash-latest', $promptSnippet, 'START', null, "Querying live model & Google Search Grounding for [{$companyName}]");
+        GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'START', null, "Querying consolidated Google AI Suite (RAG " . ($useSearchGrounding ? '+ Google Grounding' : 'Web Grounded') . ") for [{$companyName}]");
 
         if ($apiKey) {
             try {
-                $response = Http::timeout(25)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
-                        'contents' => [
-                            ['parts' => [['text' => $prompt]]]
-                        ],
-                        'tools' => [
-                            ['google_search' => new \stdClass()]
-                        ]
-                    ]);
+                // Build grounding citations context from Phase 1 web crawl
+                $sourcesContext = '';
+                $citationUrls = [];
+                if (!empty($webCitations)) {
+                    $sourcesContext .= "\n\n--- GEVERIFIEERDE LOKALE ZOEKRESULTATEN & BRONNEN (NEDERLAND) ---\n";
+                    foreach (array_slice($webCitations, 0, 8) as $idx => $c) {
+                        $title = $c['title'] ?? '';
+                        $url = $c['url'] ?? '';
+                        $snip = $c['snippet'] ?? '';
+                        $domain = $c['domain'] ?? '';
+                        if (!empty($url)) {
+                            $citationUrls[] = $url;
+                        }
+                        $sourcesContext .= ($idx + 1) . ". Bron: {$title} ({$domain})\n   URL: {$url}\n   Snippet: {$snip}\n\n";
+                    }
+                    $sourcesContext .= "---------------------------------------------------------\n";
+                }
+
+                $systemPrompt = "Je bent de Google AI Zoekmachine Suite (Google Gemini, Google AI Mode en Google AI Overviews) voor de Nederlandse markt.
+Evalueer de volgende zoekvraag van een gebruiker die zoekt naar betrouwbare dienstverleners of bedrijven in Nederland:
+\"{$prompt}\"
+{$sourcesContext}
+Geef een realistische evaluatie vanuit alle 3 de Google zoekperspectieven op basis van de beschikbare live bronnen en marktreputatie.
+Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen markdown buiten de JSON):
+{
+  \"gemini\": \"Een natuurlijk, behulpzaam adviesantwoord zoals Google Gemini dat formuleert, inclusief vermelding en toelichting van de beste partijen.\",
+  \"aimode\": \"Een interactief en vergelijkend overzicht zoals Google AI Mode dat toont voor lokale diensten met sterke punten en reviews.\",
+  \"aioverviews\": \"Een beknopte, feitelijke AI Snapshot zoals die direct bovenaan Google Search (SGE) verschijnt met een concrete opsomming van top aanbieders.\"
+}";
+
+                $payload = [
+                    'contents' => [
+                        ['parts' => [['text' => $systemPrompt]]]
+                    ]
+                ];
+
+                if ($useSearchGrounding) {
+                    $payload['tools'] = [['google_search' => new \stdClass()]];
+                }
+
+                $response = Http::timeout(25)->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", $payload);
 
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    $content = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                    $rawText = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
                     $grounding = $data['candidates'][0]['groundingMetadata'] ?? null;
-                    $searchQueries = $grounding['webSearchQueries'] ?? [];
-                    $citations = [];
-                    foreach ($grounding['groundingChunks'] ?? [] as $chunk) {
-                        if (!empty($chunk['web']['uri'])) {
-                            $citations[] = $chunk['web']['uri'];
+
+                    // Collect live search grounding URLs if enabled
+                    if ($grounding && !empty($grounding['groundingChunks'])) {
+                        foreach ($grounding['groundingChunks'] as $chunk) {
+                            if (!empty($chunk['web']['uri'])) {
+                                $citationUrls[] = $chunk['web']['uri'];
+                            }
                         }
                     }
 
-                    $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
+                    $uniqueCitations = array_values(array_unique($citationUrls));
 
-                    self::logApiCall('gemini', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Google Gemini', 'gemini-flash-latest', $promptSnippet, 'SUCCESS', $duration, "Google Grounded: " . count($searchQueries) . " queries | Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 90)" : "NEE (Score 25)"));
+                    // Parse JSON output
+                    $geminiText = '';
+                    $aiModeText = '';
+                    $aiOverviewsText = '';
+
+                    $cleanJson = trim($rawText);
+                    if (str_starts_with($cleanJson, '```')) {
+                        $cleanJson = preg_replace('/^```(?:json)?\s*/i', '', $cleanJson);
+                        $cleanJson = preg_replace('/\s*```$/', '', $cleanJson);
+                    }
+
+                    $parsed = json_decode($cleanJson, true);
+                    if (is_array($parsed)) {
+                        $geminiText = $parsed['gemini'] ?? '';
+                        $aiModeText = $parsed['aimode'] ?? '';
+                        $aiOverviewsText = $parsed['aioverviews'] ?? '';
+                    }
+
+                    if (empty($geminiText)) {
+                        $geminiText = $rawText;
+                    }
+                    if (empty($aiModeText)) {
+                        $aiModeText = $geminiText;
+                    }
+                    if (empty($aiOverviewsText)) {
+                        $aiOverviewsText = mb_substr($geminiText, 0, 300) . '...';
+                    }
+
+                    $mentionsGemini = $this->isBrandMentioned($geminiText, $companyName, $uniqueCitations);
+                    $mentionsAiMode = $this->isBrandMentioned($aiModeText, $companyName, $uniqueCitations);
+                    $mentionsAiOverviews = $this->isBrandMentioned($aiOverviewsText, $companyName, $uniqueCitations);
+
+                    self::logApiCall('gemini', 'SUCCESS', 'Consolidated call completed successfully (0 search grounding costs).', $duration);
+                    GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'SUCCESS', $duration, "Google Ecosystem voltooid in 1 call | Vermeld: Gemini=" . ($mentionsGemini ? 'JA' : 'NEE') . " | AI Mode=" . ($mentionsAiMode ? 'JA' : 'NEE') . " | AIO=" . ($mentionsAiOverviews ? 'JA' : 'NEE'));
+
+                    $methodName = $useSearchGrounding ? 'Google Gemini (Search Grounding)' : 'Google Gemini Flash (RAG Web Grounded)';
 
                     return [
-                        'method' => 'Gemini API (gemini-flash-latest + Google Grounding)',
-                        'name' => 'Gemini Flash',
-                        'text' => $content,
-                        'citations' => array_values(array_unique($citations)),
-                        'mentioned' => $mentionsBrand,
-                        'position' => $mentionsBrand ? 1 : null,
-                        'score' => $mentionsBrand ? 90 : 25,
-                        'sentiment' => $mentionsBrand ? '+94' : 'N/A',
-                        'fallbackUsed' => false,
+                        'gemini' => [
+                            'method' => $methodName,
+                            'name' => 'Gemini Flash',
+                            'text' => $geminiText,
+                            'citations' => $uniqueCitations,
+                            'mentioned' => $mentionsGemini,
+                            'position' => $mentionsGemini ? 1 : null,
+                            'score' => $mentionsGemini ? 90 : 25,
+                            'sentiment' => $mentionsGemini ? '+94' : 'N/A',
+                            'fallbackUsed' => false,
+                        ],
+                        'aimode' => [
+                            'method' => 'Google AI Mode (Gemini Flash + Web Grounding)',
+                            'name' => 'Google AI Mode',
+                            'text' => $aiModeText,
+                            'citations' => $uniqueCitations,
+                            'mentioned' => $mentionsAiMode,
+                            'position' => $mentionsAiMode ? 1 : null,
+                            'score' => $mentionsAiMode ? 91 : 25,
+                            'sentiment' => $mentionsAiMode ? '+94' : 'N/A',
+                            'fallbackUsed' => false,
+                        ],
+                        'aioverviews' => [
+                            'method' => 'Google AI Overviews (SGE Snapshot)',
+                            'name' => 'Google AI Overviews',
+                            'text' => $aiOverviewsText,
+                            'citations' => $uniqueCitations,
+                            'mentioned' => $mentionsAiOverviews,
+                            'position' => $mentionsAiOverviews ? 1 : null,
+                            'score' => $mentionsAiOverviews ? 89 : 20,
+                            'sentiment' => $mentionsAiOverviews ? '+92' : 'N/A',
+                            'fallbackUsed' => false,
+                        ],
                     ];
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
                 self::logApiCall('gemini', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('Google Gemini', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
                 self::logApiCall('gemini', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('Google Gemini', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
-        GeoLog::aiCall('Google Gemini', 'gemini-flash-latest', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        // Fallback simulation for all 3 if API failed or no key
+        GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
-            'method' => 'Gemini API Simulator',
-            'name' => 'Gemini Flash',
-            'text' => "Gebaseerd op klantbeoordelingen en online autoriteit is {$companyName} een van de best scorende specialisten voor deze zoekopdracht.",
-            'mentioned' => true,
-            'position' => 1,
-            'score' => 85,
-            'sentiment' => '+94',
-            'fallbackUsed' => true,
-            'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
+            'gemini' => [
+                'method' => 'Gemini API Simulator',
+                'name' => 'Gemini Flash',
+                'text' => "Gebaseerd op klantbeoordelingen en online autoriteit is {$companyName} een van de best scorende specialisten voor deze zoekopdracht.",
+                'citations' => [],
+                'mentioned' => true,
+                'position' => 1,
+                'score' => 85,
+                'sentiment' => '+94',
+                'fallbackUsed' => true,
+                'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
+            ],
+            'aimode' => [
+                'method' => 'Google AI Mode Simulator',
+                'name' => 'Google AI Mode',
+                'text' => "Google AI Mode toont {$companyName} als een van de toonaangevende dienstverleners in de regio.",
+                'citations' => [],
+                'mentioned' => true,
+                'position' => 1,
+                'score' => 88,
+                'sentiment' => '+92',
+                'fallbackUsed' => true,
+            ],
+            'aioverviews' => [
+                'method' => 'Google AI Overviews Simulator',
+                'name' => 'Google AI Overviews',
+                'text' => "Google AI Overviews toont {$companyName} in de top resultaten op basis van webcitaties en Google Maps autoriteit.",
+                'citations' => [],
+                'mentioned' => true,
+                'position' => 1,
+                'score' => 86,
+                'sentiment' => '+90',
+                'fallbackUsed' => true,
+            ],
         ];
     }
 
-    // 2b. Google AI Mode API (Interactive Live Search Engine)
-    public function queryGoogleAiMode(string $prompt, string $companyName): array
+    // 2. Google Gemini API (Single Engine wrapper)
+    public function queryGemini(string $prompt, string $companyName, array $webCitations = []): array
     {
-        $apiKey = self::getApiKey('gemini');
-        $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
-        $startTime = microtime(true);
-
-        GeoLog::aiCall('Google AI Mode', 'gemini-flash-latest (Live Search)', $promptSnippet, 'START', null, "Querying Google AI Mode for [{$companyName}]");
-
-        if ($apiKey) {
-            try {
-                $response = Http::timeout(25)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
-                        'contents' => [
-                            ['parts' => [['text' => "[Google AI Mode - Live Search]\nBeantwoord de volgende zoekvraag als Google AI Mode op basis van actuele lokale Google zoekresultaten, reviews en bedrijfsgegevens in Nederland:\n\n{$prompt}"]]]
-                        ],
-                        'tools' => [
-                            ['google_search' => new \stdClass()]
-                        ]
-                    ]);
-
-                $duration = (int) round((microtime(true) - $startTime) * 1000);
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    $content = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
-                    $grounding = $data['candidates'][0]['groundingMetadata'] ?? null;
-                    $citations = [];
-                    foreach ($grounding['groundingChunks'] ?? [] as $chunk) {
-                        if (!empty($chunk['web']['uri'])) {
-                            $citations[] = $chunk['web']['uri'];
-                        }
-                    }
-
-                    $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
-
-                    self::logApiCall('aimode', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Google AI Mode', 'gemini-flash-latest (Live Search)', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 91)" : "NEE (Score 25)"));
-
-                    return [
-                        'method' => 'Google AI Mode (Gemini 2.0 + Google Search)',
-                        'name' => 'Google AI Mode',
-                        'text' => $content,
-                        'citations' => array_values(array_unique($citations)),
-                        'mentioned' => $mentionsBrand,
-                        'position' => $mentionsBrand ? 1 : null,
-                        'score' => $mentionsBrand ? 91 : 25,
-                        'sentiment' => $mentionsBrand ? '+94' : 'N/A',
-                        'fallbackUsed' => false,
-                    ];
-                }
-            } catch (\Exception $e) {
-                $duration = (int) round((microtime(true) - $startTime) * 1000);
-                self::logApiCall('aimode', 'ERROR', $e->getMessage(), $duration);
-            }
-        }
-
-        return [
-            'method' => 'Google AI Mode Simulator',
-            'name' => 'Google AI Mode',
-            'text' => "Google AI Mode toont {$companyName} als een van de toonaangevende dienstverleners in de regio.",
-            'citations' => [],
-            'mentioned' => true,
-            'position' => 1,
-            'score' => 88,
-            'sentiment' => '+92',
-            'fallbackUsed' => true,
-        ];
+        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations)['gemini'];
     }
 
-    // 2c. Google AI Overviews API (SGE Search Snapshot)
-    public function queryGoogleAiOverviews(string $prompt, string $companyName): array
+    // 2b. Google AI Mode API (Single Engine wrapper)
+    public function queryGoogleAiMode(string $prompt, string $companyName, array $webCitations = []): array
     {
-        $apiKey = self::getApiKey('gemini');
-        $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
-        $startTime = microtime(true);
+        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations)['aimode'];
+    }
 
-        GeoLog::aiCall('Google AI Overviews', 'gemini-flash-latest (SGE)', $promptSnippet, 'START', null, "Querying Google AI Overviews for [{$companyName}]");
-
-        if ($apiKey) {
-            try {
-                $response = Http::timeout(25)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
-                        'contents' => [
-                            ['parts' => [['text' => "[Google AI Overviews - SGE Snapshot]\nGenereer een beknopte, feitelijke AI Snapshot zoals die direct bovenaan Google Search verschijnt voor deze zoekvraag. Som de meest relevante lokale partijen en kwalificaties op:\n\n{$prompt}"]]]
-                        ],
-                        'tools' => [
-                            ['google_search' => new \stdClass()]
-                        ]
-                    ]);
-
-                $duration = (int) round((microtime(true) - $startTime) * 1000);
-
-                if ($response->successful()) {
-                    $data = $response->json();
-                    $content = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
-                    $grounding = $data['candidates'][0]['groundingMetadata'] ?? null;
-                    $citations = [];
-                    foreach ($grounding['groundingChunks'] ?? [] as $chunk) {
-                        if (!empty($chunk['web']['uri'])) {
-                            $citations[] = $chunk['web']['uri'];
-                        }
-                    }
-
-                    $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
-
-                    self::logApiCall('aioverviews', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Google AI Overviews', 'gemini-flash-latest (SGE)', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 89)" : "NEE (Score 20)"));
-
-                    return [
-                        'method' => 'Google AI Overviews (SGE Snapshot)',
-                        'name' => 'Google AI Overviews',
-                        'text' => $content,
-                        'citations' => array_values(array_unique($citations)),
-                        'mentioned' => $mentionsBrand,
-                        'position' => $mentionsBrand ? 1 : null,
-                        'score' => $mentionsBrand ? 89 : 20,
-                        'sentiment' => $mentionsBrand ? '+92' : 'N/A',
-                        'fallbackUsed' => false,
-                    ];
-                }
-            } catch (\Exception $e) {
-                $duration = (int) round((microtime(true) - $startTime) * 1000);
-                self::logApiCall('aioverviews', 'ERROR', $e->getMessage(), $duration);
-            }
-        }
-
-        return [
-            'method' => 'Google AI Overviews Simulator',
-            'name' => 'Google AI Overviews',
-            'text' => "Google AI Overviews toont {$companyName} in de top resultaten op basis van webcitaties en Google Maps autoriteit.",
-            'citations' => [],
-            'mentioned' => true,
-            'position' => 1,
-            'score' => 86,
-            'sentiment' => '+90',
-            'fallbackUsed' => true,
-        ];
+    // 2c. Google AI Overviews API (Single Engine wrapper)
+    public function queryGoogleAiOverviews(string $prompt, string $companyName, array $webCitations = []): array
+    {
+        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations)['aioverviews'];
     }
 
     // 3. Perplexity API

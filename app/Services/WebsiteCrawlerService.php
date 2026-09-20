@@ -208,8 +208,8 @@ class WebsiteCrawlerService
         $aiPrompt = "Analyseer de volgende gescrapte gegevens van de website van \"{$companyNameClean}\":\n\n--- GESCRAPTE WEBSITE INHOUD ---\n" . ($scrapedContent ?: "Bedrijfsnaam: {$companyNameClean}") . "\n--------------------------------\n\nGenereer exact 5 uiterst relevante, hoog-converterende zoekwoorden (keywords) in het Nederlands.\nBELANGRIJK: Let heel goed op de specifieke vestigingsplaats/regio (bijv. Velp, Arnhem, Nijmegen, Amsterdam) en specifieke diensten die in de gescrapte tekst worden vermeld.\nGeef ALLEEN een komma-gescheiden lijst met 5 zoekwoorden in kleine letters zonder nummering of extra tekst.";
 
         try {
-            $aiRes = $this->aiEngine->queryGemini($aiPrompt, $companyNameClean);
-            if (!empty($aiRes['text']) && str_contains($aiRes['text'], ',') && empty($aiRes['fallbackUsed'])) {
+            $aiRes = $this->aiEngine->queryGeminiRaw($aiPrompt);
+            if (!empty($aiRes['text']) && str_contains($aiRes['text'], ',')) {
                 $parsed = array_values(array_filter(array_map(function ($k) {
                     return trim(preg_replace('/[^a-z0-9\s\-]/i', '', strtolower($k)));
                 }, explode(',', $aiRes['text']))));

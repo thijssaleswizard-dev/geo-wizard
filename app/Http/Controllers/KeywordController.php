@@ -51,16 +51,24 @@ class KeywordController extends Controller
             }
         }
 
+        // Auto-recover stale prompts that timed out or got interrupted (> 5 minutes)
+        Prompt::whereIn('status', ['pending', 'processing', 'crawling'])
+            ->where('updated_at', '<', now()->subMinutes(5))
+            ->update([
+                'status' => 'failed',
+                'logs' => ['[Timeout Herstel] Automatisch gemarkeerd als mislukt na 5 minuten inactiviteit.'],
+                'updated_at' => now(),
+            ]);
+
         $keywords = $query->get()->map(function ($k) {
             $kwText = $k->keyword;
             $prompts = $k->prompts ?? collect();
 
             $isCrawling = false;
-            $hasPendingPrompts = $prompts->isEmpty() || $prompts->contains(fn($p) => in_array($p->status, ['pending', 'processing', 'crawling']));
+            $hasPendingPrompts = $prompts->isNotEmpty() && $prompts->contains(fn($p) => in_array($p->status, ['pending', 'processing', 'crawling']));
 
             $competitors = is_array($k->competitors_json) ? $k->competitors_json : json_decode($k->competitors_json, true);
             if ((empty($competitors) || count($competitors) < 3) && !$hasPendingPrompts) {
-                $isCrawling = true;
                 $competitors = $this->competitorScraper->getOrScrapeCompetitors($k->id, $kwText, $k->company_key);
             }
 

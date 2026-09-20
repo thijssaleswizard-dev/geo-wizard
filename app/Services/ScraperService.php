@@ -223,13 +223,14 @@ class ScraperService
         }
 
         // Query AI engines with native live web search grounding (Mode B)
-        GeoLog::info("🧠 [FASE 2: AI ENGINE PIPELINE] Start live web-grounded LLM aanroepen (OpenAI SearchGPT, Google AI Mode, Google AI Overviews, Gemini, Perplexity Sonar)...");
-        $crawlLogs[] = "[AI Engines] Querying OpenAI (gpt-4o + SearchGPT), Google AI Mode, Google AI Overviews, Gemini 3.6, Perplexity (Sonar) & Claude 3.5 Sonnet...";
+        GeoLog::info("🧠 [FASE 2: AI ENGINE PIPELINE] Start live web-grounded LLM aanroepen (OpenAI SearchGPT, Google Suite RAG, Perplexity Sonar)...");
+        $crawlLogs[] = "[AI Engines] Querying OpenAI (gpt-4o + SearchGPT), Google AI Suite (Gemini/AIMode/AIO), Perplexity (Sonar) & Claude 3.5 Sonnet...";
 
         $openAIRes = $this->aiEngine->queryOpenAI($promptText, $companyName);
-        $geminiRes = $this->aiEngine->queryGemini($promptText, $companyName);
-        $aiModeRes = $this->aiEngine->queryGoogleAiMode($promptText, $companyName);
-        $aiOverviewsRes = $this->aiEngine->queryGoogleAiOverviews($promptText, $companyName);
+        $googleSuite = $this->aiEngine->queryGoogleEcosystem($promptText, $companyName, $extractedCitations);
+        $geminiRes = $googleSuite['gemini'];
+        $aiModeRes = $googleSuite['aimode'];
+        $aiOverviewsRes = $googleSuite['aioverviews'];
         $perplexityRes = $this->aiEngine->queryPerplexity($promptText, $companyName);
         $anthropicRes = $this->aiEngine->queryAnthropic($promptText, $companyName);
 
