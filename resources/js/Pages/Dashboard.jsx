@@ -12,6 +12,7 @@ import AccountManagement from '@/Components/AccountManagement';
 import ClientAdmin from '@/Components/ClientAdmin';
 import Keywords from '@/Components/Keywords';
 import PaymentSimulator from '@/Components/PaymentSimulator';
+import LlmCosts from '@/Components/LlmCosts';
 import { 
   Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut 
 } from 'lucide-react';
@@ -255,6 +256,9 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
   }
 
   const getTabTitle = () => {
+    if (activeTab === 'llm_costs') {
+      return 'LLM Kosten & Verbruik';
+    }
     if (currentUser.role === 'medewerker' && !activeWorkspace) {
       return 'Projects';
     }
@@ -266,6 +270,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       case 'agents': return 'Agents Analytics';
       case 'prompt_research': return 'AI Prompt Research';
       case 'audit_tools': return 'GEO Audit Tools';
+      case 'llm_costs': return 'LLM Kosten & Verbruik';
       case 'account_plan': return 'Account & Plan';
       case 'client_admin': return 'Projects';
       default: return activeTab;
@@ -273,8 +278,11 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
   };
 
   const renderContent = () => {
+    if (activeTab === 'llm_costs') {
+      return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} currentUser={currentUser} enabledEngines={enabledEngines} />;
+    }
     if (currentUser.role === 'medewerker' && !activeWorkspace) {
-      return <ClientAdmin clients={clients} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
+      return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
     }
     switch (activeTab) {
       case 'overview':
@@ -291,10 +299,12 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
         return <PromptResearch key={activeWorkspace} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} />;
       case 'audit_tools':
         return <AuditTools key={activeWorkspace} activeWorkspace={activeWorkspace} />;
+      case 'llm_costs':
+        return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} currentUser={currentUser} enabledEngines={enabledEngines} />;
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
-        return <ClientAdmin clients={clients} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
+        return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
       default:
         return (
           <div className="fade-in" style={{

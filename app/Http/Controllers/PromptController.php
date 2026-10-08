@@ -129,6 +129,23 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
 
                 if ($response->successful()) {
                     $text = trim($response->json('choices.0.message.content') ?? '');
+                    $usage = $response->json('usage') ?? [];
+                    $inTokens = $usage['prompt_tokens'] ?? 110;
+                    $outTokens = $usage['completion_tokens'] ?? 45;
+                    \App\Services\LlmCostService::recordUsage(
+                        'openai',
+                        'gpt-4o-mini',
+                        'prompt_generation',
+                        $inTokens,
+                        $outTokens,
+                        'SUCCESS',
+                        $duration,
+                        null,
+                        null,
+                        false,
+                        ['keyword' => $keyword, 'company' => $company]
+                    );
+
                     if (str_contains($text, '|')) {
                         $parts = array_values(array_filter(array_map('trim', explode('|', $text))));
                         if (count($parts) >= 2) {

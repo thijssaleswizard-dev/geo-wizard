@@ -226,13 +226,13 @@ class ScraperService
         GeoLog::info("🧠 [FASE 2: AI ENGINE PIPELINE] Start live web-grounded LLM aanroepen (OpenAI SearchGPT, Google Suite RAG, Perplexity Sonar)...");
         $crawlLogs[] = "[AI Engines] Querying OpenAI (gpt-4o + SearchGPT), Google AI Suite (Gemini/AIMode/AIO), Perplexity (Sonar) & Claude 3.5 Sonnet...";
 
-        $openAIRes = $this->aiEngine->queryOpenAI($promptText, $companyName);
-        $googleSuite = $this->aiEngine->queryGoogleEcosystem($promptText, $companyName, $extractedCitations);
+        $openAIRes = $this->aiEngine->queryOpenAI($promptText, $companyName, $projectId, $promptId);
+        $googleSuite = $this->aiEngine->queryGoogleEcosystem($promptText, $companyName, $extractedCitations, $projectId, $promptId);
         $geminiRes = $googleSuite['gemini'];
         $aiModeRes = $googleSuite['aimode'];
         $aiOverviewsRes = $googleSuite['aioverviews'];
-        $perplexityRes = $this->aiEngine->queryPerplexity($promptText, $companyName);
-        $anthropicRes = $this->aiEngine->queryAnthropic($promptText, $companyName);
+        $perplexityRes = $this->aiEngine->queryPerplexity($promptText, $companyName, $projectId, $promptId);
+        $anthropicRes = $this->aiEngine->queryAnthropic($promptText, $companyName, $projectId, $promptId);
 
         // Collect all native live citations from OpenAI, Gemini, AI Mode, AI Overviews & Perplexity
         $allEngineCitations = array_merge(

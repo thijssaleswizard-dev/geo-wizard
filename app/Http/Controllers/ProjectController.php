@@ -336,12 +336,15 @@ class ProjectController extends Controller
         $status = AiEngineService::getApiStatus();
         $history = AiEngineService::getApiHistory();
         $enabledEngines = AiEngineService::getEnabledEngines();
+        $costData = \App\Services\LlmCostService::getSummary();
 
         return response()->json([
             'success' => true,
             'status' => $status,
             'history' => $history,
-            'enabledEngines' => $enabledEngines
+            'enabledEngines' => $enabledEngines,
+            'costSummary' => $costData['summary'] ?? null,
+            'costByEngine' => $costData['byEngine'] ?? [],
         ]);
     }
 }

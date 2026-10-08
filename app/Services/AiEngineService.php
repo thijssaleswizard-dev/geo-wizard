@@ -2,20 +2,23 @@
 
 namespace App\Services;
 
+use App\Models\LlmCostLog;
 use Illuminate\Support\Facades\Http;
 
 class AiEngineService
 {
     protected static array $apiCallHistory = [];
 
-    public static function logApiCall(string $engine, string $status, string $message, ?int $latency = null): void
+    public static function logApiCall(string $engine, string $status, string $message, ?int $latency = null, ?float $costEur = null, ?int $tokens = null): void
     {
         array_unshift(self::$apiCallHistory, [
             'timestamp' => now()->toISOString(),
             'engine' => $engine,
-            'status' => $status, // 'SUCCESS' or 'ERROR'
+            'status' => $status, // 'SUCCESS', 'ERROR' or 'FALLBACK'
             'message' => $message ?: 'No details provided.',
             'latency' => $latency !== null ? "{$latency}ms" : 'N/A',
+            'cost' => $costEur !== null ? '€' . number_format($costEur, 4) : null,
+            'tokens' => $tokens !== null ? number_format($tokens) : null,
         ]);
 
         if (count(self::$apiCallHistory) > 50) {
@@ -139,14 +142,24 @@ class AiEngineService
     public static function getApiStatus(): array
     {
         $engines = [
-            ['key' => 'openai', 'name' => 'OpenAI (gpt-4o-mini)', 'envKey' => 'OPENAI_API_KEY', 'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-')],
-            ['key' => 'gemini', 'name' => 'Gemini (gemini-2.5-flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
-            ['key' => 'perplexity', 'name' => 'Perplexity API', 'envKey' => 'PERPLEXITY_API_KEY', 'check' => fn($k) => !empty($k)],
-            ['key' => 'anthropic', 'name' => 'Anthropic Claude 3.5', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
+            ['key' => 'openai', 'name' => 'OpenAI (gpt-4o / gpt-4o-mini)', 'envKey' => 'OPENAI_API_KEY', 'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-')],
+            ['key' => 'gemini', 'name' => 'Gemini (gemini-flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
+            ['key' => 'perplexity', 'name' => 'Perplexity API (sonar)', 'envKey' => 'PERPLEXITY_API_KEY', 'check' => fn($k) => !empty($k)],
+            ['key' => 'anthropic', 'name' => 'Anthropic Claude 3.5 Sonnet', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'copilot', 'name' => 'Microsoft Copilot', 'envKey' => 'COPILOT_API_KEY', 'check' => fn($k) => !empty($k)],
         ];
 
-        return array_map(function ($eng) {
+        $costsByEngine = [];
+        try {
+            $costsByEngine = LlmCostLog::selectRaw('engine, SUM(cost_eur) as total_eur, SUM(total_tokens) as total_tokens, COUNT(*) as total_calls')
+                ->groupBy('engine')
+                ->get()
+                ->keyBy('engine');
+        } catch (\Exception $e) {
+            // graceful fallback if table not yet migrated
+        }
+
+        return array_map(function ($eng) use ($costsByEngine) {
             $key = self::getApiKey($eng['key']);
             $isConfigured = ($eng['check'])($key);
 
@@ -162,12 +175,14 @@ class AiEngineService
                 $status = 'NOT_CONFIGURED';
                 $lastError = null;
             } elseif ($lastLog) {
-                $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : 'DEGRADED';
+                $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : ($lastLog['status'] === 'FALLBACK' ? 'FALLBACK' : 'DEGRADED');
                 $lastError = $lastLog['status'] === 'ERROR' ? $lastLog['message'] : null;
             } else {
                 $status = 'ACTIVE';
                 $lastError = null;
             }
+
+            $costStat = $costsByEngine[$eng['key']] ?? null;
 
             return [
                 'engine' => $eng['key'],
@@ -176,12 +191,15 @@ class AiEngineService
                 'status' => $status,
                 'lastError' => $lastError,
                 'lastUsed' => $lastLog ? $lastLog['timestamp'] : null,
+                'totalCostEur' => $costStat ? round((float) $costStat->total_eur, 4) : 0.0,
+                'totalTokens' => $costStat ? (int) $costStat->total_tokens : 0,
+                'totalCalls' => $costStat ? (int) $costStat->total_calls : 0,
             ];
         }, $engines);
     }
 
     // 1. OpenAI API
-    public function queryOpenAI(string $prompt, string $companyName): array
+    public function queryOpenAI(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('openai');
         $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
@@ -239,8 +257,14 @@ class AiEngineService
 
                     $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
 
-                    self::logApiCall('openai', 'SUCCESS', 'Call completed successfully with Live Web Search.', $duration);
-                    GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'SUCCESS', $duration, count($citations) . " web citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 92)" : "NEE (Score 20)"));
+                    // Track tokens and cost
+                    $usage = $data['usage'] ?? [];
+                    $inTokens = $usage['prompt_tokens'] ?? $usage['input_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
+                    $outTokens = $usage['completion_tokens'] ?? $usage['output_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
+                    $costLog = LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
+
+                    self::logApiCall('openai', 'SUCCESS', 'Call completed successfully with Live Web Search.', $duration, $costLog->cost_eur, $costLog->total_tokens);
+                    GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'SUCCESS', $duration, count($citations) . " web citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 92)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     return [
                         'method' => 'OpenAI API (gpt-4o + SearchGPT Web)',
@@ -252,20 +276,26 @@ class AiEngineService
                         'score' => $mentionsBrand ? 92 : 20,
                         'sentiment' => $mentionsBrand ? '+96' : 'N/A',
                         'fallbackUsed' => false,
+                        'costEur' => $costLog->cost_eur,
+                        'tokens' => $costLog->total_tokens,
                     ];
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
+                LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('openai', 'ERROR', $errorMsg, $duration);
                 GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
+                LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
                 self::logApiCall('openai', 'ERROR', $e->getMessage(), $duration);
                 GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
-        // Fallback simulation
+        // Fallback simulation (zero cost)
+        LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
+        self::logApiCall('openai', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
         GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
             'method' => 'OpenAI API Simulator',
@@ -276,6 +306,8 @@ class AiEngineService
             'score' => 88,
             'sentiment' => '+96',
             'fallbackUsed' => true,
+            'costEur' => 0.0,
+            'tokens' => 0,
             'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
         ];
     }
@@ -289,7 +321,7 @@ class AiEngineService
      * Lightweight Gemini Flash call without search grounding or company checks.
      * Ideal for keyword generation, summarization, and data extraction at ~0 cost.
      */
-    public function queryGeminiRaw(string $prompt): array
+    public function queryGeminiRaw(string $prompt, ?int $projectId = null): array
     {
         $apiKey = self::getApiKey('gemini');
         if ($apiKey) {
@@ -304,6 +336,12 @@ class AiEngineService
                 if ($response->successful()) {
                     $data = $response->json();
                     $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+
+                    $usage = $data['usageMetadata'] ?? [];
+                    $inTokens = $usage['promptTokenCount'] ?? (int) ceil(mb_strlen($prompt) / 4);
+                    $outTokens = $usage['candidatesTokenCount'] ?? (int) ceil(mb_strlen($text) / 4);
+                    LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'gemini_raw_query', $inTokens, $outTokens, 'SUCCESS', null, $projectId, null, false);
+
                     return [
                         'success' => true,
                         'text' => $text,
@@ -321,7 +359,7 @@ class AiEngineService
      * Consolidated Google AI Ecosystem query (Gemini, AI Mode, AI Overviews).
      * Makes 1 single API call instead of 3, with zero search grounding fees when RAG is used.
      */
-    public function queryGoogleEcosystem(string $prompt, string $companyName, array $webCitations = []): array
+    public function queryGoogleEcosystem(string $prompt, string $companyName, array $webCitations = [], ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('gemini');
         $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
@@ -425,8 +463,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     $mentionsAiMode = $this->isBrandMentioned($aiModeText, $companyName, $uniqueCitations);
                     $mentionsAiOverviews = $this->isBrandMentioned($aiOverviewsText, $companyName, $uniqueCitations);
 
-                    self::logApiCall('gemini', 'SUCCESS', 'Consolidated call completed successfully (0 search grounding costs).', $duration);
-                    GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'SUCCESS', $duration, "Google Ecosystem voltooid in 1 call | Vermeld: Gemini=" . ($mentionsGemini ? 'JA' : 'NEE') . " | AI Mode=" . ($mentionsAiMode ? 'JA' : 'NEE') . " | AIO=" . ($mentionsAiOverviews ? 'JA' : 'NEE'));
+                    // Track tokens and cost
+                    $usage = $data['usageMetadata'] ?? [];
+                    $inTokens = $usage['promptTokenCount'] ?? (int) ceil(mb_strlen($systemPrompt) / 4);
+                    $outTokens = $usage['candidatesTokenCount'] ?? (int) ceil(mb_strlen($rawText) / 4);
+                    $costLog = LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, $useSearchGrounding, ['company' => $companyName]);
+
+                    self::logApiCall('gemini', 'SUCCESS', 'Consolidated call completed successfully.', $duration, $costLog->cost_eur, $costLog->total_tokens);
+                    GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'SUCCESS', $duration, "Google Ecosystem voltooid in 1 call | Vermeld: Gemini=" . ($mentionsGemini ? 'JA' : 'NEE') . " | AI Mode=" . ($mentionsAiMode ? 'JA' : 'NEE') . " | AIO=" . ($mentionsAiOverviews ? 'JA' : 'NEE') . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     $methodName = $useSearchGrounding ? 'Google Gemini (Search Grounding)' : 'Google Gemini Flash (RAG Web Grounded)';
 
@@ -441,6 +485,8 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                             'score' => $mentionsGemini ? 90 : 25,
                             'sentiment' => $mentionsGemini ? '+94' : 'N/A',
                             'fallbackUsed' => false,
+                            'costEur' => $costLog->cost_eur,
+                            'tokens' => $costLog->total_tokens,
                         ],
                         'aimode' => [
                             'method' => 'Google AI Mode (Gemini Flash + Web Grounding)',
@@ -468,16 +514,20 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
+                LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('gemini', 'ERROR', $errorMsg, $duration);
                 GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
+                LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
                 self::logApiCall('gemini', 'ERROR', $e->getMessage(), $duration);
                 GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
         // Fallback simulation for all 3 if API failed or no key
+        LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
+        self::logApiCall('gemini', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
         GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
             'gemini' => [
@@ -490,6 +540,8 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 'score' => 85,
                 'sentiment' => '+94',
                 'fallbackUsed' => true,
+                'costEur' => 0.0,
+                'tokens' => 0,
                 'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
             ],
             'aimode' => [
@@ -502,6 +554,8 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 'score' => 88,
                 'sentiment' => '+92',
                 'fallbackUsed' => true,
+                'costEur' => 0.0,
+                'tokens' => 0,
             ],
             'aioverviews' => [
                 'method' => 'Google AI Overviews Simulator',
@@ -513,30 +567,32 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 'score' => 86,
                 'sentiment' => '+90',
                 'fallbackUsed' => true,
+                'costEur' => 0.0,
+                'tokens' => 0,
             ],
         ];
     }
 
     // 2. Google Gemini API (Single Engine wrapper)
-    public function queryGemini(string $prompt, string $companyName, array $webCitations = []): array
+    public function queryGemini(string $prompt, string $companyName, array $webCitations = [], ?int $projectId = null, ?int $promptId = null): array
     {
-        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations)['gemini'];
+        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations, $projectId, $promptId)['gemini'];
     }
 
     // 2b. Google AI Mode API (Single Engine wrapper)
-    public function queryGoogleAiMode(string $prompt, string $companyName, array $webCitations = []): array
+    public function queryGoogleAiMode(string $prompt, string $companyName, array $webCitations = [], ?int $projectId = null, ?int $promptId = null): array
     {
-        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations)['aimode'];
+        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations, $projectId, $promptId)['aimode'];
     }
 
     // 2c. Google AI Overviews API (Single Engine wrapper)
-    public function queryGoogleAiOverviews(string $prompt, string $companyName, array $webCitations = []): array
+    public function queryGoogleAiOverviews(string $prompt, string $companyName, array $webCitations = [], ?int $projectId = null, ?int $promptId = null): array
     {
-        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations)['aioverviews'];
+        return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations, $projectId, $promptId)['aioverviews'];
     }
 
     // 3. Perplexity API
-    public function queryPerplexity(string $prompt, string $companyName): array
+    public function queryPerplexity(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('perplexity');
         $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
@@ -564,8 +620,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     $citations = $data['citations'] ?? [];
                     $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
 
-                    self::logApiCall('perplexity', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'SUCCESS', $duration, count($citations) . " citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Score 86)" : "NEE (Score 30)"));
+                    // Track tokens and cost
+                    $usage = $data['usage'] ?? [];
+                    $inTokens = $usage['prompt_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
+                    $outTokens = $usage['completion_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
+                    $costLog = LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, true, ['company' => $companyName]);
+
+                    self::logApiCall('perplexity', 'SUCCESS', 'Call completed successfully.', $duration, $costLog->cost_eur, $costLog->total_tokens);
+                    GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'SUCCESS', $duration, count($citations) . " citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Score 86)" : "NEE (Score 30)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     return [
                         'method' => 'Perplexity API (sonar)',
@@ -577,19 +639,26 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                         'score' => $mentionsBrand ? 86 : 30,
                         'sentiment' => $mentionsBrand ? '+92' : 'N/A',
                         'fallbackUsed' => false,
+                        'costEur' => $costLog->cost_eur,
+                        'tokens' => $costLog->total_tokens,
                     ];
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
+                LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('perplexity', 'ERROR', $errorMsg, $duration);
                 GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
+                LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
                 self::logApiCall('perplexity', 'ERROR', $e->getMessage(), $duration);
                 GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
+        // Fallback simulation (zero cost)
+        LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
+        self::logApiCall('perplexity', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
         GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
             'method' => 'Perplexity API Simulator',
@@ -601,12 +670,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             'score' => 82,
             'sentiment' => '+92',
             'fallbackUsed' => true,
+            'costEur' => 0.0,
+            'tokens' => 0,
             'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
         ];
     }
 
     // 4. Anthropic Claude API
-    public function queryAnthropic(string $prompt, string $companyName): array
+    public function queryAnthropic(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('anthropic');
         $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
@@ -635,8 +706,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     $content = $data['content'][0]['text'] ?? '';
                     $mentionsBrand = str_contains(strtolower($content), $companyKey);
 
-                    self::logApiCall('anthropic', 'SUCCESS', 'Call completed successfully.', $duration);
-                    GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Score 84)" : "NEE (Score 20)"));
+                    // Track tokens and cost
+                    $usage = $data['usage'] ?? [];
+                    $inTokens = $usage['input_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
+                    $outTokens = $usage['output_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
+                    $costLog = LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
+
+                    self::logApiCall('anthropic', 'SUCCESS', 'Call completed successfully.', $duration, $costLog->cost_eur, $costLog->total_tokens);
+                    GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Score 84)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     return [
                         'method' => 'Anthropic API (claude-3-5-sonnet)',
@@ -647,19 +724,26 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                         'score' => $mentionsBrand ? 84 : 20,
                         'sentiment' => $mentionsBrand ? '+90' : 'N/A',
                         'fallbackUsed' => false,
+                        'costEur' => $costLog->cost_eur,
+                        'tokens' => $costLog->total_tokens,
                     ];
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
+                LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('anthropic', 'ERROR', $errorMsg, $duration);
                 GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
+                LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
                 self::logApiCall('anthropic', 'ERROR', $e->getMessage(), $duration);
                 GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
+        // Fallback simulation (zero cost)
+        LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
+        self::logApiCall('anthropic', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
         GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
             'method' => 'Anthropic API Simulator',
@@ -670,6 +754,8 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             'score' => 76,
             'sentiment' => '+90',
             'fallbackUsed' => true,
+            'costEur' => 0.0,
+            'tokens' => 0,
             'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
         ];
     }

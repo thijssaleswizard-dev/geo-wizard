@@ -1,11 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BarChart2, Info, MessageSquare, Sparkles, TrendingUp, 
-  CheckCircle, ArrowUpRight, Zap, RefreshCw 
+  CheckCircle, ArrowUpRight, Zap, RefreshCw, Coins
 } from 'lucide-react';
 
 export default function AgentsAnalytics({ enabledEngines }) {
   const [activeEngine, setActiveEngine] = useState('All');
+  const [costData, setCostData] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/llm-costs')
+      .then(res => res.json())
+      .then(json => {
+        if (json.success) setCostData(json);
+      })
+      .catch(console.error);
+  }, []);
 
   // Engines database
   const allEnginesData = {
@@ -260,6 +270,15 @@ export default function AgentsAnalytics({ enabledEngines }) {
                   <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Visibility</div>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>{eng.visibility}%</div>
                 </div>
+
+                {costData?.byEngine && (
+                  <div>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>LLM Kosten</div>
+                    <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--brand-primary)' }}>
+                      €{Number(costData.byEngine.find(e => e.engine === key || e.shortName.toLowerCase() === key.toLowerCase() || e.name.toLowerCase().includes(key))?.costEur || 0).toFixed(4)}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Citations references */}

@@ -47,7 +47,7 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
   );
 };
 
-export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient }) {
+export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient, onNavigateTab }) {
   const [searchQuery, setSearchQuery] = useState('');
   
   // Add Client Modal state
@@ -102,6 +102,8 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [showMonitorModal, setShowMonitorModal] = useState(false);
   const [apiStatus, setApiStatus] = useState([]);
   const [apiHistory, setApiHistory] = useState([]);
+  const [costSummary, setCostSummary] = useState(null);
+  const [costByEngine, setCostByEngine] = useState([]);
   const [monitorLoading, setMonitorLoading] = useState(false);
 
   const fetchApiMonitorData = async () => {
@@ -112,6 +114,8 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
       if (data.success) {
         setApiStatus(data.status);
         setApiHistory(data.history);
+        setCostSummary(data.costSummary || null);
+        setCostByEngine(data.costByEngine || []);
       }
     } catch (err) {
       console.error('Error fetching API status monitor:', err);
@@ -1197,6 +1201,69 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
               </p>
             </div>
 
+            {/* Quick LLM Cost Summary Banner */}
+            {costSummary && (
+              <div style={{
+                backgroundColor: '#faf5ff',
+                border: '1px solid #f3e8ff',
+                borderRadius: '12px',
+                padding: '12px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <div>
+                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Totale LLM Kosten</span>
+                    <span style={{ fontSize: '18px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
+                      € {Number(costSummary.totalCostEur || 0).toFixed(4)}
+                    </span>
+                  </div>
+                  <div style={{ width: '1px', height: '28px', backgroundColor: '#e5e7eb' }} />
+                  <div>
+                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Totaal Tokens</span>
+                    <span style={{ fontSize: '15px', fontWeight: 700, color: '#4b5563' }}>
+                      {Number(costSummary.totalTokens || 0).toLocaleString('nl-NL')}
+                    </span>
+                  </div>
+                  <div style={{ width: '1px', height: '28px', backgroundColor: '#e5e7eb' }} />
+                  <div>
+                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Aanroepen</span>
+                    <span style={{ fontSize: '15px', fontWeight: 700, color: '#4b5563' }}>
+                      {costSummary.totalRequests || 0}
+                    </span>
+                  </div>
+                </div>
+
+                {onNavigateTab && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMonitorModal(false);
+                      onNavigateTab('llm_costs');
+                    }}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      backgroundColor: 'var(--brand-primary)',
+                      color: 'white',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      border: 'none',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    Kosten Dashboard →
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Engine Status Grid */}
             <div style={{
               display: 'grid',
@@ -1248,6 +1315,11 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     }}>
                       {label}
                     </span>
+                    {eng.totalCostEur !== undefined && (
+                      <span style={{ fontSize: '10px', color: '#111827', fontWeight: 600 }}>
+                        Kosten: <strong>€{Number(eng.totalCostEur).toFixed(4)}</strong>
+                      </span>
+                    )}
                     {eng.engine === 'copilot' && eng.status === 'NOT_CONFIGURED' && (
                       <span style={{ fontSize: '9px', color: '#6b7280' }}>
                         Verbergd in UI totdat COPILOT_API_KEY is ingesteld

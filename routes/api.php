@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthApiController;
 use App\Http\Controllers\CitationController;
 use App\Http\Controllers\KeywordController;
+use App\Http\Controllers\LlmCostController;
 use App\Http\Controllers\OverviewController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProjectController;
@@ -42,6 +43,7 @@ Route::get('/overview-stats', [OverviewController::class, 'stats']);
 Route::get('/recommendations', [OverviewController::class, 'recommendations']);
 Route::get('/notifications', [OverviewController::class, 'notifications']);
 Route::get('/agents-analytics', [OverviewController::class, 'agentsAnalytics']);
+Route::get('/llm-costs', [LlmCostController::class, 'index']);
 
 // Scraper Routes
 Route::post('/scraper/run', [OverviewController::class, 'runScraper']);

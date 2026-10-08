@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   ChevronDown, ChevronUp, LayoutDashboard, Search, Eye, 
   Settings, Award, RefreshCw, BarChart2, Compass, AlertCircle, 
-  HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck
+  HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck, Coins
 } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -69,18 +69,21 @@ export default function Sidebar({
 
   const generalItems = [
     { id: 'prompt_research', label: 'AI Prompt Research', icon: Compass },
-    { id: 'audit_tools', label: 'GEO Audit Tools', icon: AlertCircle }
+    { id: 'audit_tools', label: 'GEO Audit Tools', icon: AlertCircle },
+    { id: 'llm_costs', label: 'LLM Kosten & Verbruik', icon: Coins }
   ];
 
   // Admin menu links vary by role
   const getAdminItems = () => {
     if (currentUser.role === 'medewerker') {
       return [
-        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard }
+        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard },
+        { id: 'llm_costs', label: 'LLM Kosten', icon: Coins }
       ];
     }
     return [
-      { id: 'account_plan', label: 'Account & Plan', icon: Settings }
+      { id: 'account_plan', label: 'Account & Plan', icon: Settings },
+      { id: 'llm_costs', label: 'LLM Kosten', icon: Coins }
     ];
   };
 
