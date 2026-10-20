@@ -195,11 +195,12 @@ class CompetitorScraperService
 
         // Save to DB cache in MySQL
         try {
-            Keyword::where('id', $keywordId)->update([
-                'competitors_json' => $finalRanked,
-                'brands_mentioned' => $brandsMentioned,
-                'updated_at' => now(),
-            ]);
+            $kwModel = Keyword::find($keywordId);
+            if ($kwModel) {
+                $kwModel->competitors_json = $finalRanked;
+                $kwModel->brands_mentioned = array_values(array_filter(array_map(fn($c) => preg_replace('/[^a-z0-9]/', '', strtolower($c['brand'] ?? '')), $finalRanked)));
+                $kwModel->save();
+            }
         } catch (\Exception $saveErr) {
             GeoLog::error("❌ [Competitor Scraper Save Fout] {$saveErr->getMessage()}");
         }
@@ -208,7 +209,7 @@ class CompetitorScraperService
     }
 
     /**
-     * Crawls live Bing Netherlands search index with real URL base64 decoding.
+     * Crawls live Bing Netherlands search index with real URL base64 decoding and relevance check.
      */
     protected function scrapeBingDutch(string $query, string $cleanCompany): array
     {
@@ -221,11 +222,12 @@ class CompetitorScraperService
 
             if ($res->successful()) {
                 $crawler = new Crawler($res->body());
-                $crawler->filter('li.b_algo')->each(function (Crawler $node) use (&$found, $cleanCompany) {
+                $crawler->filter('li.b_algo')->each(function (Crawler $node) use (&$found, $cleanCompany, $query) {
                     $a = $node->filter('h2 a');
                     if ($a->count() > 0) {
                         $href = $a->attr('href');
                         $title = trim($a->text());
+                        $snippet = $node->filter('p')->count() ? trim($node->filter('p')->text()) : '';
                         $realUrl = $href;
 
                         if (str_contains($href, '&u=')) {
@@ -243,7 +245,7 @@ class CompetitorScraperService
                         $host = parse_url($realUrl, PHP_URL_HOST);
                         if ($host) {
                             $dom = strtolower(str_replace('www.', '', $host));
-                            if ($dom && !$this->isPortalOrSpam($dom)) {
+                            if ($dom && !$this->isPortalOrSpam($dom) && $this->isRelevantToQuery($title, $snippet, $dom, $realUrl, $query, $cleanCompany)) {
                                 $brand = $this->cleanBrandFromTitle($title, $dom);
                                 $isSelf = str_contains($dom, $cleanCompany) || str_contains($cleanCompany, explode('.', $dom)[0]);
                                 if (!isset($found[$dom])) {
@@ -277,7 +279,7 @@ class CompetitorScraperService
     }
 
     /**
-     * Crawls live Yahoo Dutch search index across multiple pages.
+     * Crawls live Yahoo Dutch search index across multiple pages with relevance check.
      */
     protected function scrapeYahooDutch(string $query, string $cleanCompany): array
     {
@@ -292,11 +294,12 @@ class CompetitorScraperService
 
                 if ($res->successful()) {
                     $crawler = new Crawler($res->body());
-                    $crawler->filter('h3.title')->each(function (Crawler $node) use (&$found, $cleanCompany) {
-                        $a = $node->filter('a');
+                    $crawler->filter('ol.searchCenterMiddle li, div.searchCenterMiddle li')->each(function (Crawler $node) use (&$found, $cleanCompany, $query) {
+                        $a = $node->filter('h3.title a, h3 a');
                         if ($a->count() > 0) {
                             $title = trim($a->text());
                             $href = $a->attr('href');
+                            $snippet = $node->filter('div.compText')->count() ? trim($node->filter('div.compText')->text()) : '';
                             
                             $realUrl = $href;
                             if (str_contains($href, '/RU=')) {
@@ -307,7 +310,7 @@ class CompetitorScraperService
                             $host = parse_url($realUrl, PHP_URL_HOST);
                             if ($host) {
                                 $dom = strtolower(str_replace('www.', '', $host));
-                                if ($dom && !$this->isPortalOrSpam($dom)) {
+                                if ($dom && !$this->isPortalOrSpam($dom) && $this->isRelevantToQuery($title, $snippet, $dom, $realUrl, $query, $cleanCompany)) {
                                     $brand = $this->cleanBrandFromTitle($title, $dom);
                                     $isSelf = str_contains($dom, $cleanCompany) || str_contains($cleanCompany, explode('.', $dom)[0]);
                                     if (!isset($found[$dom])) {
@@ -357,7 +360,21 @@ class CompetitorScraperService
             return true;
         }
 
-        // 2. Universal Non-Service / Portal / Tech Platform Blacklist
+        // 2. Generic Lead-Gen, Quotation & Directory Domain Patterns (Universal across all trades)
+        $portalPatterns = [
+            '-offerte.', 'offerte-', 'offertes-', '-offertes.', 'offerteaanvraag', 'offerteaanvragen', 'gratis-offerte',
+            '-vergelijken.', 'vergelijken-', '-vergelijker.', '-vergelijk.', 'vergelijk-',
+            '-kiezen.', 'bedrijfkiezen.', 'bedrijvenkiezen.',
+            '-gezocht.', '-vinder.', '-gids.', 'bedrijvengids.', 'dienstengids.', 'vakgids.',
+            '-overzicht.', 'overzicht-',
+        ];
+        foreach ($portalPatterns as $pattern) {
+            if (str_contains($dom, $pattern)) {
+                return true;
+            }
+        }
+
+        // 3. Universal Non-Service / Portal / Tech Platform Blacklist
         $blacklisted = [
             // ISPs & Telecoms
             'online.nl', 'kpn.nl', 'ziggo.nl', 'odido.nl', 't-mobile.', 'vodafone.', 'overstappen.nl', 'nederland.fm',
@@ -368,11 +385,16 @@ class CompetitorScraperService
             'microsoft.', 'apple.', 'google.', 'mozilla.', 'stackoverflow.', 'quora.', 'reddit.com', 'zhihu.', 'deepl.com', 'translate.',
             // Global Big Tech / Marketplaces / Social Media
             'facebook.', 'linkedin.', 'instagram.', 'youtube.', 'tiktok.', 'twitter.', 'x.com', 'pinterest.',
-            'bol.com', 'coolblue.', 'amazon.', 'ikea.', 'marktplaats.nl', 'beslist.', 'ebay.',
-            // Directories, Portals & Aggregators (all trades & niches)
+            'bol.com', 'coolblue.', 'amazon.', 'ikea.', 'marktplaats.nl', 'beslist.', 'ebay.', 'tweedehands.', 'speurders.',
+            // Review Platforms, Consumer Ratings & Trust Seals
+            'trustpilot.', 'klantenvertellen.', 'kiyoh.', 'feedbackcompany.', 'ervaringen.nl', 'opiness.nl', 'trustprofile.', 'webwinkelkeur.', 'consumentenbond.',
+            // Startpagina Clones, Link Directories & Link Farms
+            'startpagina.', 'startmee.', 'linkpaginas.', 'linkplein.', 'uwpagina.', 'startkabel.', 'allepaginas.', 'vinddirect.', 'zoekgids.', 'linkspot.', 'starttopper.',
+            // Directories, Lead-Gen Portals & Aggregators (all trades & niches)
             'sortlist.', 'trustoo.', 'werkspot.', 'homedeal.', 'cylex.', 'goudengids.', 'telefoongids.', 'telefoonboek.',
             'indebuurt.', 'kvk.nl', 'bedrijvenpagina.', 'openingstijden.', 'beste.nl', 'hetbeste.', '000.nl',
             'offertevergelijker.', 'offerteadviseur.', 'zoekdienst.', 'bedrijvenkiezer.', 'slimster.', 'zoofy.', 'bobex.',
+            'bambelo.', 'solvari.', 'leadsupply.', 'leadfabriek.', 'verbouwkosten.', 'watkost.',
             'hovenier.nl', 'hovenier-nu.', 'hoveniergegevens.', 'hovenier-vinder.', 'hoveniernederland.', 'hoveniersinuwregio.',
             'hovenierin.', 'hovenier.in', 'hovenier-in.', 'hovenier.website', 'hovenier-gigant.', 'hoveniersportaal.',
             'all-in-hoveniersbedrijf.', 'zoekhovenier.', 'tuinman-gezocht.', 'de-hobbykweker.', 'vakblad', 'aeresmbo.',
@@ -386,11 +408,79 @@ class CompetitorScraperService
             'uefa.', 'espn.', 'genius.', 'dailymotion.', 'whatsapp.', 'mdundo.', 'spotify.', 'soundcloud.', 'netflix.',
             'disney.', 'nationalevacaturebank.', 'vacature', 'werk.nl', 'vhg.nl', 'hovenier-info.',
             // Generic Supermarkets & non-service retail
-            'ah.nl', 'jumbo.com', 'lidl.', 'aldi.', 'hornbach.', 'gamma.', 'praxis.', 'hubo.', 'karwei.', 'offen.net', 'morrisons.', 'racingpost.'
+            'ah.nl', 'jumbo.com', 'lidl.', 'aldi.', 'hornbach.', 'gamma.', 'praxis.', 'hubo.', 'karwei.', 'offen.net', 'morrisons.', 'racingpost.',
+            // Fast Fashion, Clothing Retail & Department Stores
+            'pullandbear.', 'zara.', 'hm.com', 'zalando.', 'asos.', 'shein.', 'stradivarius.', 'bershka.', 'mango.', 'primark.',
+            // Government, Ministries, Municipalities & Official Authorities
+            'government.nl', 'overheid.nl', 'rijksoverheid.nl', 'belastingdienst.nl', 'rdw.nl', 'cbr.nl', 'politie.nl', 'uwv.nl', 'svb.nl',
+            'gemeente', 'loket', 'officielebekendmakingen.',
+            // Adult, Dating & Escort
+            'kinky.nl', 'secondlove.', 'lexa.nl', 'tinder.', 'erotiek', 'escort',
+            // Radio, TV & Broadcast Networks
+            'skyradio.', 'qmusic.', 'radio538.', 'slam.', 'npo.nl', 'rtl.nl', 'talpa.',
+            // Developer Tools, Tech Q&A, IP Utilities & Foreign Platforms
+            'stackexchange.', 'stackoverflow.', 'whatismyip.', 'speedtest.', 'copilot.nl', 'eduhint.', 'baidu.', 'wordreference.'
         ];
 
         foreach ($blacklisted as $b) {
             if (str_contains($dom, $b)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if a SERP result is semantically relevant to the keyword query.
+     * Works generically across ANY industry (roofing, legal, medical, accounting, gardening, plumbing).
+     * Prevents anti-bot decoy results (like clothing stores, adult sites, radio stations)
+     * from polluting the competitor rankings.
+     */
+    protected function isRelevantToQuery(string $title, string $snippet, string $domain, string $url, string $query, string $cleanCompany): bool
+    {
+        $haystack = strtolower("{$title} {$snippet} {$domain} {$url}");
+        
+        // Always allow client company domain
+        if ($cleanCompany && (str_contains($domain, $cleanCompany) || str_contains($cleanCompany, explode('.', $domain)[0]))) {
+            return true;
+        }
+
+        // Tokenize query into significant words (>= 3 chars)
+        $words = preg_split('/[\s,\-\+]+/', strtolower($query));
+        $stopWords = ['het', 'een', 'van', 'voor', 'met', 'aan', 'bij', 'uit', 'the', 'and', 'for', 'bedrijven', 'specialist', 'regio', 'buurt', 'laten'];
+        $sigWords = array_values(array_filter($words, fn($w) => strlen($w) >= 3 && !in_array($w, $stopWords)));
+        
+        $terms = [];
+        foreach ($sigWords as $w) {
+            $terms[] = $w;
+            // Dutch plural stemming: e.g. hoveniers -> hovenier, dakkapellen -> dakkapel
+            if (str_ends_with($w, 's') && strlen($w) >= 5) {
+                $terms[] = substr($w, 0, -1);
+            }
+            if (str_ends_with($w, 'en') && strlen($w) >= 6) {
+                $base = substr($w, 0, -2);
+                $terms[] = $base;
+                // Double consonant reduction before 'en': dakkapellen -> dakkapell -> dakkapel
+                if (strlen($base) >= 4 && substr($base, -1) === substr($base, -2, 1)) {
+                    $terms[] = substr($base, 0, -1);
+                }
+            }
+            // Universal trade compound stems
+            foreach (['tuin', 'aanleg', 'bouw', 'dak', 'kapel', 'zorg', 'advies', 'dienst', 'verkoop', 'makelaar', 'notaris', 'garage', 'auto', 'klus', 'onderhoud', 'ontwerp', 'kozijn', 'isolatie', 'schilder', 'loodgieter', 'installatie', 'fysio', 'tandarts'] as $component) {
+                if (str_contains($w, $component)) {
+                    $terms[] = $component;
+                }
+            }
+        }
+
+        $allTerms = array_unique(array_filter($terms));
+        if (empty($allTerms)) {
+            return true;
+        }
+
+        foreach ($allTerms as $term) {
+            if (str_contains($haystack, $term)) {
                 return true;
             }
         }
