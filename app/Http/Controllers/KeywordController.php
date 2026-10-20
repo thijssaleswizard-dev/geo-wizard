@@ -241,4 +241,83 @@ class KeywordController extends Controller
             'message' => "{$count} keywords en alle onderliggende data zijn succesvol verwijderd via database cascade."
         ]);
     }
+
+    /**
+     * Re-scrape competitors and re-run all AI prompt checks for a keyword.
+     */
+    public function rescrape(int $id): JsonResponse
+    {
+        $kw = Keyword::with('prompts')->find($id);
+        if (!$kw) {
+            return response()->json(['error' => 'Keyword niet gevonden.'], 404);
+        }
+
+        \App\Services\GeoLog::info("🔄 [KEYWORD RESCRAPE] Handmatige rescrape gestart voor Keyword #{$id}: \"{$kw->keyword}\"");
+
+        // 1. Live scrape competitors with force = true
+        $competitors = $this->competitorScraper->getOrScrapeCompetitors($kw->id, $kw->keyword, $kw->company_key, true);
+
+        $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
+        $calculatedSov = $selfItem ? ($selfItem['sov'] ?? 0) : 0;
+        $calculatedPos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
+        $rankStr = $selfItem ? ($selfItem['rank'] ?? '1') : '1';
+        $rankInt = (int) preg_replace('/[^0-9]/', '', $rankStr) ?: 1;
+
+        $kw->update([
+            'rank' => $rankInt,
+            'updated_at' => now(),
+        ]);
+
+        // 2. Trigger fresh scans for all associated prompts
+        $prompts = $kw->prompts ?? collect();
+        foreach ($prompts as $prompt) {
+            $prompt->update([
+                'status' => 'pending',
+                'updated_at' => now(),
+            ]);
+            \App\Jobs\ProcessPromptJob::dispatch($prompt->id);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Keyword \"{$kw->keyword}\" rankings en " . count($prompts) . " prompts worden opnieuw gescand.",
+            'keyword' => [
+                'id' => $kw->id,
+                'share_of_voice' => $calculatedSov,
+                'average_position' => $calculatedPos,
+                'rank' => '#' . $rankInt,
+                'competitors' => $competitors,
+                'is_crawling' => count($prompts) > 0,
+            ]
+        ]);
+    }
+
+    /**
+     * Bulk re-scrape multiple keywords.
+     */
+    public function bulkRescrape(Request $request): JsonResponse
+    {
+        $ids = $request->input('ids', []);
+        if (!is_array($ids) || empty($ids)) {
+            return response()->json(['error' => 'Geen keyword IDs opgegeven.'], 400);
+        }
+
+        $count = 0;
+        foreach ($ids as $id) {
+            $kw = Keyword::with('prompts')->find($id);
+            if ($kw) {
+                $count++;
+                $this->competitorScraper->getOrScrapeCompetitors($kw->id, $kw->keyword, $kw->company_key, true);
+                foreach ($kw->prompts as $prompt) {
+                    $prompt->update(['status' => 'pending']);
+                    \App\Jobs\ProcessPromptJob::dispatch($prompt->id);
+                }
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$count} keywords en bijbehorende prompts worden opnieuw gescand."
+        ]);
+    }
 }

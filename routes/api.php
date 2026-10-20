@@ -26,6 +26,8 @@ Route::get('/projects/api-monitor/status', [ProjectController::class, 'apiMonito
 Route::get('/keywords', [KeywordController::class, 'index']);
 Route::post('/keywords', [KeywordController::class, 'store']);
 Route::post('/keywords/recommend', [KeywordController::class, 'recommend']);
+Route::post('/keywords/{id}/rescrape', [KeywordController::class, 'rescrape']);
+Route::post('/keywords/bulk-rescrape', [KeywordController::class, 'bulkRescrape']);
 Route::delete('/keywords/{id}', [KeywordController::class, 'destroy']);
 Route::post('/keywords/bulk-delete', [KeywordController::class, 'bulkDelete']);
 

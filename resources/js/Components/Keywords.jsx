@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ChevronRight, ChevronDown, ChevronUp, Plus, Search, Archive, Trash2,
   Sparkles, Play, Edit2, X, AlertTriangle, Loader2,
-  ArrowLeft, Download, Share2
+  ArrowLeft, Download, Share2, RotateCw, RefreshCw
 } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -175,6 +175,93 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
     }
   };
 
+  const [rescrapingKeywords, setRescrapingKeywords] = useState({});
+
+  const handleRescrapeKeyword = async (kwId, e) => {
+    if (e) e.stopPropagation();
+    setRescrapingKeywords(prev => ({ ...prev, [kwId]: true }));
+    try {
+      const response = await fetch(`/api/keywords/${kwId}/rescrape`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await response.json();
+      if (data.success) {
+        setKeywords(prev => prev.map(k => {
+          if (k.id === kwId) {
+            return {
+              ...k,
+              is_crawling: true,
+              rank: data.keyword?.rank ?? k.rank,
+              sov: data.keyword?.share_of_voice ?? k.sov,
+              position: data.keyword?.average_position ?? k.position,
+              competitors: data.keyword?.competitors ?? k.competitors,
+              prompts: (k.prompts || []).map(p => ({ ...p, status: 'pending' }))
+            };
+          }
+          return k;
+        }));
+
+        if (selectedKeyword && selectedKeyword.id === kwId) {
+          setSelectedKeyword(prev => ({
+            ...prev,
+            is_crawling: true,
+            rank: data.keyword?.rank ?? prev.rank,
+            sov: data.keyword?.share_of_voice ?? prev.sov,
+            position: data.keyword?.average_position ?? prev.position,
+            competitors: data.keyword?.competitors ?? prev.competitors,
+            prompts: (prev.prompts || []).map(p => ({ ...p, status: 'pending' }))
+          }));
+        }
+
+        setCrawlingStatus({
+          active: true,
+          message: data.message || 'Keyword rankings en AI-prompts worden opnieuw gescand...'
+        });
+      } else {
+        alert(data.error || 'Fout bij opnieuw scrapen van keyword.');
+      }
+    } catch (err) {
+      console.error('Rescrape error:', err);
+      alert('Kan geen verbinding maken met de server.');
+    } finally {
+      setRescrapingKeywords(prev => ({ ...prev, [kwId]: false }));
+    }
+  };
+
+  const handleBulkRescrapeKeywords = async () => {
+    if (selectedKeywordIds.length === 0) return;
+    try {
+      const response = await fetch('/api/keywords/bulk-rescrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedKeywordIds })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setKeywords(prev => prev.map(k => {
+          if (selectedKeywordIds.includes(k.id)) {
+            return {
+              ...k,
+              is_crawling: true,
+              prompts: (k.prompts || []).map(p => ({ ...p, status: 'pending' }))
+            };
+          }
+          return k;
+        }));
+        setSelectedKeywordIds([]);
+        setCrawlingStatus({
+          active: true,
+          message: data.message || 'Geselecteerde keywords worden opnieuw gescand...'
+        });
+      } else {
+        alert(data.error || 'Fout bij opnieuw scrapen van geselecteerde keywords.');
+      }
+    } catch (err) {
+      console.error('Bulk rescrape error:', err);
+      alert('Kan geen verbinding maken met de server.');
+    }
+  };
 
   const toggleExpandedPrompt = (pId) => {
     setExpandedPrompts(prev => ({ ...prev, [pId]: !prev[pId] }));
@@ -927,6 +1014,31 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              type="button"
+              onClick={(e) => handleRescrapeKeyword(kw.id, e)}
+              disabled={rescrapingKeywords[kw.id]}
+              title="Rankings live opnieuw crawlen en alle gekoppelde AI-prompts opnieuw scannen"
+              style={{
+                padding: '6px 14px',
+                borderRadius: '20px',
+                border: '1px solid #bfdbfe',
+                backgroundColor: rescrapingKeywords[kw.id] ? '#eff6ff' : '#f0f7ff',
+                color: '#1d4ed8',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#dbeafe'; }}
+              onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#f0f7ff'; }}
+            >
+              <RotateCw size={13} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
+              {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw Scrapen'}
+            </button>
             <button
               type="button"
               style={{
@@ -2058,32 +2170,54 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          backgroundColor: '#fee2e2',
-          border: '1px solid #fca5a5',
+          backgroundColor: '#eff6ff',
+          border: '1px solid #bfdbfe',
           borderRadius: '8px',
           padding: '10px 16px',
           marginTop: '12px',
           width: '100%'
         }}>
-          <span style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>
             {selectedKeywordIds.length} keywords geselecteerd
           </span>
-          <button
-            type="button"
-            onClick={handleBulkDeleteKeywords}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '20px',
-              border: 'none',
-              backgroundColor: '#ef4444',
-              color: 'white',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: 'pointer'
-            }}
-          >
-            Verwijder Geselecteerde
-          </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={handleBulkRescrapeKeywords}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '20px',
+                border: '1px solid #93c5fd',
+                backgroundColor: '#2563eb',
+                color: 'white',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              <RotateCw size={12} />
+              Opnieuw Scrapen
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkDeleteKeywords}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '20px',
+                border: 'none',
+                backgroundColor: '#ef4444',
+                color: 'white',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Verwijder Geselecteerde
+            </button>
+          </div>
         </div>
       )}
 
@@ -2224,6 +2358,27 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
 
                 <td style={{ padding: '16px' }} onClick={(e) => e.stopPropagation()}>
                   <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={(e) => handleRescrapeKeyword(kw.id, e)}
+                      title="Keyword rankings en AI-prompts opnieuw scrapen"
+                      disabled={rescrapingKeywords[kw.id]}
+                      style={{
+                        padding: '6px',
+                        borderRadius: '4px',
+                        border: 'none',
+                        background: 'none',
+                        cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
+                        color: rescrapingKeywords[kw.id] ? '#2563eb' : '#9ca3af',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                      onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#2563eb'; }}
+                      onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#9ca3af'; }}
+                    >
+                      <RotateCw size={14} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleArchiveKeyword(kw)}

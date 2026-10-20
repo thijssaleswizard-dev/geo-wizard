@@ -22,29 +22,31 @@ class CompetitorScraperService
      * Fully generic, dynamic, and multi-tenant for 1,000+ clients across ANY industry.
      * ZERO hardcoded branches or company lists.
      */
-    public function getOrScrapeCompetitors(int $keywordId, string $keywordText, ?string $companyKey = 'saleswizard'): array
+    public function getOrScrapeCompetitors(int $keywordId, string $keywordText, ?string $companyKey = 'saleswizard', bool $force = false): array
     {
         $cleanCompany = strtolower(trim(str_replace('.nl', '', $companyKey ?? 'saleswizard')));
         $cleanDomain = str_contains($cleanCompany, '.') ? $cleanCompany : "{$cleanCompany}.nl";
         $selfName = ucwords(str_replace(['-', '_'], ' ', $cleanCompany));
 
-        // 1. Check DB Cache (return only if >= 8 genuine competitors are cached)
-        try {
-            $existing = Keyword::find($keywordId);
-            if ($existing && !empty($existing->competitors_json)) {
-                $parsed = is_array($existing->competitors_json) ? $existing->competitors_json : json_decode($existing->competitors_json, true);
-                if (is_array($parsed) && count($parsed) >= 8) {
-                    $cleaned = array_values(array_filter($parsed, function($item) {
-                        $d = strtolower($item['domain'] ?? '');
-                        return !$this->isPortalOrSpam($d);
-                    }));
-                    if (count($cleaned) >= 8) {
-                        return $cleaned;
+        // 1. Check DB Cache (return only if >= 8 genuine competitors are cached, unless force = true)
+        if (!$force) {
+            try {
+                $existing = Keyword::find($keywordId);
+                if ($existing && !empty($existing->competitors_json)) {
+                    $parsed = is_array($existing->competitors_json) ? $existing->competitors_json : json_decode($existing->competitors_json, true);
+                    if (is_array($parsed) && count($parsed) >= 8) {
+                        $cleaned = array_values(array_filter($parsed, function($item) {
+                            $d = strtolower($item['domain'] ?? '');
+                            return !$this->isPortalOrSpam($d);
+                        }));
+                        if (count($cleaned) >= 8) {
+                            return $cleaned;
+                        }
                     }
                 }
+            } catch (\Exception $err) {
+                Log::warning("[Competitor Cache Warning] {$err->getMessage()}");
             }
-        } catch (\Exception $err) {
-            Log::warning("[Competitor Cache Warning] {$err->getMessage()}");
         }
 
         // 2. Generic Keyword Sanitization (Universal for ANY industry/query)
