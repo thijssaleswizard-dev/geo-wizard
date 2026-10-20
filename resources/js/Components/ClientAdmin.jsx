@@ -1218,7 +1218,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   <div>
                     <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Totale LLM Kosten</span>
                     <span style={{ fontSize: '18px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
-                      € {Number(costSummary.totalCostEur || 0).toFixed(4)}
+                      € {Number(costSummary.totalCostEur || 0).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div style={{ width: '1px', height: '28px', backgroundColor: '#e5e7eb' }} />
@@ -1317,7 +1317,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     </span>
                     {eng.totalCostEur !== undefined && (
                       <span style={{ fontSize: '10px', color: '#111827', fontWeight: 600 }}>
-                        Kosten: <strong>€{Number(eng.totalCostEur).toFixed(4)}</strong>
+                        Kosten: <strong>€{Number(eng.totalCostEur).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                       </span>
                     )}
                     {eng.engine === 'copilot' && eng.status === 'NOT_CONFIGURED' && (

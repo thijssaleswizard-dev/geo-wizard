@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Invoice;
 use App\Models\User;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 

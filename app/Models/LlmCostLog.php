@@ -21,6 +21,8 @@ class LlmCostLog extends Model
         'latency_ms',
         'status',
         'metadata',
+        'created_at',
+        'updated_at',
     ];
 
     protected $casts = [

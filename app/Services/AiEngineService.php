@@ -17,7 +17,7 @@ class AiEngineService
             'status' => $status, // 'SUCCESS', 'ERROR' or 'FALLBACK'
             'message' => $message ?: 'No details provided.',
             'latency' => $latency !== null ? "{$latency}ms" : 'N/A',
-            'cost' => $costEur !== null ? '€' . number_format($costEur, 4) : null,
+            'cost' => $costEur !== null ? '€' . number_format($costEur, 2, ',', '.') : null,
             'tokens' => $tokens !== null ? number_format($tokens) : null,
         ]);
 
@@ -60,8 +60,8 @@ class AiEngineService
                 'key' => 'gemini',
                 'apiKey' => self::getApiKey('gemini'),
                 'envKey' => 'GEMINI_API_KEY',
-                'name' => 'Gemini (gemini-flash-latest)',
-                'shortName' => 'Gemini',
+                'name' => 'Google AI Studio (Gemini Flash)',
+                'shortName' => 'Google AI Studio',
                 'alwaysAvailable' => true,
                 'check' => fn($k) => !empty($k),
             ],
@@ -143,7 +143,7 @@ class AiEngineService
     {
         $engines = [
             ['key' => 'openai', 'name' => 'OpenAI (gpt-4o / gpt-4o-mini)', 'envKey' => 'OPENAI_API_KEY', 'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-')],
-            ['key' => 'gemini', 'name' => 'Gemini (gemini-flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
+            ['key' => 'gemini', 'name' => 'Google AI Studio (Gemini Flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'perplexity', 'name' => 'Perplexity API (sonar)', 'envKey' => 'PERPLEXITY_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'anthropic', 'name' => 'Anthropic Claude 3.5 Sonnet', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'copilot', 'name' => 'Microsoft Copilot', 'envKey' => 'COPILOT_API_KEY', 'check' => fn($k) => !empty($k)],
@@ -191,7 +191,7 @@ class AiEngineService
                 'status' => $status,
                 'lastError' => $lastError,
                 'lastUsed' => $lastLog ? $lastLog['timestamp'] : null,
-                'totalCostEur' => $costStat ? round((float) $costStat->total_eur, 4) : 0.0,
+                'totalCostEur' => $costStat ? round((float) $costStat->total_eur, 2) : 0.00,
                 'totalTokens' => $costStat ? (int) $costStat->total_tokens : 0,
                 'totalCalls' => $costStat ? (int) $costStat->total_calls : 0,
             ];
@@ -327,7 +327,7 @@ class AiEngineService
         if ($apiKey) {
             try {
                 $response = Http::timeout(20)
-                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", [
+                    ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => $prompt]]]
                         ]
@@ -340,7 +340,7 @@ class AiEngineService
                     $usage = $data['usageMetadata'] ?? [];
                     $inTokens = $usage['promptTokenCount'] ?? (int) ceil(mb_strlen($prompt) / 4);
                     $outTokens = $usage['candidatesTokenCount'] ?? (int) ceil(mb_strlen($text) / 4);
-                    LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'gemini_raw_query', $inTokens, $outTokens, 'SUCCESS', null, $projectId, null, false);
+                    LlmCostService::recordUsage('gemini', 'gemini-flash-lite-latest', 'gemini_raw_query', $inTokens, $outTokens, 'SUCCESS', null, $projectId, null, false);
 
                     return [
                         'success' => true,
@@ -367,7 +367,7 @@ class AiEngineService
         $startTime = microtime(true);
         $useSearchGrounding = self::isSearchGroundingEnabled();
 
-        GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'START', null, "Querying consolidated Google AI Suite (RAG " . ($useSearchGrounding ? '+ Google Grounding' : 'Web Grounded') . ") for [{$companyName}]");
+        GeoLog::aiCall('Google Suite', 'gemini-flash-lite-latest', $promptSnippet, 'START', null, "Querying consolidated Google AI Suite (RAG " . ($useSearchGrounding ? '+ Google Grounding' : 'Web Grounded') . ") for [{$companyName}]");
 
         if ($apiKey) {
             try {
@@ -411,7 +411,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     $payload['tools'] = [['google_search' => new \stdClass()]];
                 }
 
-                $response = Http::timeout(25)->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={$apiKey}", $payload);
+                $response = Http::timeout(25)->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={$apiKey}", $payload);
 
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
 
@@ -603,37 +603,68 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
 
         if ($apiKey) {
             try {
+                // Perplexity Agent API (v1/responses) with live web search
                 $response = Http::withToken($apiKey)
-                    ->timeout(20)
-                    ->post('https://api.perplexity.ai/chat/completions', [
-                        'model' => 'sonar',
-                        'messages' => [
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
+                    ->timeout(25)
+                    ->post('https://api.perplexity.ai/v1/responses', [
+                        'preset' => 'fast',
+                        'instructions' => "Je bent Perplexity AI met live web browsing voor Nederlandse lokale zoekopdrachten. Wanneer de gebruiker vraagt naar betrouwbare hoveniers, bureaus of bedrijven in een stad of regio, doorzoek je actuele recensies en bedrijfsvermeldingen. Rangschik de partijen op basis van betrouwbaarheid (reviewscore en aantal reviews), specialisaties en lokale aanwezigheid. Geef een overzichtelijke shortlist / tabel met sterren en reviews en licht de top bureaus toe.",
+                        'input' => $prompt,
                     ]);
 
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    $content = $data['choices'][0]['message']['content'] ?? '';
-                    $citations = $data['citations'] ?? [];
+                    $outputItems = $data['output'] ?? [];
+                    $content = '';
+                    $citations = [];
+
+                    foreach ($outputItems as $item) {
+                        if (($item['type'] ?? '') === 'search_results') {
+                            foreach ($item['results'] ?? [] as $res) {
+                                if (!empty($res['url'])) {
+                                    $citations[] = $res['url'];
+                                }
+                            }
+                        }
+                        if (($item['type'] ?? '') === 'message') {
+                            foreach ($item['content'] ?? [] as $c) {
+                                if (($c['type'] ?? '') === 'output_text') {
+                                    $content .= $c['text'] ?? '';
+                                }
+                                foreach ($c['annotations'] ?? [] as $anno) {
+                                    if (!empty($anno['url'])) {
+                                        $citations[] = $anno['url'];
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (empty($content)) {
+                        $content = $data['output_text'] ?? ($data['choices'][0]['message']['content'] ?? '');
+                    }
+                    if (empty($citations) && !empty($data['citations'])) {
+                        $citations = $data['citations'];
+                    }
+
                     $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
 
                     // Track tokens and cost
                     $usage = $data['usage'] ?? [];
-                    $inTokens = $usage['prompt_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
-                    $outTokens = $usage['completion_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
+                    $inTokens = $usage['input_tokens'] ?? $usage['prompt_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
+                    $outTokens = $usage['output_tokens'] ?? $usage['completion_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
                     $costLog = LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, true, ['company' => $companyName]);
 
-                    self::logApiCall('perplexity', 'SUCCESS', 'Call completed successfully.', $duration, $costLog->cost_eur, $costLog->total_tokens);
-                    GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'SUCCESS', $duration, count($citations) . " citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Score 86)" : "NEE (Score 30)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
+                    self::logApiCall('perplexity', 'SUCCESS', 'Call completed successfully with Perplexity Agent API.', $duration, $costLog->cost_eur, $costLog->total_tokens);
+                    GeoLog::aiCall('Perplexity AI', 'Agent API (fast)', $promptSnippet, 'SUCCESS', $duration, count($citations) . " citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Score 86)" : "NEE (Score 30)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     return [
-                        'method' => 'Perplexity API (sonar)',
+                        'method' => 'Perplexity API (Agent API / responses)',
                         'name' => 'Perplexity AI',
                         'text' => $content,
-                        'citations' => $citations,
+                        'citations' => array_values(array_unique($citations)),
                         'mentioned' => $mentionsBrand,
                         'position' => $mentionsBrand ? 2 : null,
                         'score' => $mentionsBrand ? 86 : 30,
@@ -684,16 +715,21 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
-        GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'START', null, "Querying live model for [{$companyName}]");
+        GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-4-6', $promptSnippet, 'START', null, "Querying live model for [{$companyName}]");
 
         if ($apiKey) {
             try {
                 $response = Http::withHeaders([
                     'x-api-key' => $apiKey,
                     'anthropic-version' => '2023-06-01',
-                ])->timeout(20)->post('https://api.anthropic.com/v1/messages', [
-                            'model' => 'claude-3-5-sonnet-20241022',
+                ])
+                ->withOptions([
+                    'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                ])
+                ->timeout(20)->post('https://api.anthropic.com/v1/messages', [
+                            'model' => 'claude-sonnet-4-6',
                             'max_tokens' => 2500,
+                            'system' => "Je bent Claude met expertise in de Nederlandse lokale markt. Wanneer de gebruiker vraagt naar betrouwbare dienstverleners of bedrijven (zoals hoveniers) in een stad of regio, geef je een gedetailleerd en eerlijk advies. Rangschik de beste partijen in een overzichtelijke markdown-tabel met beoordeling, specialisaties en toelichting per topkeuze.",
                             'messages' => [
                                 ['role' => 'user', 'content' => $prompt],
                             ],
@@ -710,13 +746,13 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     $usage = $data['usage'] ?? [];
                     $inTokens = $usage['input_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
                     $outTokens = $usage['output_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
-                    $costLog = LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
+                    $costLog = LlmCostService::recordUsage('anthropic', 'claude-sonnet-4-6', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
 
                     self::logApiCall('anthropic', 'SUCCESS', 'Call completed successfully.', $duration, $costLog->cost_eur, $costLog->total_tokens);
-                    GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Score 84)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
+                    GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-4-6', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Score 84)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     return [
-                        'method' => 'Anthropic API (claude-3-5-sonnet)',
+                        'method' => 'Anthropic API (claude-sonnet-4-6)',
                         'name' => 'Claude 3.5 Sonnet',
                         'text' => $content,
                         'mentioned' => $mentionsBrand,

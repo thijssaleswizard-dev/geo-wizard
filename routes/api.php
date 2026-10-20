@@ -44,6 +44,8 @@ Route::get('/recommendations', [OverviewController::class, 'recommendations']);
 Route::get('/notifications', [OverviewController::class, 'notifications']);
 Route::get('/agents-analytics', [OverviewController::class, 'agentsAnalytics']);
 Route::get('/llm-costs', [LlmCostController::class, 'index']);
+Route::post('/llm-costs/invoice', [LlmCostController::class, 'storeInvoice']);
+Route::post('/llm-costs/sync-ai-studio', [LlmCostController::class, 'syncAiStudio']);
 
 // Scraper Routes
 Route::post('/scraper/run', [OverviewController::class, 'runScraper']);

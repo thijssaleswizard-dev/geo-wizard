@@ -275,7 +275,7 @@ export default function AgentsAnalytics({ enabledEngines }) {
                   <div>
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>LLM Kosten</div>
                     <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--brand-primary)' }}>
-                      €{Number(costData.byEngine.find(e => e.engine === key || e.shortName.toLowerCase() === key.toLowerCase() || e.name.toLowerCase().includes(key))?.costEur || 0).toFixed(4)}
+                      € {Number(costData.byEngine.find(e => e.engine === key || e.shortName.toLowerCase() === key.toLowerCase() || e.name.toLowerCase().includes(key))?.costEur || 0).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 )}
