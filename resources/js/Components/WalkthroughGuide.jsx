@@ -25,17 +25,20 @@ export default function WalkthroughGuide({
         {
           target: '[data-tour="sidebar-workspace"]',
           title: 'Uw GEO Dashboard',
-          description: 'Hier volgt u hoe vaak en op welke plek uw merk wordt aanbevolen door ChatGPT, Gemini en Perplexity.'
+          description: 'Hier volgt u hoe vaak en op welke plek uw merk wordt aanbevolen door ChatGPT, Gemini en Perplexity.',
+          tab: 'keywords'
         },
         {
           target: '[data-tour="keywords-header"]',
           title: 'Pakket & Export',
-          description: 'Bekijk uw actieve prompts en download met één klik een Excel-rapport met uw Nulmeting en actuele cijfers.'
+          description: 'Bekijk uw actieve prompts en download met één klik een Excel-rapport met uw Nulmeting en actuele cijfers.',
+          tab: 'keywords'
         },
         {
           target: '[data-tour="keywords-table"]',
           title: 'Zoekwoorden & Resultaten',
-          description: 'Klik op een zoekwoord voor de Nulmeting-grafiek, merkposities en de exacte AI-antwoorden.'
+          description: 'Klik op een zoekwoord voor de Nulmeting-grafiek, merkposities en de exacte AI-antwoorden.',
+          tab: 'keywords'
         },
         {
           target: '[data-tour="header-guide-btn"]',
@@ -54,17 +57,20 @@ export default function WalkthroughGuide({
       {
         target: '[data-tour="projects-create-btn"]',
         title: '2. Projecten & Klantaccounts',
-        description: 'Beheer pakketten (15, 30 of 60 prompts) en geef klanten direct veilige read-only toegang met een wachtwoord.'
+        description: 'Beheer pakketten (15, 30 of 60 prompts) en geef klanten direct veilige read-only toegang met een wachtwoord.',
+        tab: 'client_admin'
       },
       {
         target: '[data-tour="keywords-header"]',
         title: '3. Prompts & CSV Export',
-        description: 'Elk zoekwoord genereert 3 AI-prompts. Rechtsboven zie je het live verbruik en exporteer je alles naar CSV.'
+        description: 'Elk zoekwoord genereert 3 AI-prompts. Rechtsboven zie je het live verbruik en exporteer je alles naar CSV.',
+        tab: 'keywords'
       },
       {
         target: '[data-tour="keywords-table"]',
         title: '4. Nulmeting & Grafieken',
-        description: 'Klik op een zoekwoord voor de Nulmeting-vergelijking, concurrentierankings en antwoorden per AI-model.'
+        description: 'Klik op een zoekwoord voor de Nulmeting-vergelijking, concurrentierankings en antwoorden per AI-model.',
+        tab: 'keywords'
       },
       {
         target: '[data-tour="header-guide-btn"]',
@@ -77,6 +83,15 @@ export default function WalkthroughGuide({
   const steps = getTourSteps();
   const currentStepData = steps[tourStep] || steps[0];
 
+  // Auto-switch tab if step requires a specific view
+  useEffect(() => {
+    if (!isTourActive) return;
+    const stepObj = steps[tourStep];
+    if (stepObj && stepObj.tab && setActiveTab && activeTab !== stepObj.tab) {
+      setActiveTab(stepObj.tab);
+    }
+  }, [isTourActive, tourStep, steps, activeTab, setActiveTab]);
+
   useEffect(() => {
     if (!isTourActive) {
       setTargetRect(null);
@@ -88,6 +103,9 @@ export default function WalkthroughGuide({
       if (!stepObj) return;
       const el = document.querySelector(stepObj.target);
       if (el) {
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (e) {}
         const rect = el.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
           setTargetRect({
@@ -104,12 +122,18 @@ export default function WalkthroughGuide({
       setTargetRect(null);
     };
 
-    const timer = setTimeout(updatePosition, 120);
+    updatePosition();
+    const t1 = setTimeout(updatePosition, 80);
+    const t2 = setTimeout(updatePosition, 220);
+    const t3 = setTimeout(updatePosition, 450);
+
     window.addEventListener('resize', updatePosition);
     window.addEventListener('scroll', updatePosition, true);
 
     return () => {
-      clearTimeout(timer);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
@@ -156,12 +180,15 @@ export default function WalkthroughGuide({
     const viewportW = window.innerWidth;
     const viewportH = window.innerHeight;
     const cardW = 340;
-    const cardH = 175;
+    const cardH = 180;
 
-    if (targetRect.left < 260 && targetRect.right < 320) {
+    if (targetRect.left < 280 && targetRect.right < 340) {
+      const topPos = Math.max(20, Math.min(viewportH - cardH - 20, targetRect.top));
+      const leftPos = Math.min(viewportW - cardW - 20, targetRect.right + 16);
       return {
-        top: `${Math.max(20, Math.min(viewportH - cardH - 20, targetRect.top))}px`,
-        left: `${Math.min(viewportW - cardW - 20, targetRect.right + 16)}px`
+        top: `${topPos}px`,
+        left: `${leftPos}px`,
+        transform: 'none'
       };
     }
 
@@ -177,7 +204,8 @@ export default function WalkthroughGuide({
 
     return {
       top: `${topPos}px`,
-      left: `${leftPos}px`
+      left: `${leftPos}px`,
+      transform: 'none'
     };
   };
 
@@ -208,7 +236,7 @@ export default function WalkthroughGuide({
                 border: '2px solid var(--brand-accent, #8b5cf6)',
                 boxShadow: '0 0 0 9999px rgba(15, 10, 28, 0.45)',
                 pointerEvents: 'none',
-                transition: 'all 0.25s ease',
+                transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
                 zIndex: 9999
               }}
             />
@@ -218,6 +246,7 @@ export default function WalkthroughGuide({
             className="fade-in"
             style={{
               position: 'fixed',
+              ...getTooltipPositionStyle(),
               width: '340px',
               maxWidth: 'calc(100vw - 32px)',
               backgroundColor: '#ffffff',
@@ -228,7 +257,8 @@ export default function WalkthroughGuide({
               zIndex: 10000,
               display: 'flex',
               flexDirection: 'column',
-              gap: '10px'
+              gap: '10px',
+              transition: 'top 0.25s cubic-bezier(0.16, 1, 0.3, 1), left 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

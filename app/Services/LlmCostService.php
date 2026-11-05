@@ -82,6 +82,16 @@ class LlmCostService
             'provider' => 'Anthropic API',
             'color' => '#d97753',
             'models' => [
+                'claude-sonnet-5-5' => [
+                    'input_per_m' => 3.00,
+                    'output_per_m' => 15.00,
+                    'fixed_per_request' => 0.00,
+                ],
+                'claude-sonnet-4-6' => [
+                    'input_per_m' => 3.00,
+                    'output_per_m' => 15.00,
+                    'fixed_per_request' => 0.00,
+                ],
                 'claude-3-5-sonnet' => [
                     'input_per_m' => 3.00,
                     'output_per_m' => 15.00,
@@ -93,7 +103,7 @@ class LlmCostService
                     'fixed_per_request' => 0.00,
                 ],
             ],
-            'default_model' => 'claude-3-5-sonnet-20241022',
+            'default_model' => 'claude-sonnet-5-5',
         ],
         'copilot' => [
             'name' => 'Microsoft Copilot',
@@ -498,7 +508,7 @@ class LlmCostService
             'gemini' => 'gemini-flash-latest',
             'openai' => 'gpt-4o',
             'perplexity' => 'sonar',
-            'anthropic' => 'claude-3-5-sonnet-20241022',
+            'anthropic' => 'claude-sonnet-5-5',
             default => 'default',
         };
 

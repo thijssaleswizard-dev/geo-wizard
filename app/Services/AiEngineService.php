@@ -145,7 +145,7 @@ class AiEngineService
             ['key' => 'openai', 'name' => 'OpenAI (gpt-4o / gpt-4o-mini)', 'envKey' => 'OPENAI_API_KEY', 'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-')],
             ['key' => 'gemini', 'name' => 'Google AI Studio (Gemini Flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'perplexity', 'name' => 'Perplexity API (sonar)', 'envKey' => 'PERPLEXITY_API_KEY', 'check' => fn($k) => !empty($k)],
-            ['key' => 'anthropic', 'name' => 'Anthropic Claude 3.5 Sonnet', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
+            ['key' => 'anthropic', 'name' => 'Anthropic Claude Sonnet 5.5', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
             ['key' => 'copilot', 'name' => 'Microsoft Copilot', 'envKey' => 'COPILOT_API_KEY', 'check' => fn($k) => !empty($k)],
         ];
 
@@ -715,7 +715,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
-        GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-4-6', $promptSnippet, 'START', null, "Querying live model for [{$companyName}]");
+        GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'START', null, "Querying live model for [{$companyName}]");
 
         if ($apiKey) {
             try {
@@ -727,8 +727,9 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
                 ])
                 ->timeout(20)->post('https://api.anthropic.com/v1/messages', [
-                            'model' => 'claude-sonnet-4-6',
+                            'model' => 'claude-sonnet-5-5',
                             'max_tokens' => 2500,
+                            'thinking' => ['type' => 'between_tools'],
                             'system' => "Je bent Claude met expertise in de Nederlandse lokale markt. Wanneer de gebruiker vraagt naar betrouwbare dienstverleners of bedrijven (zoals hoveniers) in een stad of regio, geef je een gedetailleerd en eerlijk advies. Rangschik de beste partijen in een overzichtelijke markdown-tabel met beoordeling, specialisaties en toelichting per topkeuze.",
                             'messages' => [
                                 ['role' => 'user', 'content' => $prompt],
@@ -739,21 +740,29 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
 
                 if ($response->successful()) {
                     $data = $response->json();
-                    $content = $data['content'][0]['text'] ?? '';
+                    $content = '';
+                    foreach ($data['content'] ?? [] as $block) {
+                        if (($block['type'] ?? '') === 'text') {
+                            $content .= $block['text'] ?? '';
+                        }
+                    }
+                    if (empty($content) && !empty($data['content'][0]['text'])) {
+                        $content = $data['content'][0]['text'];
+                    }
                     $mentionsBrand = str_contains(strtolower($content), $companyKey);
 
                     // Track tokens and cost
                     $usage = $data['usage'] ?? [];
                     $inTokens = $usage['input_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
                     $outTokens = $usage['output_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
-                    $costLog = LlmCostService::recordUsage('anthropic', 'claude-sonnet-4-6', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
+                    $costLog = LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
 
                     self::logApiCall('anthropic', 'SUCCESS', 'Call completed successfully.', $duration, $costLog->cost_eur, $costLog->total_tokens);
-                    GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-4-6', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Score 84)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
+                    GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'SUCCESS', $duration, "Merk vermeld: " . ($mentionsBrand ? "JA (Score 84)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
 
                     return [
-                        'method' => 'Anthropic API (claude-sonnet-4-6)',
-                        'name' => 'Claude 3.5 Sonnet',
+                        'method' => 'Anthropic API (claude-sonnet-5-5)',
+                        'name' => 'Claude Sonnet 5.5',
                         'text' => $content,
                         'mentioned' => $mentionsBrand,
                         'position' => $mentionsBrand ? 2 : null,
@@ -766,24 +775,24 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
-                LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
+                LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('anthropic', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
-                LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
+                LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
                 self::logApiCall('anthropic', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
             }
         }
 
         // Fallback simulation (zero cost)
-        LlmCostService::recordUsage('anthropic', 'claude-3-5-sonnet-20241022', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
+        LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
         self::logApiCall('anthropic', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
-        GeoLog::aiCall('Anthropic Claude', 'claude-3-5-sonnet', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
         return [
             'method' => 'Anthropic API Simulator',
-            'name' => 'Claude 3.5 Sonnet',
+            'name' => 'Claude Sonnet 5.5',
             'text' => "Claude signaleert positieve klantbeoordelingen, transparante werkwijze en goede vindbaarheid van {$companyName}.",
             'mentioned' => true,
             'position' => 3,

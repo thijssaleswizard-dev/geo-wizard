@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Coins, Receipt, Cpu, Activity, TrendingUp, RefreshCw, 
+import {
+  Coins, Receipt, Cpu, Activity, TrendingUp, RefreshCw,
   Download, Search, CheckCircle2, Layers, Plus, X, CreditCard
 } from 'lucide-react';
 
@@ -10,7 +10,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
   const [period, setPeriod] = useState('all');
   const [selectedEngineFilter, setSelectedEngineFilter] = useState('all');
   const [searchLogQuery, setSearchLogQuery] = useState('');
-  
+
   // Modal state for manual invoice / payment entry
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
@@ -163,11 +163,11 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
   const recentLogs = data?.recentLogs || [];
 
   const filteredLogs = recentLogs.filter(log => {
-    const matchesEngine = selectedEngineFilter === 'all' || 
-      log.engine === selectedEngineFilter || 
+    const matchesEngine = selectedEngineFilter === 'all' ||
+      log.engine === selectedEngineFilter ||
       (selectedEngineFilter === 'gemini' && (log.engine === 'gemini' || log.engineLabel === 'Google AI Studio'));
 
-    const matchesSearch = !searchLogQuery || 
+    const matchesSearch = !searchLogQuery ||
       log.engine.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
       (log.engineLabel && log.engineLabel.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
       log.model.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
@@ -179,7 +179,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
 
   return (
     <div className="fade-in" style={{ padding: '32px 40px', display: 'flex', flexDirection: 'column', gap: '24px', backgroundColor: '#ffffff', minHeight: '100%' }}>
-      
+
       {/* Top Header */}
       <div style={{
         display: 'flex',
@@ -199,7 +199,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          
+
           {/* Period selector */}
           <div style={{
             display: 'flex',
@@ -320,36 +320,13 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         </div>
       </div>
 
-      {/* Rustige Info-Banner */}
-      <div style={{
-        backgroundColor: 'var(--bg-app, #f8fafc)',
-        border: '1px solid var(--border-medium, #e2e8f0)',
-        borderRadius: 'var(--border-radius-md, 10px)',
-        padding: '12px 18px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '10px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <CreditCard size={16} color="var(--brand-primary, #440099)" />
-          <span style={{ fontSize: '13px', color: 'var(--text-secondary, #475569)' }}>
-            Google AI Studio Search Grounding & Gemini Flash kosten via facturatie (Mastercard ••••3171).
-          </span>
-        </div>
-        <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-          Geverifieerd: <strong>€ 250,00</strong>
-        </span>
-      </div>
-
       {/* KPI Cards Grid (Eenvoudig, wit, zonder felle gradiënten) */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
         gap: '16px'
       }}>
-        
+
         {/* Card 1: Total Cost */}
         <div style={{
           padding: '18px 20px',
@@ -442,7 +419,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
         gap: '20px'
       }}>
-        
+
         {/* Providers Overzicht */}
         <div style={{
           padding: '20px',
@@ -653,8 +630,8 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   const isAiStudio = log.engine === 'gemini' || log.engineLabel === 'Google AI Studio';
 
                   return (
-                    <tr 
-                      key={log.id} 
+                    <tr
+                      key={log.id}
                       style={{ borderBottom: '1px solid var(--border-light, #f1f5f9)' }}
                     >
                       <td style={{ padding: '9px 8px', color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>

@@ -30,7 +30,7 @@ export function getApiStatus() {
     { key: 'openai', name: 'OpenAI (gpt-4o-mini)', envKey: 'OPENAI_API_KEY', check: (k) => k && k.startsWith('sk-') },
     { key: 'gemini', name: 'Gemini (gemini-3.5-flash)', envKey: 'GEMINI_API_KEY', check: (k) => !!k },
     { key: 'perplexity', name: 'Perplexity API', envKey: 'PERPLEXITY_API_KEY', check: (k) => !!k },
-    { key: 'anthropic', name: 'Anthropic Claude 3.5', envKey: 'ANTHROPIC_API_KEY', check: (k) => !!k }
+    { key: 'anthropic', name: 'Anthropic Claude Sonnet 5.5', envKey: 'ANTHROPIC_API_KEY', check: (k) => !!k }
   ];
 
   return engines.map(eng => {
@@ -316,8 +316,9 @@ export async function queryAnthropic({ prompt, companyName }) {
       const response = await axios.post(
         'https://api.anthropic.com/v1/messages',
         {
-          model: 'claude-3-5-sonnet-20241022',
+          model: 'claude-sonnet-5-5',
           max_tokens: 350,
+          thinking: { type: 'between_tools' },
           messages: [{ role: 'user', content: prompt }]
         },
         {
@@ -330,15 +331,16 @@ export async function queryAnthropic({ prompt, companyName }) {
         }
       );
 
-      const content = response.data.content[0]?.text || '';
+      const textBlock = response.data.content?.find(b => b.type === 'text');
+      const content = textBlock?.text || response.data.content?.[0]?.text || '';
       const mentionsBrand = content.toLowerCase().includes(companyKey);
       const duration = Date.now() - startTime;
 
       logApiCall('anthropic', 'SUCCESS', 'Call completed successfully.', duration);
 
       return {
-        method: 'Anthropic API (claude-3-5-sonnet)',
-        name: 'Claude 3.5 Sonnet',
+        method: 'Anthropic API (claude-sonnet-5-5)',
+        name: 'Claude Sonnet 5.5',
         text: content,
         mentioned: mentionsBrand,
         position: mentionsBrand ? 2 : null,
@@ -355,7 +357,7 @@ export async function queryAnthropic({ prompt, companyName }) {
       const mentionsBrand = true;
       return {
         method: 'Anthropic API Simulator',
-        name: 'Claude 3.5 Sonnet',
+        name: 'Claude Sonnet 5.5',
         text: `Claude signaleert positieve klantbeoordelingen, transparante werkwijze en goede vindbaarheid van ${companyName}.`,
         mentioned: mentionsBrand,
         position: 3,
@@ -371,7 +373,7 @@ export async function queryAnthropic({ prompt, companyName }) {
   const mentionsBrand = true;
   return {
     method: 'Anthropic API Simulator',
-    name: 'Claude 3.5 Sonnet',
+    name: 'Claude Sonnet 5.5',
     text: `Claude signaleert positieve klantbeoordelingen, transparante werkwijze en goede vindbaarheid van ${companyName}.`,
     mentioned: mentionsBrand,
     position: 3,
