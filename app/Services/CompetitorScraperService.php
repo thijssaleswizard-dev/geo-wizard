@@ -207,7 +207,10 @@ class CompetitorScraperService
                         if ($oldSelf) {
                             if (!empty($oldSelf['history']) && is_array($oldSelf['history'])) {
                                 $existingHistory = $oldSelf['history'];
-                            } elseif (!empty($oldSelf['sov'])) {
+                            } elseif (!empty($oldParsed[0]['history']) && is_array($oldParsed[0]['history'])) {
+                                // If history was previously accidentally saved on competitor #0
+                                $existingHistory = $oldParsed[0]['history'];
+                            } elseif (!empty($oldSelf['sov']) || !empty($oldSelf['rank'])) {
                                 $baseDate = $kwModel->created_at ?: now();
                                 $existingHistory[] = [
                                     'date' => $baseDate->format('Y-m-d'),
@@ -225,29 +228,47 @@ class CompetitorScraperService
                     }
                 }
 
-                foreach ($finalRanked as $fIdx => &$fComp) {
-                    if (!empty($fComp['isSelf']) || $fIdx === 0) {
-                        $isFirst = empty($existingHistory);
-                        $newSnapshot = [
-                            'date' => now()->format('Y-m-d'),
-                            'displayDate' => now()->format('d M Y'),
-                            'time' => now()->format('H:i'),
-                            'isBaseline' => $isFirst,
-                            'label' => $isFirst ? 'Nulmeting' : now()->format('d M H:i'),
-                            'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($fComp['rank'] ?? 1)) ?: 1,
-                            'position' => (float) ($fComp['position'] ?? 2.1),
-                            'sov' => (int) ($fComp['sov'] ?? 35),
-                            'citations' => (int) ($fComp['citations'] ?? 1),
-                        ];
-                        $existingHistory[] = $newSnapshot;
-                        if (count($existingHistory) > 15) {
-                            $existingHistory = array_merge([$existingHistory[0]], array_slice($existingHistory, -14));
-                        }
-                        $fComp['history'] = $existingHistory;
+                // Determine target self competitor index (must prioritize isSelf = true)
+                $targetIndex = null;
+                foreach ($finalRanked as $fIdx => $fComp) {
+                    if (!empty($fComp['isSelf'])) {
+                        $targetIndex = $fIdx;
                         break;
                     }
                 }
-                unset($fComp);
+                if ($targetIndex === null && !empty($finalRanked)) {
+                    $targetIndex = 0;
+                }
+
+                if ($targetIndex !== null && isset($finalRanked[$targetIndex])) {
+                    $fComp = &$finalRanked[$targetIndex];
+                    $isFirst = empty($existingHistory);
+                    $newSnapshot = [
+                        'date' => now()->format('Y-m-d'),
+                        'displayDate' => now()->format('d M Y'),
+                        'time' => now()->format('H:i'),
+                        'isBaseline' => $isFirst,
+                        'label' => $isFirst ? 'Nulmeting' : now()->format('d M H:i'),
+                        'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($fComp['rank'] ?? 1)) ?: 1,
+                        'position' => (float) ($fComp['position'] ?? 2.1),
+                        'sov' => (int) ($fComp['sov'] ?? 35),
+                        'citations' => (int) ($fComp['citations'] ?? 1),
+                    ];
+                    $existingHistory[] = $newSnapshot;
+                    if (count($existingHistory) > 15) {
+                        $existingHistory = array_merge([$existingHistory[0]], array_slice($existingHistory, -14));
+                    }
+                    $fComp['history'] = $existingHistory;
+                    unset($fComp);
+                }
+
+                // Clean any stray history on other competitors
+                foreach ($finalRanked as $fIdx => &$compItem) {
+                    if ($fIdx !== $targetIndex && isset($compItem['history'])) {
+                        unset($compItem['history']);
+                    }
+                }
+                unset($compItem);
 
                 $kwModel->competitors_json = $finalRanked;
                 $kwModel->brands_mentioned = array_values(array_filter(array_map(fn($c) => preg_replace('/[^a-z0-9]/', '', strtolower($c['brand'] ?? '')), $finalRanked)));

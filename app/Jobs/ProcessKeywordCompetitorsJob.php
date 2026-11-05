@@ -16,6 +16,7 @@ class ProcessKeywordCompetitorsJob implements ShouldQueue
     public int $keywordId;
     public string $keywordText;
     public string $companyKey;
+    public bool $force;
 
     /**
      * The number of seconds the job can run before timing out.
@@ -35,11 +36,12 @@ class ProcessKeywordCompetitorsJob implements ShouldQueue
     /**
      * Create a new job instance.
      */
-    public function __construct(int $keywordId, string $keywordText, string $companyKey)
+    public function __construct(int $keywordId, string $keywordText, string $companyKey, bool $force = false)
     {
         $this->keywordId = $keywordId;
         $this->keywordText = $keywordText;
         $this->companyKey = $companyKey;
+        $this->force = $force;
     }
 
     /**
@@ -51,12 +53,24 @@ class ProcessKeywordCompetitorsJob implements ShouldQueue
             "Keyword ID: #{$this->keywordId}",
             "Zoekwoord: \"{$this->keywordText}\"",
             "Bedrijf: {$this->companyKey}",
+            "Force: " . ($this->force ? 'JA' : 'NEE'),
             "Methode: Live Dutch SERP Search",
         ]);
 
         try {
-            $competitors = $scraperService->getOrScrapeCompetitors($this->keywordId, $this->keywordText, $this->companyKey);
+            $competitors = $scraperService->getOrScrapeCompetitors($this->keywordId, $this->keywordText, $this->companyKey, $this->force);
             $count = count($competitors);
+
+            $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
+            if ($selfItem) {
+                $rankStr = $selfItem['rank'] ?? '1';
+                $rankInt = (int) preg_replace('/[^0-9]/', '', (string) $rankStr) ?: 1;
+                Keyword::where('id', $this->keywordId)->update([
+                    'rank' => $rankInt,
+                    'updated_at' => now(),
+                ]);
+            }
+
             GeoLog::info("✅ [ProcessKeywordCompetitorsJob] {$count} concurrenten gevonden en opgeslagen voor Keyword #{$this->keywordId} (\"{$this->keywordText}\").");
         } catch (\Exception $e) {
             GeoLog::error("❌ [ProcessKeywordCompetitorsJob Fout] Keyword #{$this->keywordId}: {$e->getMessage()}");

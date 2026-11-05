@@ -85,6 +85,37 @@ class ProcessPromptJob implements ShouldQueue
                 'updated_at' => now(),
             ]);
 
+            // Auto-recalculate overview metrics for the project
+            if ($project) {
+                try {
+                    $citationsCount = \App\Models\Citation::where('project_id', $project->id)->count();
+                    $promptsCount = $project->prompts()->count() ?: 1;
+                    $mentionedCount = $project->prompts()->where('brand_mentioned', true)->count();
+
+                    $geoScore = min(98, max(45, (int) round(($mentionedCount / max(1, $promptsCount)) * 85 + ($citationsCount * 2))));
+                    $brandShare = min(95, max(35, (int) round(($mentionedCount / max(1, $promptsCount)) * 75)));
+                    $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
+
+                    \App\Models\OverviewStat::updateOrCreate(
+                        ['project_id' => $project->id, 'company_key' => $companyKey],
+                        [
+                            'project_id' => $project->id,
+                            'geo_score' => $geoScore,
+                            'brand_share' => $brandShare,
+                            'citations_total' => $citationsCount,
+                            'sentiment_avg' => 94,
+                        ]
+                    );
+
+                    $project->update([
+                        'visibility_index' => $geoScore,
+                        'prompts_count' => $promptsCount,
+                    ]);
+                } catch (\Exception $statErr) {
+                    GeoLog::warning("⚠️ [ProcessPromptJob Stats Fout] Project #{$project->id}: {$statErr->getMessage()}");
+                }
+            }
+
             GeoLog::info("✅ [ProcessPromptJob] Prompt #{$this->promptId} succesvol verwerkt en opgeslagen.");
         } catch (\Exception $e) {
             GeoLog::error("❌ [ProcessPromptJob Fout] Prompt #{$this->promptId}: {$e->getMessage()}");
