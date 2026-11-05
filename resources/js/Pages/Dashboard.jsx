@@ -13,8 +13,9 @@ import ClientAdmin from '@/Components/ClientAdmin';
 import Keywords from '@/Components/Keywords';
 import PaymentSimulator from '@/Components/PaymentSimulator';
 import LlmCosts from '@/Components/LlmCosts';
+import WalkthroughGuide from '@/Components/WalkthroughGuide';
 import { 
-  Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut 
+  Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut, BookOpen 
 } from 'lucide-react';
 
 export default function Dashboard({ auth, projects: initialProjects, enabledEngines: initialEnabledEngines }) {
@@ -86,6 +87,21 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
   });
 
   const [showNotifications, setShowNotifications] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [isTourActive, setIsTourActive] = useState(false);
+
+  // Automatically start interactive tooltip tour on first login
+  useEffect(() => {
+    if (!currentUser) return;
+    const storageKey = `geo_wizard_tour_completed_${currentUser.id || currentUser.email || currentUser.role}`;
+    const hasSeenTour = localStorage.getItem(storageKey);
+    if (!hasSeenTour) {
+      const timer = setTimeout(() => {
+        setIsTourActive(true);
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     if (activeWorkspace) {
@@ -118,6 +134,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
             name: c.name,
             email: c.email,
             subscription: c.subscription,
+            promptsLimit: c.promptsLimit,
             promptsCount: c.promptsCount,
             keywordsCount: c.keywordsCount,
             visibilityIndex: c.visibility_index,
@@ -178,7 +195,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
 
   const handleUpdateSubscription = (newPlan) => {
     if (!currentUser) return;
-    
+
     setCurrentUser(prev => {
       const updated = { ...prev, subscription: newPlan };
       localStorage.setItem('geo_wizard_user', JSON.stringify(updated));
@@ -277,7 +294,20 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
     }
   };
 
+  const activeClient = clients.find(c => {
+    if (!activeWorkspace || !c.company) return false;
+    const cleanA = c.company.toLowerCase().replace('.nl', '').trim();
+    const cleanB = activeWorkspace.toLowerCase().replace('.nl', '').trim();
+    return c.company.toLowerCase() === activeWorkspace.toLowerCase() || cleanA === cleanB;
+  }) || null;
+
   const renderContent = () => {
+    if (currentUser.role === 'klant') {
+      if (activeTab === 'account_plan') {
+        return <AccountManagement currentUser={currentUser} activeClient={activeClient} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+      }
+      return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+    }
     if (activeTab === 'llm_costs') {
       return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} currentUser={currentUser} enabledEngines={enabledEngines} />;
     }
@@ -286,9 +316,9 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
     }
     switch (activeTab) {
       case 'overview':
-        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'keywords':
-        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+        return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'citations':
         return <Citations key={activeWorkspace} activeWorkspace={activeWorkspace} enabledEngines={enabledEngines} />;
       case 'recommendations':
@@ -302,9 +332,9 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       case 'llm_costs':
         return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} currentUser={currentUser} enabledEngines={enabledEngines} />;
       case 'account_plan':
-        return <AccountManagement currentUser={currentUser} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+        return <AccountManagement currentUser={currentUser} activeClient={activeClient} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
-        return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} />;
+        return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
       default:
         return (
           <div className="fade-in" style={{
@@ -357,21 +387,23 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
   return (
     <div className="app-container">
       <Head title="GEO-Wizard - Saleswizard" />
-      
+
       {/* Sidebar Navigation */}
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
         currentUser={currentUser}
         activeWorkspace={activeWorkspace}
         onWorkspaceChange={setActiveWorkspace}
         onLogout={handleLogout}
         clients={clients}
+        onOpenGuide={() => setIsGuideOpen(true)}
+        onStartTour={() => setIsTourActive(true)}
       />
 
       {/* Main Content Area */}
       <main className="main-content">
-        
+
         {/* Top Header Bar */}
         <header style={{
           height: 'var(--header-height)',
@@ -393,7 +425,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
 
           {/* Quick actions */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            
+
             {activeWorkspace && (
               <div style={{
                 display: 'flex',
@@ -471,7 +503,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
                       </div>
                     ))}
                   </div>
-                  <button 
+                  <button
                     onClick={() => setShowNotifications(false)}
                     style={{
                       width: '100%',
@@ -489,23 +521,32 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
               )}
             </div>
 
-            {/* Help link */}
-            <a
-              href="https://saleswizard.nl/contact"
-              target="_blank"
-              rel="noreferrer"
+            {/* Handleiding & Rondleiding button */}
+            <button
+              type="button"
+              data-tour="header-guide-btn"
+              onClick={() => setIsGuideOpen(true)}
+              title="Open de Handleiding, Begrippenlijst & Interactieve Rondleiding"
               style={{
-                padding: '8px',
-                borderRadius: '50%',
-                color: 'var(--text-secondary)',
+                padding: '7px 14px',
+                borderRadius: '20px',
+                backgroundColor: '#faf5ff',
+                border: '1px solid #d8b4fe',
+                color: '#6b21a8',
+                fontSize: '12px',
+                fontWeight: 700,
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                textDecoration: 'none'
+                gap: '6px',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
               }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3e8ff'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#faf5ff'; }}
             >
-              <HelpCircle size={18} />
-            </a>
+              <BookOpen size={14} />
+              Handleiding
+            </button>
 
             <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--border-medium)', margin: '0 8px' }}></div>
 
@@ -558,11 +599,11 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
 
       </main>
 
-      {/* Floating Action Help Button */}
-      <a
-        href="https://saleswizard.nl/contact"
-        target="_blank"
-        rel="noreferrer"
+      {/* Floating Action Help & Walkthrough Button */}
+      <button
+        type="button"
+        onClick={() => setIsGuideOpen(true)}
+        title="Open Handleiding & Rondleiding"
         style={{
           position: 'fixed',
           bottom: '24px',
@@ -577,11 +618,25 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
           justifyContent: 'center',
           color: 'white',
           zIndex: 1000,
-          transition: 'all 0.2s'
+          transition: 'all 0.2s',
+          border: 'none',
+          cursor: 'pointer'
         }}
       >
-        <MessageSquare size={24} />
-      </a>
+        <HelpCircle size={24} />
+      </button>
+
+      {/* Interactive Walkthrough Tour & Non-Technical Guide Modal */}
+      <WalkthroughGuide
+        currentUser={currentUser}
+        activeWorkspace={activeWorkspace}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isGuideOpen={isGuideOpen}
+        setIsGuideOpen={setIsGuideOpen}
+        isTourActive={isTourActive}
+        setIsTourActive={setIsTourActive}
+      />
 
     </div>
   );

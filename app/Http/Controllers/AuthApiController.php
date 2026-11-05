@@ -42,7 +42,7 @@ class AuthApiController extends Controller
             return response()->json(['error' => 'Ongeldige e-mail of wachtwoord. Probeer het opnieuw.'], 401);
         }
 
-        if ($user->role === 'klant' && $user->payment_status !== 'paid') {
+        if ($user->role === 'klant' && $user->payment_status === 'pending' && !empty($user->mollie_customer_id)) {
             $packageKey = strtolower(trim(str_replace(['ai/geo ', ' pakket'], '', $user->subscription)));
             $pack = self::PACKAGES[$packageKey] ?? self::PACKAGES['pro'];
 
@@ -64,10 +64,14 @@ class AuthApiController extends Controller
         }
 
         $companyName = $user->company_name ?: 'Saleswizard B.V.';
+        $resolvedSubscription = $user->subscription ?: 'AI Pro';
         if ($user->role === 'klant') {
             $firstProject = $user->projects()->first();
             if ($firstProject) {
                 $companyName = $firstProject->company;
+                if (!empty($firstProject->subscription)) {
+                    $resolvedSubscription = $firstProject->subscription;
+                }
             }
         }
 
@@ -85,7 +89,7 @@ class AuthApiController extends Controller
                 'name' => $user->name,
                 'company' => $user->role === 'klant' ? $companyName : 'Saleswizard B.V.',
                 'email' => $user->email,
-                'subscription' => $user->subscription ?: 'AI Pro',
+                'subscription' => $resolvedSubscription,
                 'addonPrompts' => $user->addon_prompts ?: 0,
                 'avatar' => $avatar,
             ],

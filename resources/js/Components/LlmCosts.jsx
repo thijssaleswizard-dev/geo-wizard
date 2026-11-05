@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Coins, Receipt, Cpu, Activity, TrendingUp, RefreshCw, 
-  Download, Filter, Search, CheckCircle2, AlertTriangle, 
-  Calendar, Layers, ArrowUpRight, ChevronRight, Info, ExternalLink,
-  ShieldCheck, HelpCircle, Plus, X, Sparkles, CreditCard
+  Download, Search, CheckCircle2, Layers, Plus, X, CreditCard
 } from 'lucide-react';
 
 export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines }) {
@@ -25,7 +23,6 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     date: new Date().toISOString().slice(0, 10),
   });
 
-  // Strict Dutch currency formatter (strictly 2 decimal places)
   const formatEur = (val) => {
     const num = typeof val === 'number' ? val : parseFloat(val || 0);
     return '€ ' + num.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -59,7 +56,6 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     fetchCostData(period);
   }, [period, activeWorkspace]);
 
-  // Force re-sync with Google AI Studio charges (€250,00)
   const handleSyncAiStudio = async () => {
     setSyncingStudio(true);
     try {
@@ -81,7 +77,6 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     }
   };
 
-  // Submit manual invoice / payment
   const handleStoreInvoice = async (e) => {
     e.preventDefault();
     if (!invoiceForm.amount_eur || parseFloat(invoiceForm.amount_eur) <= 0) return;
@@ -121,7 +116,6 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     }
   };
 
-  // Export CSV helper
   const handleExportCsv = () => {
     if (!data?.recentLogs || data.recentLogs.length === 0) return;
 
@@ -161,14 +155,11 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     totalOutputTokens: 0,
     totalRequests: 0,
     successfulRequests: 0,
-    fallbackRequests: 0,
-    failedRequests: 0,
     avgCostPerRequestEur: 0,
   };
 
   const byEngine = data?.byEngine || [];
   const byProject = data?.byProject || [];
-  const dailyTrends = data?.dailyTrends || [];
   const recentLogs = data?.recentLogs || [];
 
   const filteredLogs = recentLogs.filter(log => {
@@ -187,7 +178,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
   });
 
   return (
-    <div className="fade-in" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div className="fade-in" style={{ padding: '32px 40px', display: 'flex', flexDirection: 'column', gap: '24px', backgroundColor: '#ffffff', minHeight: '100%' }}>
       
       {/* Top Header */}
       <div style={{
@@ -198,56 +189,24 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         gap: '16px'
       }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{
-              width: '42px',
-              height: '42px',
-              borderRadius: '12px',
-              background: 'linear-gradient(135deg, #1a73e8 0%, #440099 100%)',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 14px rgba(26, 115, 232, 0.3)'
-            }}>
-              <Coins size={22} />
-            </div>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h2 style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827', margin: 0 }}>
-                  LLM Kosten & Verbruik
-                </h2>
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: 800,
-                  padding: '2px 8px',
-                  borderRadius: '10px',
-                  backgroundColor: '#e0f2fe',
-                  color: '#0284c7',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}>
-                  <Sparkles size={12} /> Google AI Studio Direct
-                </span>
-              </div>
-              <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '2px', margin: 0 }}>
-                Realtime inzicht in Google AI Studio facturen, tokenverbruik en LLM-modelkosten.
-              </p>
-            </div>
-          </div>
+          <h2 style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)', margin: 0 }}>
+            LLM Kosten & Verbruik
+          </h2>
+          <p style={{ color: 'var(--text-secondary, #475569)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
+            Overzicht van API-kosten, tokenverbruik en Google AI Studio transacties.
+          </p>
         </div>
 
         {/* Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           
           {/* Period selector */}
           <div style={{
             display: 'flex',
-            backgroundColor: '#f3f4f6',
-            padding: '3px',
-            borderRadius: '10px',
-            border: '1px solid #e5e7eb'
+            backgroundColor: 'var(--bg-app, #f8fafc)',
+            padding: '2px',
+            borderRadius: '8px',
+            border: '1px solid var(--border-medium, #e2e8f0)'
           }}>
             {[
               { id: 'all', label: 'Alles' },
@@ -259,15 +218,15 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                 key={item.id}
                 onClick={() => setPeriod(item.id)}
                 style={{
-                  padding: '6px 14px',
-                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  borderRadius: '6px',
                   fontSize: '12px',
                   fontWeight: period === item.id ? 700 : 500,
                   backgroundColor: period === item.id ? '#ffffff' : 'transparent',
-                  color: period === item.id ? 'var(--brand-primary)' : '#4b5563',
+                  color: period === item.id ? 'var(--brand-primary, #440099)' : 'var(--text-secondary, #475569)',
                   border: 'none',
                   cursor: 'pointer',
-                  boxShadow: period === item.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                  boxShadow: period === item.id ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
                   transition: 'all 0.15s ease'
                 }}
               >
@@ -276,61 +235,56 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
             ))}
           </div>
 
-          {/* Sync Google AI Studio Button */}
           <button
             onClick={handleSyncAiStudio}
             disabled={syncingStudio}
             style={{
-              padding: '8px 14px',
+              padding: '7px 14px',
               borderRadius: '8px',
-              backgroundColor: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              color: '#1d4ed8',
+              backgroundColor: '#ffffff',
+              border: '1px solid var(--border-medium, #e2e8f0)',
+              color: 'var(--text-primary, #0f172a)',
               fontSize: '12px',
-              fontWeight: 700,
+              fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               cursor: syncingStudio ? 'wait' : 'pointer'
             }}
-            title="Her-synchroniseer de €250,00 Google AI Studio Mastercard afschrijvingen"
           >
-            <RefreshCw size={14} className={syncingStudio ? 'animate-spin' : ''} />
-            {syncingStudio ? 'Syncing...' : 'Google AI Studio Sync'}
+            <RefreshCw size={13} className={syncingStudio ? 'animate-spin' : ''} />
+            {syncingStudio ? 'Syncing...' : 'AI Studio Sync'}
           </button>
 
-          {/* Add Invoice / Payment Button */}
           <button
             onClick={() => setShowInvoiceModal(true)}
             style={{
-              padding: '8px 14px',
+              padding: '7px 14px',
               borderRadius: '8px',
-              backgroundColor: '#10b981',
-              border: 'none',
-              color: 'white',
+              backgroundColor: '#ffffff',
+              border: '1px solid var(--brand-light-border, #e8d9ff)',
+              color: 'var(--brand-primary, #440099)',
               fontSize: '12px',
               fontWeight: 700,
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              cursor: 'pointer',
-              boxShadow: '0 2px 4px rgba(16, 185, 129, 0.25)'
+              cursor: 'pointer'
             }}
           >
-            <Plus size={14} />
-            + Factuur Toevoegen
+            <Plus size={13} />
+            Factuur
           </button>
 
-          {/* Export CSV */}
           <button
             onClick={handleExportCsv}
             disabled={recentLogs.length === 0}
             style={{
-              padding: '8px 14px',
+              padding: '7px 14px',
               borderRadius: '8px',
               backgroundColor: '#ffffff',
-              border: '1px solid #d1d5db',
-              color: '#374151',
+              border: '1px solid var(--border-medium, #e2e8f0)',
+              color: 'var(--text-primary, #0f172a)',
               fontSize: '12px',
               fontWeight: 600,
               display: 'flex',
@@ -339,18 +293,17 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               cursor: recentLogs.length === 0 ? 'not-allowed' : 'pointer'
             }}
           >
-            <Download size={14} />
-            CSV Export
+            <Download size={13} />
+            CSV
           </button>
 
-          {/* Refresh button */}
           <button
             onClick={() => fetchCostData()}
             disabled={loading}
             style={{
-              padding: '8px 14px',
+              padding: '7px 14px',
               borderRadius: '8px',
-              backgroundColor: 'var(--brand-primary)',
+              backgroundColor: 'var(--brand-primary, #440099)',
               border: 'none',
               color: 'white',
               fontSize: '12px',
@@ -358,486 +311,235 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              cursor: loading ? 'wait' : 'pointer',
-              boxShadow: '0 2px 4px rgba(68, 0, 153, 0.2)'
+              cursor: loading ? 'wait' : 'pointer'
             }}
           >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Laden...' : 'Verversen'}
           </button>
         </div>
       </div>
 
-      {/* Google AI Studio Verified Banner */}
+      {/* Rustige Info-Banner */}
       <div style={{
-        backgroundColor: '#f0f7ff',
-        border: '1px solid #bae6fd',
-        borderRadius: '12px',
-        padding: '14px 18px',
+        backgroundColor: 'var(--bg-app, #f8fafc)',
+        border: '1px solid var(--border-medium, #e2e8f0)',
+        borderRadius: 'var(--border-radius-md, 10px)',
+        padding: '12px 18px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
-        gap: '12px'
+        gap: '10px'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            backgroundColor: '#1a73e8',
-            color: 'white',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0
-          }}>
-            <CreditCard size={18} />
-          </div>
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#0369a1' }}>
-              Google AI Studio Pay-as-you-go Facturatie Gekoppeld
-            </div>
-            <div style={{ fontSize: '12px', color: '#0284c7' }}>
-              Kosten voor Google Gemini Flash en Search Grounding worden automatisch verrekend in schijven van <strong>€ 25,00</strong> via Mastercard ••••3171.
-            </div>
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <CreditCard size={16} color="var(--brand-primary, #440099)" />
+          <span style={{ fontSize: '13px', color: 'var(--text-secondary, #475569)' }}>
+            Google AI Studio Search Grounding & Gemini Flash kosten via facturatie (Mastercard ••••3171).
+          </span>
         </div>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '12px',
-          fontWeight: 700,
-          color: '#075985',
-          backgroundColor: '#e0f2fe',
-          padding: '6px 12px',
-          borderRadius: '8px'
-        }}>
-          <CheckCircle2 size={15} color="#0284c7" />
-          <span>Geverifieerde Google Afschrijvingen: <strong>€ 250,00</strong></span>
-        </div>
+        <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+          Geverifieerd: <strong>€ 250,00</strong>
+        </span>
       </div>
 
-      {/* KPI Cards Grid */}
+      {/* KPI Cards Grid (Eenvoudig, wit, zonder felle gradiënten) */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
         gap: '16px'
       }}>
         
         {/* Card 1: Total Cost */}
-        <div className="card" style={{
-          padding: '20px',
-          background: 'linear-gradient(135deg, #ffffff 0%, #faf5ff 100%)',
-          border: '1px solid #f3e8ff',
+        <div style={{
+          padding: '18px 20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid var(--border-medium, #e2e8f0)',
+          borderRadius: 'var(--border-radius-md, 10px)',
           display: 'flex',
           flexDirection: 'column',
-          gap: '10px',
-          position: 'relative',
-          overflow: 'hidden'
+          gap: '6px'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Totale LLM Kosten
-            </span>
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(68, 0, 153, 0.1)',
-              color: 'var(--brand-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Coins size={18} />
-            </div>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
+            Totale LLM Kosten
+          </span>
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
+            {formatEur(summary.totalCostEur)}
           </div>
-          <div>
-            <div style={{ fontSize: '28px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827' }}>
-              {formatEur(summary.totalCostEur)}
-            </div>
-            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
-              ≈ {formatUsd(summary.totalCostUsd)} (wisselkoers 0.92)
-            </div>
-          </div>
-          <div style={{
-            fontSize: '11px',
-            fontWeight: 700,
-            color: '#15803d',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-            marginTop: '4px'
-          }}>
-            <CheckCircle2 size={13} />
-            Direct gesynchroniseerd met Google AI Studio
-          </div>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
+            ≈ {formatUsd(summary.totalCostUsd)}
+          </span>
         </div>
 
         {/* Card 2: Total Tokens */}
-        <div className="card" style={{
-          padding: '20px',
-          background: 'linear-gradient(135deg, #ffffff 0%, #eff6ff 100%)',
-          border: '1px solid #dbeafe',
+        <div style={{
+          padding: '18px 20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid var(--border-medium, #e2e8f0)',
+          borderRadius: 'var(--border-radius-md, 10px)',
           display: 'flex',
           flexDirection: 'column',
-          gap: '10px'
+          gap: '6px'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Totaal Tokens Verbruikt
-            </span>
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(37, 99, 235, 0.1)',
-              color: '#2563eb',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Cpu size={18} />
-            </div>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
+            Totaal Tokens
+          </span>
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
+            {Number(summary.totalTokens).toLocaleString('nl-NL')}
           </div>
-          <div>
-            <div style={{ fontSize: '28px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827' }}>
-              {Number(summary.totalTokens).toLocaleString('nl-NL')}
-            </div>
-            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px', display: 'flex', gap: '8px' }}>
-              <span>In: <strong>{Number(summary.totalInputTokens).toLocaleString('nl-NL')}</strong></span>
-              <span>•</span>
-              <span>Uit: <strong>{Number(summary.totalOutputTokens).toLocaleString('nl-NL')}</strong></span>
-            </div>
-          </div>
-          <div style={{ fontSize: '11px', color: '#3b82f6', fontWeight: 600 }}>
-            Gem. input/output verhouding: {(summary.totalOutputTokens > 0 ? (summary.totalInputTokens / summary.totalOutputTokens).toFixed(1) : 1)}:1
-          </div>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
+            {Number(summary.totalInputTokens).toLocaleString('nl-NL')} in / {Number(summary.totalOutputTokens).toLocaleString('nl-NL')} uit
+          </span>
         </div>
 
         {/* Card 3: Total Requests */}
-        <div className="card" style={{
-          padding: '20px',
-          background: 'linear-gradient(135deg, #ffffff 0%, #f0fdf4 100%)',
-          border: '1px solid #dcfce7',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              API Verzoeken & Betalingen
-            </span>
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(22, 163, 74, 0.1)',
-              color: '#16a34a',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Activity size={18} />
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '28px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827' }}>
-              {summary.totalRequests}
-            </div>
-            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
-              {summary.successfulRequests} succesvol verwerkt
-            </div>
-          </div>
-          <div style={{ fontSize: '11px', color: '#16a34a', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }}></span>
-            100% succesratio in kostenverwerking
-          </div>
-        </div>
-
-        {/* Card 4: Average Cost per Request */}
-        <div className="card" style={{
-          padding: '20px',
-          background: 'linear-gradient(135deg, #ffffff 0%, #fffbeb 100%)',
-          border: '1px solid #fef3c7',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '10px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Gem. per Factuurpost
-            </span>
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(217, 119, 6, 0.1)',
-              color: '#d97706',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <TrendingUp size={18} />
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '28px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827' }}>
-              {formatEur(summary.avgCostPerRequestEur)}
-            </div>
-            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
-              Standaard automatische debet (€ 25,00)
-            </div>
-          </div>
-          <div style={{ fontSize: '11px', color: '#b45309', fontWeight: 700 }}>
-            ⚡ Google AI Studio threshold billing
-          </div>
-        </div>
-
-      </div>
-
-      {/* Section: Breakdown per LLM Engine */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h3 style={{ fontSize: '18px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827', margin: 0 }}>
-              Kosten per LLM Engine
-            </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', margin: 0, marginTop: '2px' }}>
-              Overzicht van kosten, verbruikte tokens en tarieven per aangesloten provider.
-            </p>
-          </div>
-        </div>
-
-        {/* Engine Cards Grid */}
         <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-          gap: '16px'
+          padding: '18px 20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid var(--border-medium, #e2e8f0)',
+          borderRadius: 'var(--border-radius-md, 10px)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px'
         }}>
-          {byEngine.map(eng => {
-            const isStudio = eng.isAiStudio || eng.engine === 'gemini';
-
-            return (
-              <div key={eng.engine} className="card" style={{
-                padding: '20px',
-                border: isStudio ? '2px solid #93c5fd' : '1px solid #e5e7eb',
-                borderRadius: '12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '14px',
-                position: 'relative',
-                background: isStudio ? 'linear-gradient(180deg, #ffffff 0%, #f0f7ff 100%)' : '#ffffff',
-                boxShadow: isStudio ? '0 4px 16px rgba(26, 115, 232, 0.08)' : 'none',
-                transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-              }}>
-                {/* Engine Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <div style={{
-                      width: '14px',
-                      height: '14px',
-                      borderRadius: '50%',
-                      backgroundColor: eng.color
-                    }} />
-                    <div>
-                      <h4 style={{ fontSize: '16px', fontWeight: 800, margin: 0, color: '#111827' }}>
-                        {eng.name}
-                      </h4>
-                      <span style={{ fontSize: '11px', color: '#6b7280', fontFamily: 'monospace' }}>
-                        {isStudio ? 'gemini-flash · Search Grounding' : eng.models.join(', ')}
-                      </span>
-                    </div>
-                  </div>
-                  <span style={{
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    backgroundColor: isStudio ? '#dbeafe' : (eng.isActive ? '#dcfce7' : '#f3f4f6'),
-                    color: isStudio ? '#1d4ed8' : (eng.isActive ? '#15803d' : '#6b7280')
-                  }}>
-                    {isStudio ? 'Directe Koppeling' : (eng.isActive ? 'Actief' : 'Stand-by')}
-                  </span>
-                </div>
-
-                {/* Cost Amount */}
-                <div style={{
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  padding: '12px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline'
-                }}>
-                  <div>
-                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Totale Kosten</span>
-                    <span style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#111827' }}>
-                      {formatEur(eng.costEur)}
-                    </span>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: '14px', fontWeight: 800, color: eng.color }}>
-                      {eng.percentage}%
-                    </span>
-                    <span style={{ fontSize: '10px', color: '#9ca3af', display: 'block' }}>van totaal</span>
-                  </div>
-                </div>
-
-                {/* Progress bar share */}
-                <div style={{ width: '100%', height: '6px', backgroundColor: '#e5e7eb', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{
-                    width: `${Math.min(100, Math.max(0, eng.percentage))}%`,
-                    height: '100%',
-                    backgroundColor: eng.color,
-                    borderRadius: '3px',
-                    transition: 'width 0.5s ease'
-                  }} />
-                </div>
-
-                {/* Stats breakdown */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: '8px',
-                  fontSize: '11px',
-                  color: '#4b5563',
-                  paddingTop: '4px'
-                }}>
-                  <div>
-                    <span style={{ color: '#9ca3af', display: 'block' }}>Factuurposten:</span>
-                    <strong>{eng.requests} transacties</strong>
-                  </div>
-                  <div>
-                    <span style={{ color: '#9ca3af', display: 'block' }}>Tokens Totaal:</span>
-                    <strong>{Number(eng.totalTokens).toLocaleString('nl-NL')}</strong>
-                  </div>
-                  <div>
-                    <span style={{ color: '#9ca3af', display: 'block' }}>Input Tokens:</span>
-                    <span>{Number(eng.inputTokens).toLocaleString('nl-NL')}</span>
-                  </div>
-                  <div>
-                    <span style={{ color: '#9ca3af', display: 'block' }}>Output Tokens:</span>
-                    <span>{Number(eng.outputTokens).toLocaleString('nl-NL')}</span>
-                  </div>
-                </div>
-
-                {/* Pricing label */}
-                <div style={{
-                  borderTop: '1px solid #f3f4f6',
-                  paddingTop: '8px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  fontSize: '10px',
-                  color: '#6b7280'
-                }}>
-                  <span>Tarief:</span>
-                  <span style={{ fontWeight: 600, color: '#374151', fontFamily: 'monospace' }}>
-                    {eng.pricingLabel}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
+            Transacties / Aanroepen
+          </span>
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
+            {summary.totalRequests}
+          </div>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
+            {summary.successfulRequests} succesvol verwerkt
+          </span>
         </div>
+
+        {/* Card 4: Average Cost */}
+        <div style={{
+          padding: '18px 20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid var(--border-medium, #e2e8f0)',
+          borderRadius: 'var(--border-radius-md, 10px)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px'
+        }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
+            Gem. per Post
+          </span>
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
+            {formatEur(summary.avgCostPerRequestEur)}
+          </div>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
+            Automatische drempelbedragen (€ 25,00)
+          </span>
+        </div>
+
       </div>
 
-      {/* Visual Cost Distribution & Trends Section */}
+      {/* Rustige uitsplitsing: Provider Verdeling & Projecten */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
         gap: '20px'
       }}>
         
-        {/* Cost Distribution Bar */}
-        <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Layers size={16} style={{ color: 'var(--brand-primary)' }} />
-            Budget Verdeling per Provider
-          </h4>
-          <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>
-            Proportionele verdeling van het totale LLM budget over de providers.
-          </p>
-
-          {/* Stacked bar */}
-          <div style={{
-            width: '100%',
-            height: '24px',
-            borderRadius: '12px',
-            overflow: 'hidden',
-            display: 'flex',
-            backgroundColor: '#f3f4f6',
-            boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.1)'
-          }}>
-            {byEngine.filter(e => e.costEur > 0).map(e => (
-              <div
-                key={e.engine}
-                title={`${e.name}: ${formatEur(e.costEur)} (${e.percentage}%)`}
-                style={{
-                  width: `${e.percentage}%`,
-                  height: '100%',
-                  backgroundColor: e.color,
-                  transition: 'width 0.4s ease'
-                }}
-              />
-            ))}
+        {/* Providers Overzicht */}
+        <div style={{
+          padding: '20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid var(--border-medium, #e2e8f0)',
+          borderRadius: 'var(--border-radius-md, 10px)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '14px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
+              Kosten per Provider
+            </span>
           </div>
 
-          {/* Legend */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '6px' }}>
-            {byEngine.map(e => (
-              <div key={e.engine} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#4b5563' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: e.color }} />
-                <span>{e.shortName}: <strong>{e.percentage}%</strong> ({formatEur(e.costEur)})</span>
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {byEngine.map(eng => {
+              const isStudio = eng.isAiStudio || eng.engine === 'gemini';
+              return (
+                <div key={eng.engine} style={{
+                  padding: '12px 14px',
+                  borderRadius: 'var(--border-radius-sm, 6px)',
+                  backgroundColor: 'var(--bg-app, #f8fafc)',
+                  border: '1px solid var(--border-light, #f1f5f9)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+                      {eng.name}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
+                      {Number(eng.totalTokens).toLocaleString('nl-NL')} tokens • {eng.requests} posten
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
+                      {formatEur(eng.costEur)}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', fontWeight: 600 }}>
+                      {eng.percentage}%
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
-        {/* Project Breakdown */}
-        <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ExternalLink size={16} style={{ color: 'var(--brand-primary)' }} />
-            Kosten per Project / Workspace
-          </h4>
-          <p style={{ fontSize: '12px', color: '#6b7280', margin: 0 }}>
-            Inzicht in welke klantomgeving de Google AI Studio en LLM aanroepen genereert.
-          </p>
+        {/* Projecten Overzicht */}
+        <div style={{
+          padding: '20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid var(--border-medium, #e2e8f0)',
+          borderRadius: 'var(--border-radius-md, 10px)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '14px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
+              Kosten per Project
+            </span>
+          </div>
 
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid #e5e7eb', color: '#6b7280', textAlign: 'left' }}>
-                  <th style={{ padding: '8px 4px' }}>Project / Bedrijf</th>
-                  <th style={{ padding: '8px 4px', textAlign: 'center' }}>Transacties</th>
-                  <th style={{ padding: '8px 4px', textAlign: 'right' }}>Tokens</th>
-                  <th style={{ padding: '8px 4px', textAlign: 'right' }}>Kosten (€)</th>
+                <tr style={{ borderBottom: '1px solid var(--border-medium, #e2e8f0)', color: 'var(--text-muted, #94a3b8)', textAlign: 'left' }}>
+                  <th style={{ padding: '8px 4px', fontWeight: 600 }}>Project</th>
+                  <th style={{ padding: '8px 4px', textAlign: 'center', fontWeight: 600 }}>Posten</th>
+                  <th style={{ padding: '8px 4px', textAlign: 'right', fontWeight: 600 }}>Tokens</th>
+                  <th style={{ padding: '8px 4px', textAlign: 'right', fontWeight: 600 }}>Kosten</th>
                 </tr>
               </thead>
               <tbody>
                 {byProject.length === 0 ? (
                   <tr>
-                    <td colSpan="4" style={{ padding: '16px', textAlign: 'center', color: '#9ca3af' }}>
-                      Nog geen project-gebonden kosten geregistreerd.
+                    <td colSpan="4" style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
+                      Geen project-gebonden kosten geregistreerd.
                     </td>
                   </tr>
                 ) : (
                   byProject.map((proj, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '8px 4px', fontWeight: 700, color: '#111827' }}>
+                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-light, #f1f5f9)' }}>
+                      <td style={{ padding: '10px 4px', fontWeight: 600, color: 'var(--text-primary, #0f172a)' }}>
                         {proj.company}
                       </td>
-                      <td style={{ padding: '8px 4px', textAlign: 'center', color: '#4b5563' }}>
+                      <td style={{ padding: '10px 4px', textAlign: 'center', color: 'var(--text-secondary, #475569)' }}>
                         {proj.requests}
                       </td>
-                      <td style={{ padding: '8px 4px', textAlign: 'right', color: '#4b5563', fontFamily: 'monospace' }}>
+                      <td style={{ padding: '10px 4px', textAlign: 'right', color: 'var(--text-secondary, #475569)', fontFamily: 'monospace' }}>
                         {Number(proj.tokens).toLocaleString('nl-NL')}
                       </td>
-                      <td style={{ padding: '8px 4px', textAlign: 'right', fontWeight: 800, color: 'var(--brand-primary)' }}>
+                      <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
                         {formatEur(proj.costEur)}
                       </td>
                     </tr>
@@ -850,73 +552,16 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
 
       </div>
 
-      {/* Daily Trends Timeline Chart */}
-      {dailyTrends.length > 0 && (
-        <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h4 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: 0 }}>
-                Kostenverloop & Automatische Debettransacties (Afgelopen Periode)
-              </h4>
-              <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, marginTop: '2px' }}>
-                Dagelijkse Google AI Studio Mastercard afschrijvingen (€ 25,00 / € 50,00) en verbruik.
-              </p>
-            </div>
-          </div>
-
-          {/* Timeline Bar Chart */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            gap: '6px',
-            height: '160px',
-            paddingTop: '24px',
-            borderBottom: '1px solid #e5e7eb',
-            overflowX: 'auto'
-          }}>
-            {dailyTrends.map((day, idx) => {
-              const maxCost = Math.max(...dailyTrends.map(d => d.costEur), 50);
-              const heightPct = Math.min(100, Math.max(day.costEur > 0 ? 15 : 4, (day.costEur / maxCost) * 100));
-
-              return (
-                <div key={idx} style={{
-                  flex: 1,
-                  minWidth: '22px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  height: '100%',
-                  justifyContent: 'flex-end'
-                }}>
-                  {day.costEur > 0 && (
-                    <span style={{ fontSize: '9px', fontWeight: 800, color: '#1a73e8', marginBottom: '4px', whiteSpace: 'nowrap' }}>
-                      {formatEur(day.costEur)}
-                    </span>
-                  )}
-                  <div
-                    title={`${day.label}: ${formatEur(day.costEur)} (${day.requests} posten)`}
-                    style={{
-                      width: '100%',
-                      maxWidth: '32px',
-                      height: `${heightPct}%`,
-                      backgroundColor: day.costEur > 0 ? '#1a73e8' : '#e5e7eb',
-                      borderRadius: '4px 4px 0 0',
-                      transition: 'height 0.3s ease',
-                      cursor: 'pointer'
-                    }}
-                  />
-                  <span style={{ fontSize: '9px', color: '#6b7280', marginTop: '6px', whiteSpace: 'nowrap' }}>
-                    {day.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Live Transaction / API Usage Log Table */}
-      <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Logboek Tabel (Strak, overzichtelijk) */}
+      <div style={{
+        padding: '20px',
+        backgroundColor: '#ffffff',
+        border: '1px solid var(--border-medium, #e2e8f0)',
+        borderRadius: 'var(--border-radius-md, 10px)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '14px'
+      }}>
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -925,37 +570,34 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
           gap: '12px'
         }}>
           <div>
-            <h4 style={{ fontSize: '16px', fontWeight: 800, color: '#111827', margin: 0 }}>
-              Live Google AI Studio & LLM Transactielogboek
-            </h4>
-            <p style={{ fontSize: '12px', color: '#6b7280', margin: 0, marginTop: '2px' }}>
-              Volledig audittrail van individuele Google AI Studio afschrijvingen en AI model calls.
+            <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
+              Transactielogboek
+            </span>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted, #94a3b8)', margin: '2px 0 0 0' }}>
+              Overzicht van afschrijvingen en API-calls
             </p>
           </div>
 
           {/* Filters & Search */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            
-            {/* Engine filter pills */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', gap: '4px' }}>
               {[
                 { id: 'all', label: 'Alle' },
                 { id: 'gemini', label: 'Google AI Studio' },
                 { id: 'openai', label: 'ChatGPT' },
-                { id: 'perplexity', label: 'Perplexity' },
-                { id: 'anthropic', label: 'Claude' }
+                { id: 'perplexity', label: 'Perplexity' }
               ].map(eng => (
                 <button
                   key={eng.id}
                   onClick={() => setSelectedEngineFilter(eng.id)}
                   style={{
                     padding: '4px 10px',
-                    borderRadius: '12px',
+                    borderRadius: '16px',
                     fontSize: '11px',
                     fontWeight: selectedEngineFilter === eng.id ? 700 : 500,
-                    backgroundColor: selectedEngineFilter === eng.id ? 'var(--brand-primary)' : '#f3f4f6',
-                    color: selectedEngineFilter === eng.id ? 'white' : '#4b5563',
-                    border: 'none',
+                    backgroundColor: selectedEngineFilter === eng.id ? 'var(--brand-primary, #440099)' : 'var(--bg-app, #f8fafc)',
+                    color: selectedEngineFilter === eng.id ? '#ffffff' : 'var(--text-secondary, #475569)',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     cursor: 'pointer'
                   }}
                 >
@@ -964,21 +606,21 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               ))}
             </div>
 
-            {/* Search input */}
-            <div style={{ position: 'relative', width: '220px' }}>
-              <Search size={14} style={{ position: 'absolute', left: '10px', top: '9px', color: '#9ca3af' }} />
+            <div style={{ position: 'relative', width: '200px' }}>
+              <Search size={13} style={{ position: 'absolute', left: '10px', top: '8px', color: 'var(--text-muted, #94a3b8)' }} />
               <input
                 type="text"
-                placeholder="Zoeken op CLOUD referentie..."
+                placeholder="Zoeken..."
                 value={searchLogQuery}
                 onChange={e => setSearchLogQuery(e.target.value)}
                 style={{
                   width: '100%',
-                  padding: '6px 10px 6px 30px',
+                  padding: '5px 8px 5px 28px',
                   fontSize: '12px',
                   borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                  outline: 'none'
+                  border: '1px solid var(--border-medium, #e2e8f0)',
+                  outline: 'none',
+                  backgroundColor: '#ffffff'
                 }}
               />
             </div>
@@ -986,25 +628,24 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         </div>
 
         {/* Logs Table */}
-        <div style={{ overflowX: 'auto', maxHeight: '460px' }}>
+        <div style={{ overflowX: 'auto', maxHeight: '420px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead style={{ position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 1 }}>
-              <tr style={{ borderBottom: '2px solid #e5e7eb', color: '#6b7280', textAlign: 'left' }}>
-                <th style={{ padding: '10px 8px' }}>Tijdstip</th>
-                <th style={{ padding: '10px 8px' }}>Provider / Engine</th>
-                <th style={{ padding: '10px 8px' }}>Factuur / Referentie</th>
-                <th style={{ padding: '10px 8px' }}>Project</th>
-                <th style={{ padding: '10px 8px', textAlign: 'right' }}>Tokens (In / Uit)</th>
-                <th style={{ padding: '10px 8px', textAlign: 'right' }}>Bedrag (€)</th>
-                <th style={{ padding: '10px 8px', textAlign: 'center' }}>Betaalmethode</th>
-                <th style={{ padding: '10px 8px', textAlign: 'center' }}>Status</th>
+              <tr style={{ borderBottom: '1px solid var(--border-medium, #e2e8f0)', color: 'var(--text-muted, #94a3b8)', textAlign: 'left' }}>
+                <th style={{ padding: '8px', fontWeight: 600 }}>Datum</th>
+                <th style={{ padding: '8px', fontWeight: 600 }}>Provider</th>
+                <th style={{ padding: '8px', fontWeight: 600 }}>Referentie</th>
+                <th style={{ padding: '8px', fontWeight: 600 }}>Project</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>Tokens</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>Bedrag</th>
+                <th style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan="8" style={{ padding: '24px', textAlign: 'center', color: '#9ca3af' }}>
-                    Geen logs gevonden die overeenkomen met de filtercriteria.
+                  <td colSpan="7" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
+                    Geen logs gevonden.
                   </td>
                 </tr>
               ) : (
@@ -1014,69 +655,35 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   return (
                     <tr 
                       key={log.id} 
-                      style={{ borderBottom: '1px solid #f3f4f6', transition: 'background-color 0.15s' }}
-                      onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fafafa'}
-                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                      style={{ borderBottom: '1px solid var(--border-light, #f1f5f9)' }}
                     >
-                      <td style={{ padding: '10px 8px', color: '#6b7280', whiteSpace: 'nowrap' }}>
-                        <div>{log.timestamp ? log.timestamp.slice(0, 10) : ''}</div>
-                        <div style={{ fontSize: '10px', color: '#9ca3af' }}>{log.timestamp ? log.timestamp.slice(11, 16) : ''}</div>
+                      <td style={{ padding: '9px 8px', color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>
+                        {log.timestamp ? log.timestamp.slice(0, 10) : ''}
                       </td>
-                      <td style={{ padding: '10px 8px' }}>
-                        <div style={{ fontWeight: 700, color: isAiStudio ? '#1a73e8' : '#111827', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {isAiStudio && <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#1a73e8' }} />}
-                          {log.engineLabel || (isAiStudio ? 'Google AI Studio' : log.engine)}
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#6b7280', fontFamily: 'monospace' }}>
-                          {log.model}
-                        </div>
+                      <td style={{ padding: '9px 8px', fontWeight: 600, color: 'var(--text-primary, #0f172a)' }}>
+                        {log.engineLabel || (isAiStudio ? 'Google AI Studio' : log.engine)}
                       </td>
-                      <td style={{ padding: '10px 8px' }}>
-                        {log.invoiceRef ? (
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '2px 8px',
-                            backgroundColor: '#eff6ff',
-                            color: '#1d4ed8',
-                            borderRadius: '6px',
-                            fontFamily: 'monospace',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            border: '1px solid #dbeafe'
-                          }}>
-                            {log.invoiceRef}
-                          </span>
-                        ) : (
-                          <span style={{ color: '#6b7280', fontSize: '11px' }}>{log.operation}</span>
-                        )}
+                      <td style={{ padding: '9px 8px', color: 'var(--text-secondary, #475569)', fontFamily: 'monospace', fontSize: '11px' }}>
+                        {log.invoiceRef || log.operation}
                       </td>
-                      <td style={{ padding: '10px 8px', fontWeight: 600, color: '#374151' }}>
+                      <td style={{ padding: '9px 8px', color: 'var(--text-secondary, #475569)' }}>
                         {log.projectName || '-'}
                       </td>
-                      <td style={{ padding: '10px 8px', textAlign: 'right', fontFamily: 'monospace' }}>
-                        <span style={{ color: '#111827', fontWeight: 700 }}>{Number(log.totalTokens).toLocaleString('nl-NL')}</span>
-                        {log.totalTokens > 0 && (
-                          <span style={{ fontSize: '10px', color: '#9ca3af', display: 'block' }}>
-                            ({log.inputTokens} in / {log.outputTokens} uit)
-                          </span>
-                        )}
+                      <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-secondary, #475569)' }}>
+                        {Number(log.totalTokens).toLocaleString('nl-NL')}
                       </td>
-                      <td style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 800, color: '#111827', fontSize: '13px' }}>
+                      <td style={{ padding: '9px 8px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
                         {formatEur(log.costEur)}
                       </td>
-                      <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280', fontSize: '11px' }}>
-                        {log.metadata?.payment_method || (isAiStudio ? 'Mastercard ••••3171' : 'API Saldo')}
-                      </td>
-                      <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                      <td style={{ padding: '9px 8px', textAlign: 'center' }}>
                         <span style={{
                           padding: '2px 8px',
                           borderRadius: '10px',
-                          fontSize: '10px',
-                          fontWeight: 800,
-                          backgroundColor: '#dcfce7',
-                          color: '#15803d'
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          backgroundColor: 'var(--bg-app, #f8fafc)',
+                          color: 'var(--text-secondary, #475569)',
+                          border: '1px solid var(--border-medium, #e2e8f0)'
                         }}>
                           {log.status}
                         </span>
@@ -1098,7 +705,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          backgroundColor: 'rgba(15, 10, 28, 0.5)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -1107,39 +714,34 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         }}>
           <div style={{
             backgroundColor: '#ffffff',
-            borderRadius: '16px',
+            borderRadius: 'var(--border-radius-md, 10px)',
             width: '100%',
-            maxWidth: '480px',
-            boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
-            overflow: 'hidden'
+            maxWidth: '440px',
+            boxShadow: '0 20px 30px rgba(0,0,0,0.15)',
+            overflow: 'hidden',
+            border: '1px solid var(--border-medium, #e2e8f0)'
           }}>
-            {/* Modal Header */}
             <div style={{
               padding: '16px 20px',
-              borderBottom: '1px solid #e5e7eb',
+              borderBottom: '1px solid var(--border-light, #f1f5f9)',
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center',
-              backgroundColor: '#f9fafb'
+              alignItems: 'center'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Receipt size={18} color="var(--brand-primary)" />
-                <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#111827' }}>
-                  Factuur of Betaling Registreren
-                </h3>
-              </div>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+                Factuur of Betaling Registreren
+              </h3>
               <button
                 onClick={() => setShowInvoiceModal(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #94a3b8)' }}
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </div>
 
-            {/* Modal Form */}
-            <form onSubmit={handleStoreInvoice} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <form onSubmit={handleStoreInvoice} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
                   Provider / LLM Dienst
                 </label>
                 <select
@@ -1148,8 +750,8 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   style={{
                     width: '100%',
                     padding: '8px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     fontSize: '13px',
                     outline: 'none'
                   }}
@@ -1162,7 +764,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
                   Bedrag in EUR (€)
                 </label>
                 <input
@@ -1175,8 +777,8 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   style={{
                     width: '100%',
                     padding: '8px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     fontSize: '13px',
                     outline: 'none'
                   }}
@@ -1184,19 +786,19 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '4px' }}>
-                  Factuur- of Betalingsreferentie (Optioneel)
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
+                  Referentie (Optioneel)
                 </label>
                 <input
                   type="text"
-                  placeholder="bv. CLOUD PQQ8PX of INV-2026-001"
+                  placeholder="bv. CLOUD PQQ8PX"
                   value={invoiceForm.invoice_ref}
                   onChange={e => setInvoiceForm({ ...invoiceForm, invoice_ref: e.target.value })}
                   style={{
                     width: '100%',
                     padding: '8px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     fontSize: '13px',
                     outline: 'none'
                   }}
@@ -1204,7 +806,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
                   Omschrijving
                 </label>
                 <input
@@ -1215,8 +817,8 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   style={{
                     width: '100%',
                     padding: '8px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     fontSize: '13px',
                     outline: 'none'
                   }}
@@ -1224,7 +826,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
                   Factuurdatum
                 </label>
                 <input
@@ -1234,25 +836,25 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   style={{
                     width: '100%',
                     padding: '8px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     fontSize: '13px',
                     outline: 'none'
                   }}
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
                 <button
                   type="button"
                   onClick={() => setShowInvoiceModal(false)}
                   style={{
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
+                    padding: '7px 14px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-medium, #e2e8f0)',
                     backgroundColor: '#ffffff',
-                    color: '#374151',
-                    fontSize: '13px',
+                    color: 'var(--text-secondary, #475569)',
+                    fontSize: '12px',
                     fontWeight: 600,
                     cursor: 'pointer'
                   }}
@@ -1263,17 +865,17 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                   type="submit"
                   disabled={invoiceSubmitting}
                   style={{
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    backgroundColor: 'var(--brand-primary)',
+                    padding: '7px 16px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--brand-primary, #440099)',
                     color: '#ffffff',
                     border: 'none',
-                    fontSize: '13px',
+                    fontSize: '12px',
                     fontWeight: 700,
                     cursor: invoiceSubmitting ? 'wait' : 'pointer'
                   }}
                 >
-                  {invoiceSubmitting ? 'Opslaan...' : 'Betaling Opslaan'}
+                  {invoiceSubmitting ? 'Opslaan...' : 'Opslaan'}
                 </button>
               </div>
             </form>

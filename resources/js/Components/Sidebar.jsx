@@ -57,21 +57,22 @@ export default function Sidebar({
   activeWorkspace, 
   onWorkspaceChange, 
   onLogout,
-  clients = []
+  clients = [],
+  onOpenGuide,
+  onStartTour
 }) {
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
 
   const brandReportItems = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'recommendations', label: 'Recommendations', icon: RefreshCw },
-    { id: 'agents', label: 'Agents analytics', icon: BarChart2 }
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard }
   ];
 
-  const generalItems = [
-    { id: 'prompt_research', label: 'AI Prompt Research', icon: Compass },
-    { id: 'audit_tools', label: 'GEO Audit Tools', icon: AlertCircle },
-    { id: 'llm_costs', label: 'LLM Kosten & Verbruik', icon: Coins }
-  ];
+  const generalItems = currentUser.role === 'medewerker'
+    ? [
+        { id: 'prompt_research', label: 'AI Prompt Research', icon: Compass },
+        { id: 'llm_costs', label: 'LLM Kosten & Verbruik', icon: Coins }
+      ]
+    : [];
 
   // Admin menu links vary by role
   const getAdminItems = () => {
@@ -82,8 +83,7 @@ export default function Sidebar({
       ];
     }
     return [
-      { id: 'account_plan', label: 'Account & Plan', icon: Settings },
-      { id: 'llm_costs', label: 'LLM Kosten', icon: Coins }
+      { id: 'account_plan', label: 'Account & Plan', icon: Settings }
     ];
   };
 
@@ -154,7 +154,7 @@ export default function Sidebar({
       </div>
 
       {/* Workspace Selector (Enabled only for Medewerker, Locked for Klant) */}
-      <div style={{ padding: '16px 16px 8px', position: 'relative' }}>
+      <div data-tour="sidebar-workspace" style={{ padding: '16px 16px 8px', position: 'relative' }}>
         <button
           onClick={() => {
             if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) {
@@ -371,6 +371,7 @@ export default function Sidebar({
             </div>
 
         {/* GENERAL SECTION */}
+        {generalItems.length > 0 && (
         <div style={{ marginTop: '18px' }}>
           <div style={{
             padding: '8px',
@@ -430,6 +431,7 @@ export default function Sidebar({
             })}
           </div>
         </div>
+        )}
 
         {/* ADMIN / ACCOUNT SECTION */}
         <div style={{ marginTop: '18px' }}>
@@ -499,6 +501,35 @@ export default function Sidebar({
       </>
     )}
 
+      </div>
+
+      {/* Handleiding & Rondleiding Quick Access in Sidebar */}
+      <div style={{ padding: '8px 16px 12px' }}>
+        <button
+          type="button"
+          onClick={() => onOpenGuide && onOpenGuide()}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            borderRadius: 'var(--border-radius-sm)',
+            backgroundColor: 'rgba(167, 139, 250, 0.1)',
+            border: '1px solid rgba(167, 139, 250, 0.22)',
+            color: '#e9d5ff',
+            fontSize: '12px',
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            cursor: 'pointer',
+            textAlign: 'left',
+            transition: 'all 0.15s ease'
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.18)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.1)'; }}
+        >
+          <HelpCircle size={15} style={{ color: '#c084fc', flexShrink: 0 }} />
+          <span>Handleiding & Rondleiding</span>
+        </button>
       </div>
 
       {/* Trial CTA Widget (Show only for Klant) */}

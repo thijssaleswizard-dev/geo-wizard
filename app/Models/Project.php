@@ -46,7 +46,7 @@ class Project extends Model
         return $this->hasMany(Citation::class);
     }
 
-        public function notifications(): HasMany
+    public function notifications(): HasMany
     {
         return $this->hasMany(Notification::class);
     }
@@ -69,5 +69,20 @@ class Project extends Model
     public function getCompanyKeyAttribute()
     {
         return strtolower(str_replace(['.nl', '.com', '.org', '.be', ' '], '', $this->company));
+    }
+
+    public static function getPromptLimit(?string $subscription, int $addonPrompts = 0): int
+    {
+        $sub = strtolower(trim($subscription ?? 'ai pro'));
+        $base = 30;
+        if (str_contains($sub, 'starter') || str_contains($sub, 'lite')) {
+            $base = 15;
+        } elseif (str_contains($sub, 'enterprise') || str_contains($sub, 'top')) {
+            $base = 60;
+        } elseif (str_contains($sub, 'pro')) {
+            $base = 30;
+        }
+
+        return $base + max(0, $addonPrompts);
     }
 }

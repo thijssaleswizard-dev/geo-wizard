@@ -25,10 +25,12 @@ class KeywordController extends Controller
     {
         $company = $request->query('company');
         $projectId = $request->query('project_id');
+        $project = null;
 
         $query = Keyword::query()->with('prompts')->orderBy('id', 'desc');
 
         if ($projectId) {
+            $project = Project::find($projectId);
             $query->where('project_id', $projectId);
         } elseif ($company) {
             $decoded = trim(urldecode($company));
@@ -75,6 +77,43 @@ class KeywordController extends Controller
             $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
             $calculatedSov = $selfItem ? ($selfItem['sov'] ?? 0) : 0;
             $calculatedPos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
+            $rankStr = $selfItem ? ($selfItem['rank'] ?? ($k->rank ? "#{$k->rank}" : '#1')) : ($k->rank ? "#{$k->rank}" : '#1');
+            if (!str_starts_with((string) $rankStr, '#')) {
+                $rankStr = '#' . $rankStr;
+            }
+            $rankNum = (int) preg_replace('/[^0-9]/', '', (string) $rankStr) ?: 1;
+
+            // Keyword Position & SoV History (Nulmeting + subsequent scans)
+            $kwHistory = ($selfItem && !empty($selfItem['history']) && is_array($selfItem['history'])) ? $selfItem['history'] : [];
+            if (empty($kwHistory) && $calculatedPos !== '-') {
+                $createdDate = $k->created_at ?: now();
+                $kwHistory[] = [
+                    'date' => $createdDate->format('Y-m-d'),
+                    'displayDate' => $createdDate->format('d M Y'),
+                    'time' => $createdDate->format('H:i'),
+                    'isBaseline' => true,
+                    'label' => 'Nulmeting',
+                    'rank' => $rankNum,
+                    'position' => (float) $calculatedPos,
+                    'sov' => (int) $calculatedSov,
+                    'citations' => (int) ($selfItem['citations'] ?? $k->citations_count ?? 1),
+                ];
+                if ($k->updated_at && $k->created_at && $k->updated_at->gt($k->created_at->copy()->addMinutes(5))) {
+                    $kwHistory[] = [
+                        'date' => $k->updated_at->format('Y-m-d'),
+                        'displayDate' => $k->updated_at->format('d M Y'),
+                        'time' => $k->updated_at->format('H:i'),
+                        'isBaseline' => false,
+                        'label' => $k->updated_at->format('d M H:i'),
+                        'rank' => $rankNum,
+                        'position' => (float) $calculatedPos,
+                        'sov' => (int) $calculatedSov,
+                        'citations' => (int) ($selfItem['citations'] ?? $k->citations_count ?? 1),
+                    ];
+                }
+            }
+
+            $lastUpdated = ($k->updated_at ?: ($k->created_at ?: now()))->format('d M Y H:i');
 
             return [
                 'id' => $k->id,
@@ -82,7 +121,7 @@ class KeywordController extends Controller
                 'company_key' => $k->company_key,
                 'keyword' => $k->keyword,
                 'keyword_text' => $kwText,
-                'rank' => $k->rank ?: '#1',
+                'rank' => $rankStr,
                 'search_engine' => $k->search_engine,
                 'sentiment' => $k->sentiment ?: 'N/A',
                 'citations_count' => $k->citations_count,
@@ -90,6 +129,9 @@ class KeywordController extends Controller
                 'share_of_voice' => $calculatedSov,
                 'average_position' => $calculatedPos,
                 'is_crawling' => $isCrawling || $hasPendingPrompts,
+                'last_updated' => $lastUpdated,
+                'history' => $kwHistory,
+                'baseline' => $kwHistory[0] ?? null,
                 'competitors' => $hasPendingPrompts && empty($k->competitors_json) ? [] : ($competitors ?: []),
                 'brands_mentioned' => implode(',', array_map(fn($c) => explode('.', $c['domain'] ?? '')[0], $competitors ?: [])),
                 'prompts' => $prompts->map(function ($p) {
@@ -107,24 +149,78 @@ class KeywordController extends Controller
                         $status = $p->brand_mentioned ? 'Cited' : 'Not Cited';
                     }
 
+                    $totalMentions = $resObj['totalMentions'] ?? ($p->brand_mentioned ? count($engines) : 0);
+                    $totalModels = $resObj['totalModels'] ?? ($modelMentions ? count($modelMentions) : 6);
+                    $overallScore = $resObj['overallScore'] ?? (int) round(($totalMentions / max(1, $totalModels)) * 100);
+                    $promptPosition = $resObj['position'] ?? $p->position;
+
+                    // Prompt History (Nulmeting + subsequent scans)
+                    $pHistory = ($resObj && !empty($resObj['history']) && is_array($resObj['history'])) ? $resObj['history'] : [];
+                    if (empty($pHistory) && !empty($resObj)) {
+                        $pCreated = $p->created_at ?: now();
+                        $pHistory[] = [
+                            'date' => $pCreated->format('Y-m-d'),
+                            'displayDate' => $pCreated->format('d M Y'),
+                            'time' => $pCreated->format('H:i'),
+                            'isBaseline' => true,
+                            'label' => 'Nulmeting',
+                            'mentioned' => (bool) $p->brand_mentioned,
+                            'position' => $p->brand_mentioned ? (float) ($promptPosition ?: 1) : null,
+                            'totalMentions' => (int) $totalMentions,
+                            'totalModels' => (int) $totalModels,
+                            'overallScore' => (int) $overallScore,
+                        ];
+                        if ($p->updated_at && $p->created_at && $p->updated_at->gt($p->created_at->copy()->addMinutes(5))) {
+                            $pHistory[] = [
+                                'date' => $p->updated_at->format('Y-m-d'),
+                                'displayDate' => $p->updated_at->format('d M Y'),
+                                'time' => $p->updated_at->format('H:i'),
+                                'isBaseline' => false,
+                                'label' => $p->updated_at->format('d M H:i'),
+                                'mentioned' => (bool) $p->brand_mentioned,
+                                'position' => $p->brand_mentioned ? (float) ($promptPosition ?: 1) : null,
+                                'totalMentions' => (int) $totalMentions,
+                                'totalModels' => (int) $totalModels,
+                                'overallScore' => (int) $overallScore,
+                            ];
+                        }
+                    }
+
                     return [
                         'id' => $p->id,
                         'project_id' => $p->project_id,
                         'keyword_id' => $p->keyword_id,
                         'text' => $p->prompt_text,
                         'status' => $status,
+                        'mentioned' => (bool) $p->brand_mentioned,
+                        'position' => $promptPosition,
+                        'totalMentions' => $totalMentions,
+                        'totalModels' => $totalModels,
+                        'overallScore' => $overallScore,
                         'engines' => $engines,
                         'brandsCount' => $resObj['totalBrandsCount'] ?? ($p->brand_mentioned ? 1 : 0),
                         'sourcesCount' => $resObj['totalSourcesCount'] ?? ($citations ? count($citations) : 0),
                         'modelMentions' => $modelMentions,
                         'citations' => $citations,
                         'responseSummary' => $p->response_summary ?? '',
+                        'history' => $pHistory,
+                        'baseline' => $pHistory[0] ?? null,
+                        'lastUpdated' => ($p->updated_at ?: ($p->created_at ?: now()))->format('d M Y H:i'),
                     ];
                 }),
             ];
         });
 
-        return response()->json(['success' => true, 'keywords' => $keywords]);
+        return response()->json([
+            'success' => true,
+            'keywords' => $keywords,
+            'project' => $project ? [
+                'id' => $project->id,
+                'company' => $project->company,
+                'subscription' => $project->subscription ?: 'AI Pro',
+                'promptsLimit' => Project::getPromptLimit($project->subscription),
+            ] : null,
+        ]);
     }
 
     public function recommend(Request $request): JsonResponse
@@ -287,6 +383,9 @@ class KeywordController extends Controller
                 'average_position' => $calculatedPos,
                 'rank' => '#' . $rankInt,
                 'competitors' => $competitors,
+                'history' => $selfItem['history'] ?? [],
+                'baseline' => ($selfItem['history'][0] ?? null),
+                'last_updated' => now()->format('d M Y H:i'),
                 'is_crawling' => count($prompts) > 0,
             ]
         ]);

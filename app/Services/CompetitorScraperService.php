@@ -195,10 +195,60 @@ class CompetitorScraperService
             "Top 5 zoekresultaten:",
         ], $top5Summary));
 
-        // Save to DB cache in MySQL
+        // Save to DB cache in MySQL and record Nulmeting / Position History
         try {
             $kwModel = Keyword::find($keywordId);
             if ($kwModel) {
+                $existingHistory = [];
+                if (!empty($kwModel->competitors_json)) {
+                    $oldParsed = is_array($kwModel->competitors_json) ? $kwModel->competitors_json : json_decode($kwModel->competitors_json, true);
+                    if (is_array($oldParsed)) {
+                        $oldSelf = collect($oldParsed)->firstWhere('isSelf', true) ?? ($oldParsed[0] ?? null);
+                        if ($oldSelf) {
+                            if (!empty($oldSelf['history']) && is_array($oldSelf['history'])) {
+                                $existingHistory = $oldSelf['history'];
+                            } elseif (!empty($oldSelf['sov'])) {
+                                $baseDate = $kwModel->created_at ?: now();
+                                $existingHistory[] = [
+                                    'date' => $baseDate->format('Y-m-d'),
+                                    'displayDate' => $baseDate->format('d M Y'),
+                                    'time' => $baseDate->format('H:i'),
+                                    'isBaseline' => true,
+                                    'label' => 'Nulmeting',
+                                    'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($oldSelf['rank'] ?? $kwModel->rank ?? 1)) ?: 1,
+                                    'position' => (float) ($oldSelf['position'] ?? 2.1),
+                                    'sov' => (int) ($oldSelf['sov'] ?? 35),
+                                    'citations' => (int) ($oldSelf['citations'] ?? 1),
+                                ];
+                            }
+                        }
+                    }
+                }
+
+                foreach ($finalRanked as $fIdx => &$fComp) {
+                    if (!empty($fComp['isSelf']) || $fIdx === 0) {
+                        $isFirst = empty($existingHistory);
+                        $newSnapshot = [
+                            'date' => now()->format('Y-m-d'),
+                            'displayDate' => now()->format('d M Y'),
+                            'time' => now()->format('H:i'),
+                            'isBaseline' => $isFirst,
+                            'label' => $isFirst ? 'Nulmeting' : now()->format('d M H:i'),
+                            'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($fComp['rank'] ?? 1)) ?: 1,
+                            'position' => (float) ($fComp['position'] ?? 2.1),
+                            'sov' => (int) ($fComp['sov'] ?? 35),
+                            'citations' => (int) ($fComp['citations'] ?? 1),
+                        ];
+                        $existingHistory[] = $newSnapshot;
+                        if (count($existingHistory) > 15) {
+                            $existingHistory = array_merge([$existingHistory[0]], array_slice($existingHistory, -14));
+                        }
+                        $fComp['history'] = $existingHistory;
+                        break;
+                    }
+                }
+                unset($fComp);
+
                 $kwModel->competitors_json = $finalRanked;
                 $kwModel->brands_mentioned = array_values(array_filter(array_map(fn($c) => preg_replace('/[^a-z0-9]/', '', strtolower($c['brand'] ?? '')), $finalRanked)));
                 $kwModel->save();

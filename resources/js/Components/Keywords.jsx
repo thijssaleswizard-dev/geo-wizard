@@ -116,8 +116,10 @@ const EngineLogos = {
   )
 };
 
-export default function Keywords({ currentUser, activeWorkspace, enabledEngines, onUpdateAddonPrompts }) {
+export default function Keywords({ currentUser, activeWorkspace, activeClient, enabledEngines, onUpdateAddonPrompts }) {
+  const isReadOnly = currentUser?.role === 'klant';
   const [keywords, setKeywords] = useState([]);
+  const [projectInfo, setProjectInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedKeyword, setSelectedKeyword] = useState(null);
   const [detailTab, setDetailTab] = useState('rankings');
@@ -135,6 +137,41 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
   const [selectedKeywordIds, setSelectedKeywordIds] = useState([]);
   const [limitAlert, setLimitAlert] = useState(null);
   const [crawlingStatus, setCrawlingStatus] = useState(null);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  const formatKeywordFromApi = (k) => ({
+    id: k.id,
+    text: k.keyword_text || k.keyword || '',
+    rank: k.rank_google || k.rank || '-',
+    sov: k.share_of_voice ?? (k.competitors && k.competitors[0] ? k.competitors[0].sov : 0),
+    position: k.average_position || (k.competitors && k.competitors[0] ? k.competitors[0].position : '-'),
+    volume: k.search_volume || k.monthly_searches || '-',
+    is_crawling: !!k.is_crawling,
+    brands: k.brands_mentioned ? String(k.brands_mentioned).split(',').map(b => b.trim()).filter(Boolean) : [],
+    competitors: k.competitors || [],
+    history: Array.isArray(k.history) ? k.history : [],
+    baseline: k.baseline || (Array.isArray(k.history) && k.history.length > 0 ? k.history[0] : null),
+    last_updated: k.last_updated || null,
+    prompts: (k.prompts || []).map(p => ({
+      id: p.id,
+      text: p.prompt_text || p.text || '',
+      status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
+      mentioned: Boolean(p.brand_mentioned || p.status === 'Cited'),
+      position: p.position || '-',
+      totalMentions: p.totalMentions ?? 0,
+      totalModels: p.totalModels ?? 4,
+      overallScore: p.overallScore ?? 0,
+      engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
+      brandsCount: p.brandsCount || 0,
+      sourcesCount: p.sourcesCount || 0,
+      modelMentions: p.modelMentions || null,
+      responseSummary: p.responseSummary || '',
+      citations: p.citations || null,
+      history: Array.isArray(p.history) ? p.history : [],
+      baseline: p.baseline || (Array.isArray(p.history) && p.history.length > 0 ? p.history[0] : null),
+      lastUpdated: p.lastUpdated || null
+    }))
+  });
 
   const handleSelectAllKeywords = (e) => {
     if (e.target.checked) {
@@ -186,7 +223,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         headers: { 'Content-Type': 'application/json' },
       });
       const data = await response.json();
-      if (data.success) {
+        if ( data.success) {
         setKeywords(prev => prev.map(k => {
           if (k.id === kwId) {
             return {
@@ -196,6 +233,9 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
               sov: data.keyword?.share_of_voice ?? k.sov,
               position: data.keyword?.average_position ?? k.position,
               competitors: data.keyword?.competitors ?? k.competitors,
+              history: data.keyword?.history ?? k.history,
+              baseline: data.keyword?.baseline ?? k.baseline,
+              last_updated: data.keyword?.last_updated ?? k.last_updated,
               prompts: (k.prompts || []).map(p => ({ ...p, status: 'pending' }))
             };
           }
@@ -210,6 +250,9 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
             sov: data.keyword?.share_of_voice ?? prev.sov,
             position: data.keyword?.average_position ?? prev.position,
             competitors: data.keyword?.competitors ?? prev.competitors,
+            history: data.keyword?.history ?? prev.history,
+            baseline: data.keyword?.baseline ?? prev.baseline,
+            last_updated: data.keyword?.last_updated ?? prev.last_updated,
             prompts: (prev.prompts || []).map(p => ({ ...p, status: 'pending' }))
           }));
         }
@@ -287,16 +330,23 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
 
         const updatePromptObj = (p) => {
           if (p.id === promptId) {
+            const updatedHistory = Array.isArray(data.history) ? data.history : (p.history || []);
             return {
               ...p,
               status: updatedStatus,
               mentioned: data.totalMentions > 0,
+              position: data.position || p.position || '-',
+              totalMentions: data.totalMentions ?? p.totalMentions ?? 0,
+              totalModels: data.totalModels ?? p.totalModels ?? 4,
+              overallScore: data.overallScore ?? p.overallScore ?? 0,
               brandsCount: data.totalBrandsCount || (data.citations ? data.citations.length + 3 : 5),
               sourcesCount: data.totalSourcesCount || (data.citations ? data.citations.length : 0),
               modelMentions: data.modelMentions || {},
               engines: Object.keys(data.modelMentions || {}).filter(m => data.modelMentions[m].mentioned),
               responseSummary: newSummary,
-              citations: data.citations
+              citations: data.citations,
+              history: updatedHistory,
+              baseline: updatedHistory.length > 0 ? updatedHistory[0] : p.baseline
             };
           }
           return p;
@@ -400,28 +450,10 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
           .then(res => res.json())
           .then(data => {
             if (data.success) {
-              const formatted = (data.keywords || []).map(k => ({
-                id: k.id,
-                text: k.keyword_text || k.keyword || '',
-                rank: k.rank_google || '-',
-                sov: k.share_of_voice || (k.competitors && k.competitors[0] ? k.competitors[0].sov : 0),
-                position: k.average_position || (k.competitors && k.competitors[0] ? k.competitors[0].position : '-'),
-                volume: k.search_volume || k.monthly_searches || '-',
-                is_crawling: !!k.is_crawling,
-                brands: k.brands_mentioned ? String(k.brands_mentioned).split(',').map(b => b.trim()) : [],
-                competitors: k.competitors || [],
-                prompts: (k.prompts || []).map(p => ({
-                  id: p.id,
-                  text: p.prompt_text || p.text || '',
-                  status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
-                  engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
-                  brandsCount: p.brandsCount || 0,
-                  sourcesCount: p.sourcesCount || 0,
-                  modelMentions: p.modelMentions || null,
-                  responseSummary: p.responseSummary || '',
-                  citations: p.citations || null
-                }))
-              }));
+              if (data.project) {
+                setProjectInfo(data.project);
+              }
+              const formatted = (data.keywords || []).map(formatKeywordFromApi);
               setKeywords(formatted);
               setSelectedKeyword(prev => prev ? (formatted.find(f => f.id === prev.id) || prev) : null);
             }
@@ -443,7 +475,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
   }, [keywords, scanningPrompts, activeWorkspace]);
 
 
-    // Fetch active keywords from DB
+  // Fetch active keywords from DB
   useEffect(() => {
     setLoading(true);
     setSelectedKeyword(null);
@@ -452,28 +484,10 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          const formatted = (data.keywords || []).map(k => ({
-            id: k.id,
-            text: k.keyword_text || k.keyword || '',
-            rank: k.rank_google || k.rank || '-',
-            sov: k.share_of_voice || (k.competitors && k.competitors[0] ? k.competitors[0].sov : 0),
-            position: k.average_position || (k.competitors && k.competitors[0] ? k.competitors[0].position : '-'),
-            volume: k.search_volume || k.monthly_searches || '-',
-            is_crawling: !!k.is_crawling,
-            brands: k.brands_mentioned ? String(k.brands_mentioned).split(',').map(b => b.trim()) : [],
-            competitors: k.competitors || [],
-            prompts: (k.prompts || []).map(p => ({
-              id: p.id,
-              text: p.prompt_text || p.text || '',
-              status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
-              engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
-              brandsCount: p.brandsCount || 0,
-              sourcesCount: p.sourcesCount || 0,
-              modelMentions: p.modelMentions || null,
-              responseSummary: p.responseSummary || '',
-              citations: p.citations || null
-            }))
-          }));
+          if (data.project) {
+            setProjectInfo(data.project);
+          }
+          const formatted = (data.keywords || []).map(formatKeywordFromApi);
           setKeywords(formatted);
 
           let count = 0;
@@ -489,17 +503,306 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       });
   }, [activeWorkspace]);
 
+  const getActivePlanName = () => {
+    const rawSub = projectInfo?.subscription || activeClient?.subscription || currentUser?.subscription || 'AI Pro';
+    const normalized = String(rawSub).toLowerCase();
+    if (normalized.includes('starter') || normalized.includes('lite')) return 'AI Starter';
+    if (normalized.includes('enterprise') || normalized.includes('top')) return 'AI Enterprise';
+    return 'AI Pro';
+  };
+
   const getPlanLimit = () => {
-    const sub = currentUser?.subscription || 'AI Pro';
     const addon = currentUser?.addonPrompts || 0;
-    let base = 15;
-    if (sub === 'AI Pro') base = 30;
-    if (sub === 'AI Enterprise') base = 60;
+    if (projectInfo?.promptsLimit) {
+      return Number(projectInfo.promptsLimit) + addon;
+    }
+    if (activeClient?.promptsLimit) {
+      return Number(activeClient.promptsLimit) + addon;
+    }
+    const sub = String(projectInfo?.subscription || activeClient?.subscription || currentUser?.subscription || 'AI Pro').toLowerCase();
+    let base = 30;
+    if (sub.includes('starter') || sub.includes('lite')) base = 15;
+    else if (sub.includes('enterprise') || sub.includes('top')) base = 60;
+    else if (sub.includes('pro')) base = 30;
     return base + addon;
   };
 
   const activeLimit = getPlanLimit();
+  const activePlanName = getActivePlanName();
   const isLimitReached = totalUsedPrompts >= activeLimit;
+
+  const downloadCsvFile = (filename, rows) => {
+    const escapeCell = (val) => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/\r?\n/g, ' ').trim();
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+    const csvContent = '\uFEFF' + rows.map(row => row.map(escapeCell).join(';')).join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportKeywordCsv = (kw) => {
+    if (!kw) return;
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    const safeName = String(kw.text || 'keyword').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const kwBaseline = kw.baseline || (Array.isArray(kw.history) && kw.history.length > 0 ? kw.history[0] : null);
+    const kwHistory = Array.isArray(kw.history) ? kw.history : [];
+    const brandRankings = getBrandRankings(kw);
+
+    const rows = [
+      ['GEO Rapportage - Keyword Export'],
+      ['Project / Domein', workspace, 'Pakket', activePlanName, 'Exportdatum', dateStr],
+      [],
+      ['1. KEYWORD NULMETING VS. HUIDIGE METING'],
+      [
+        'Keyword',
+        'Zoekvolume',
+        'Nulmeting Datum',
+        'Nulmeting Google Rank',
+        'Nulmeting AI Positie',
+        'Nulmeting Share of Voice (%)',
+        'Huidige Datum',
+        'Huidige Google Rank',
+        'Huidige AI Positie',
+        'Huidige Share of Voice (%)'
+      ],
+      [
+        kw.text,
+        kw.volume,
+        kwBaseline?.displayDate || kwBaseline?.date || '-',
+        kwBaseline?.rank || kw.rank || '-',
+        kwBaseline?.position || kw.position || '-',
+        `${kwBaseline?.sov ?? kw.sov ?? 0}%`,
+        kw.last_updated || dateStr,
+        kw.rank || '-',
+        kw.position || '-',
+        `${kw.sov ?? 0}%`
+      ],
+      [],
+      ['2. HISTORISCHE MEETPUNTEN (KEYWORD POSITIE & SHARE OF VOICE)'],
+      ['Datum', 'Type Meting', 'Google Rank', 'Gemiddelde AI Positie', 'Share of Voice (%)', 'Citaties'],
+      ...(kwHistory.length > 0
+        ? kwHistory.map((h, idx) => [
+            h.displayDate || h.date || '-',
+            h.isBaseline || idx === 0 ? 'Nulmeting' : (h.label || `Meting #${idx + 1}`),
+            h.rank || kw.rank || '-',
+            h.position || '-',
+            `${h.sov ?? 0}%`,
+            h.citations ?? 0
+          ])
+        : [[kw.last_updated || dateStr, 'Nulmeting', kw.rank || '-', kw.position || '-', `${kw.sov ?? 0}%`, 0]]),
+      [],
+      ['3. MERKRANGSCHIKKING & CONCURRENTIE'],
+      ['Rank', 'Merk', 'Domein', 'Eigen Merk', 'Share of Voice (%)', 'Gemiddelde Positie', 'Aantal Citaties'],
+      ...brandRankings.map(r => [
+        r.rank,
+        r.brand,
+        r.domain,
+        r.isSelf ? 'Ja' : 'Nee',
+        `${r.sov}%`,
+        r.position,
+        r.citations
+      ]),
+      [],
+      ['4. PROMPTS OVERZICHT (NULMETING VS. HUIDIG PER ZOEKVRAAG)'],
+      [
+        'Prompt',
+        'Status',
+        'Nulmeting Datum',
+        'Nulmeting Vermeld',
+        'Nulmeting Positie',
+        'Nulmeting AI Modellen',
+        'Huidig Vermeld',
+        'Huidige Positie',
+        'Huidige AI Modellen',
+        'ChatGPT',
+        'Google AI Overviews',
+        'Gemini',
+        'Perplexity',
+        'Aantal Merken',
+        'Aantal Bronnen'
+      ],
+      ...(kw.prompts || []).map(p => {
+        const pb = p.baseline || (Array.isArray(p.history) && p.history.length > 0 ? p.history[0] : null);
+        const m = p.modelMentions || {};
+        const isMentioned = p.status === 'Cited' || p.mentioned;
+        return [
+          p.text,
+          p.status,
+          pb?.displayDate || pb?.date || '-',
+          pb ? (pb.mentioned ? 'Ja' : 'Nee') : (isMentioned ? 'Ja' : 'Nee'),
+          pb?.position || p.position || '-',
+          pb ? `${pb.totalMentions ?? 0}/${pb.totalModels ?? 4}` : `${p.totalMentions ?? 0}/${p.totalModels ?? 4}`,
+          isMentioned ? 'Ja' : 'Nee',
+          p.position || '-',
+          `${p.totalMentions ?? 0}/${p.totalModels ?? 4}`,
+          m.chatgpt?.mentioned ? 'Vermeld' : 'Niet vermeld',
+          m.aioverviews?.mentioned ? 'Vermeld' : 'Niet vermeld',
+          m.gemini?.mentioned ? 'Vermeld' : 'Niet vermeld',
+          m.perplexity?.mentioned ? 'Vermeld' : 'Niet vermeld',
+          p.brandsCount || 0,
+          p.sourcesCount || 0
+        ];
+      }),
+      [],
+      ['5. HISTORISCHE MEETPUNTEN PER PROMPT'],
+      ['Prompt', 'Datum', 'Type Meting', 'Merk Vermeld', 'Gemiddelde Positie', 'AI Modellen Vermeld', 'Score (%)'],
+      ...(kw.prompts || []).flatMap(p => {
+        const ph = Array.isArray(p.history) && p.history.length > 0 ? p.history : [];
+        if (ph.length === 0) {
+          const isMentioned = p.status === 'Cited' || p.mentioned;
+          return [[
+            p.text,
+            p.lastUpdated || kw.last_updated || dateStr,
+            'Nulmeting',
+            isMentioned ? 'Ja' : 'Nee',
+            p.position || '-',
+            `${p.totalMentions ?? 0}/${p.totalModels ?? 4}`,
+            `${p.overallScore ?? 0}%`
+          ]];
+        }
+        return ph.map((h, idx) => [
+          p.text,
+          h.displayDate || h.date || '-',
+          h.isBaseline || idx === 0 ? 'Nulmeting' : (h.label || `Meting #${idx + 1}`),
+          h.mentioned ? 'Ja' : 'Nee',
+          h.position || '-',
+          `${h.totalMentions ?? 0}/${h.totalModels ?? 4}`,
+          `${h.overallScore ?? 0}%`
+        ]);
+      })
+    ];
+
+    downloadCsvFile(`geo-rapport-${workspace.replace(/[^a-z0-9]+/gi, '-')}-${safeName}-${dateStr}.csv`, rows);
+  };
+
+  const handleExportProjectCsv = () => {
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    const dateStr = new Date().toISOString().slice(0, 10);
+
+    const rows = [
+      ['GEO Totaalrapportage - Alle Keywords & Prompts'],
+      ['Project / Domein', workspace, 'Pakket', activePlanName, 'Prompts Verbruik', `${totalUsedPrompts}/${activeLimit}`, 'Exportdatum', dateStr],
+      [],
+      ['1. OVERZICHT KEYWORDS (NULMETING VS. HUIDIGE RESULTATEN)'],
+      [
+        'Keyword',
+        'Zoekvolume',
+        'Nulmeting Datum',
+        'Nulmeting Google Rank',
+        'Nulmeting AI Positie',
+        'Nulmeting Share of Voice (%)',
+        'Huidige Datum',
+        'Huidige Google Rank',
+        'Huidige AI Positie',
+        'Huidige Share of Voice (%)',
+        'Aantal Prompts'
+      ],
+      ...keywords.map(kw => {
+        const b = kw.baseline || (Array.isArray(kw.history) && kw.history.length > 0 ? kw.history[0] : null);
+        return [
+          kw.text,
+          kw.volume,
+          b?.displayDate || b?.date || '-',
+          b?.rank || kw.rank || '-',
+          b?.position || kw.position || '-',
+          `${b?.sov ?? kw.sov ?? 0}%`,
+          kw.last_updated || dateStr,
+          kw.rank || '-',
+          kw.position || '-',
+          `${kw.sov ?? 0}%`,
+          (kw.prompts || []).length
+        ];
+      }),
+      [],
+      ['2. ALLE PROMPTS & AI ENGINE RESULTATEN (NULMETING VS. HUIDIG)'],
+      [
+        'Keyword',
+        'Prompt',
+        'Status',
+        'Nulmeting Datum',
+        'Nulmeting Vermeld',
+        'Nulmeting Positie',
+        'Nulmeting AI Modellen',
+        'Huidig Vermeld',
+        'Huidige Positie',
+        'Huidige AI Modellen',
+        'ChatGPT',
+        'Google AI Overviews',
+        'Gemini',
+        'Perplexity'
+      ],
+      ...keywords.flatMap(kw =>
+        (kw.prompts || []).map(p => {
+          const pb = p.baseline || (Array.isArray(p.history) && p.history.length > 0 ? p.history[0] : null);
+          const m = p.modelMentions || {};
+          const isMentioned = p.status === 'Cited' || p.mentioned;
+          return [
+            kw.text,
+            p.text,
+            p.status,
+            pb?.displayDate || pb?.date || '-',
+            pb ? (pb.mentioned ? 'Ja' : 'Nee') : (isMentioned ? 'Ja' : 'Nee'),
+            pb?.position || p.position || '-',
+            pb ? `${pb.totalMentions ?? 0}/${pb.totalModels ?? 4}` : `${p.totalMentions ?? 0}/${p.totalModels ?? 4}`,
+            isMentioned ? 'Ja' : 'Nee',
+            p.position || '-',
+            `${p.totalMentions ?? 0}/${p.totalModels ?? 4}`,
+            m.chatgpt?.mentioned ? 'Vermeld' : 'Niet vermeld',
+            m.aioverviews?.mentioned ? 'Vermeld' : 'Niet vermeld',
+            m.gemini?.mentioned ? 'Vermeld' : 'Niet vermeld',
+            m.perplexity?.mentioned ? 'Vermeld' : 'Niet vermeld'
+          ];
+        })
+      ),
+      [],
+      ['3. HISTORISCHE REEKS PER KEYWORD'],
+      ['Keyword', 'Datum', 'Type Meting', 'Google Rank', 'Gemiddelde AI Positie', 'Share of Voice (%)'],
+      ...keywords.flatMap(kw => {
+        const kh = Array.isArray(kw.history) && kw.history.length > 0 ? kw.history : [];
+        if (kh.length === 0) {
+          return [[kw.text, kw.last_updated || dateStr, 'Nulmeting', kw.rank || '-', kw.position || '-', `${kw.sov ?? 0}%`]];
+        }
+        return kh.map((h, idx) => [
+          kw.text,
+          h.displayDate || h.date || '-',
+          h.isBaseline || idx === 0 ? 'Nulmeting' : (h.label || `Meting #${idx + 1}`),
+          h.rank || kw.rank || '-',
+          h.position || '-',
+          `${h.sov ?? 0}%`
+        ]);
+      })
+    ];
+
+    downloadCsvFile(`geo-totaalrapport-${workspace.replace(/[^a-z0-9]+/gi, '-')}-${dateStr}.csv`, rows);
+  };
+
+  const handleShareKeyword = (kw) => {
+    if (!kw) return;
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    const b = kw.baseline || (Array.isArray(kw.history) && kw.history.length > 0 ? kw.history[0] : null);
+    const summaryText = [
+      `GEO Rapport - ${workspace} | Keyword: "${kw.text}"`,
+      `• Huidig: AI Positie ${kw.position || '-'} | Share of Voice: ${kw.sov ?? 0}% | Google Rank: ${kw.rank || '-'}`,
+      b ? `• Nulmeting (${b.displayDate || b.date}): AI Positie ${b.position || '-'} | Share of Voice: ${b.sov ?? 0}%` : null,
+      `• Link: ${window.location.href}`
+    ].filter(Boolean).join('\n');
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(summaryText).catch(() => {});
+    }
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2500);
+  };
 
   const getEditPromptMode = (kwId) => !!editPromptModes[kwId];
   const toggleEditPromptMode = (kwId) => {
@@ -746,6 +1049,25 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
     return brandMap[key] || { label: String(brandKey)[0]?.toUpperCase() || '?', color: '#64748b', text: 'white', domain: `${key}.nl` };
   };
 
+  const parseNumericPos = (posStr) => {
+    if (!posStr || posStr === '-') return null;
+    const m = String(posStr).match(/\d+/);
+    return m ? parseInt(m[0], 10) : null;
+  };
+
+  const formatCompactDate = (dStr) => {
+    if (!dStr) return '';
+    try {
+      const d = new Date(dStr);
+      if (!isNaN(d.getTime())) {
+        const day = d.getDate();
+        const monthNames = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+        return `${day} ${monthNames[d.getMonth()]}`;
+      }
+    } catch (e) {}
+    return String(dStr).slice(5, 10);
+  };
+
   const getBrandRankings = (kwParam) => {
     if (!kwParam) return [];
 
@@ -990,8 +1312,8 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         {renderPromptLimitAlert()}
 
         {/* Detail Top Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <button
               onClick={() => setSelectedKeyword(null)}
               style={{
@@ -1010,35 +1332,52 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
               <ArrowLeft size={20} />
               Keyword: {kw.text}
             </button>
-            <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>Last updated: 29 Jul 2026</span>
+            <span style={{ fontSize: '12px', color: '#9ca3af', marginTop: '2px' }}>
+              Laatst bijgewerkt: {kw.last_updated || 'Recent'}
+            </span>
+            {kw.baseline && (
+              <span style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                padding: '3px 10px',
+                borderRadius: '12px',
+                backgroundColor: '#f3e8ff',
+                color: '#6b21a8',
+                border: '1px solid #d8b4fe'
+              }}>
+                Nulmeting: {kw.baseline.displayDate || kw.baseline.date}
+              </span>
+            )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button
-              type="button"
-              onClick={(e) => handleRescrapeKeyword(kw.id, e)}
-              disabled={rescrapingKeywords[kw.id]}
-              title="Rankings live opnieuw crawlen en alle gekoppelde AI-prompts opnieuw scannen"
-              style={{
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: '1px solid #bfdbfe',
-                backgroundColor: rescrapingKeywords[kw.id] ? '#eff6ff' : '#f0f7ff',
-                color: '#1d4ed8',
-                fontSize: '12px',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-              onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#dbeafe'; }}
-              onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#f0f7ff'; }}
-            >
-              <RotateCw size={13} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
-              {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw Scrapen'}
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={(e) => handleRescrapeKeyword(kw.id, e)}
+                disabled={rescrapingKeywords[kw.id]}
+                title="Rankings live opnieuw crawlen en alle gekoppelde AI-prompts opnieuw scannen"
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  border: '1px solid #bfdbfe',
+                  backgroundColor: rescrapingKeywords[kw.id] ? '#eff6ff' : '#f0f7ff',
+                  color: '#1d4ed8',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#dbeafe'; }}
+                onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#f0f7ff'; }}
+              >
+                <RotateCw size={13} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
+                {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw Scrapen'}
+              </button>
+            )}
             <button
               type="button"
               style={{
@@ -1054,7 +1393,8 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                 cursor: 'pointer',
                 color: '#374151'
               }}
-              onClick={() => alert('Exporting CSV...')}
+              onClick={() => handleExportKeywordCsv(kw)}
+              title="Exporteer nulmeting, historie, rankings en prompts naar CSV (Excel)"
             >
               <Download size={12} />
               Export CSV
@@ -1064,7 +1404,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
               style={{
                 padding: '6px 16px',
                 borderRadius: '20px',
-                backgroundColor: '#000000',
+                backgroundColor: shareCopied ? '#16a34a' : '#000000',
                 color: '#ffffff',
                 fontSize: '12px',
                 fontWeight: 700,
@@ -1072,12 +1412,13 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                 alignItems: 'center',
                 gap: '6px',
                 cursor: 'pointer',
-                border: 'none'
+                border: 'none',
+                transition: 'background-color 0.15s ease'
               }}
-              onClick={() => alert('Share link copied!')}
+              onClick={() => handleShareKeyword(kw)}
             >
               <Share2 size={12} />
-              Share
+              {shareCopied ? 'Gekopieerd!' : 'Share'}
             </button>
           </div>
         </div>
@@ -1087,11 +1428,10 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
           {(() => {
             const kwCrawlingCount = (kw.prompts || []).filter(p => !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling').length;
             return [
-              { id: 'rankings', label: 'Rankings' },
+              { id: 'rankings', label: 'Rankings & Historie' },
+              { id: 'nulmeting', label: 'Nulmeting' },
               { id: 'prompts', label: kwCrawlingCount > 0 ? `Prompts (${(kw.prompts || []).length}) ⏳ (${kwCrawlingCount} bezig...)` : `Prompts (${(kw.prompts || []).length})` },
-              { id: 'sources', label: 'Sources' },
-              { id: 'shopping', label: 'Shopping' },
-              { id: 'settings', label: 'Settings' }
+              { id: 'sources', label: 'Sources' }
             ];
           })().map(t => (
             <button
@@ -1101,13 +1441,14 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                 padding: '12px 20px',
                 fontSize: '13px',
                 fontWeight: detailTab === t.id ? 700 : 500,
-                color: detailTab === t.id ? '#111827' : '#6b7280',
-                borderBottom: detailTab === t.id ? '2px solid #000000' : '2px solid transparent',
+                color: detailTab === t.id ? '#440099' : '#6b7280',
+                borderBottom: detailTab === t.id ? '2px solid #440099' : '2px solid transparent',
                 cursor: 'pointer',
                 backgroundColor: 'transparent',
                 borderTop: 'none',
                 borderLeft: 'none',
-                borderRight: 'none'
+                borderRight: 'none',
+                transition: 'all 0.15s ease'
               }}
             >
               {t.label}
@@ -1147,27 +1488,159 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
               </div>
             </div>
 
-            {/* Position History Bar */}
-            <div style={{ padding: '24px', border: '1px solid #e5e7eb', borderRadius: '12px', backgroundColor: '#fafafa', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
-                <span>Position History</span>
-                <span>Rank 1 (Top) to 20</span>
-              </div>
-              <div style={{ height: '80px', width: '100%', display: 'flex', alignItems: 'flex-end', gap: '12px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
-                {[
-                  { date: '17 Jul 2026', val: 30 },
-                  { date: '18 Jul 2026', val: 45 },
-                  { date: '19 Jul 2026', val: 60 },
-                  { date: '20 Jul 2026', val: 75 },
-                  { date: '21 Jul 2026', val: 90 }
-                ].map((item, i) => (
-                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                    <div style={{ width: '100%', backgroundColor: 'var(--brand-primary)', height: `${item.val}%`, borderRadius: '4px 4px 0 0', opacity: 0.8 }} />
-                    <span style={{ fontSize: '10px', color: '#9ca3af' }}>{item.date}</span>
+            {/* Compact Position & Share of Voice History Candle Chart */}
+            {(() => {
+              const rawHistory = Array.isArray(kw.history) && kw.history.length > 0
+                ? kw.history
+                : [{
+                    date: new Date().toISOString().slice(0, 10),
+                    displayDate: kw.last_updated || 'Nulmeting',
+                    isBaseline: true,
+                    label: 'Nulmeting',
+                    rank: kw.rank || '-',
+                    position: kw.position || '-',
+                    sov: typeof kw.sov === 'number' ? kw.sov : 0,
+                    citations: 0
+                  }];
+
+              return (
+                <div style={{
+                  padding: '16px 20px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '12px',
+                  backgroundColor: '#fafafa',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 800, color: '#111827' }}>
+                        Position & Share of Voice Historie
+                      </span>
+                      <span style={{
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        backgroundColor: '#f3e8ff',
+                        color: '#440099'
+                      }}>
+                        {rawHistory.length} {rawHistory.length === 1 ? 'meetpunt' : 'meetpunten'}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#440099', display: 'inline-block' }} />
+                        <span>Nulmeting</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#2563eb', display: 'inline-block' }} />
+                        <span>Vervolgmeting</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailTab('nulmeting')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#440099',
+                          fontWeight: 700,
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                          padding: 0,
+                          textDecoration: 'underline'
+                        }}
+                      >
+                        Bekijk Nulmeting details →
+                      </button>
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
+
+                  {/* Compact Candle Strip */}
+                  <div style={{
+                    minHeight: '105px',
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'flex-end',
+                    gap: '6px',
+                    padding: '12px 10px 8px 10px',
+                    backgroundColor: '#ffffff',
+                    borderRadius: '10px',
+                    border: '1px solid #e5e7eb',
+                    overflowX: 'auto'
+                  }}>
+                    {rawHistory.map((item, i) => {
+                      const isFirst = i === 0 || !!item.isBaseline;
+                      const posNum = parseNumericPos(item.position);
+                      const itemSov = Number(item.sov ?? 0);
+                      let scorePct = 20;
+                      if (posNum !== null && posNum > 0) {
+                        scorePct = Math.max(15, Math.min(100, Math.round(((21 - Math.min(posNum, 20)) / 20) * 100)));
+                      } else if (itemSov > 0) {
+                        scorePct = Math.max(18, Math.min(100, itemSov));
+                      }
+                      const barHeightPx = Math.max(14, Math.round((scorePct / 100) * 58));
+
+                      return (
+                        <div
+                          key={i}
+                          style={{
+                            flex: '0 0 auto',
+                            width: '32px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'flex-end',
+                            gap: '4px'
+                          }}
+                        >
+                          {/* Value above candle */}
+                          <span style={{ fontSize: '9px', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>
+                            {item.position && item.position !== '-' ? item.position : `${itemSov}%`}
+                          </span>
+
+                          {/* Candle Stick */}
+                          <div
+                            title={`${isFirst ? 'Nulmeting' : `Meting #${i + 1}`}: ${item.displayDate || item.date}\nAI Positie: ${item.position || '-'}\nShare of Voice: ${itemSov}%\nGoogle Rank: ${item.rank || '-'}`}
+                            style={{
+                              width: '12px',
+                              height: `${barHeightPx}px`,
+                              background: isFirst
+                                ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
+                                : 'linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)',
+                              borderRadius: '4px 4px 2px 2px',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                              cursor: 'pointer',
+                              transition: 'height 0.25s ease'
+                            }}
+                          />
+
+                          {/* Date below candle */}
+                          <span style={{ fontSize: '9px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                            {formatCompactDate(item.displayDate || item.date)}
+                          </span>
+
+                          {/* Metric tag */}
+                          <span style={{
+                            fontSize: '8px',
+                            fontWeight: 800,
+                            padding: '1px 3px',
+                            borderRadius: '3px',
+                            backgroundColor: isFirst ? '#f3e8ff' : '#eff6ff',
+                            color: isFirst ? '#6b21a8' : '#1d4ed8',
+                            lineHeight: 1
+                          }}>
+                            {isFirst ? 'NUL' : `#${i + 1}`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Competitor Table or Crawling Placeholder */}
             {(() => {
@@ -1362,34 +1835,481 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
           </div>
         )}
 
+        {/* TAB: NULMETING */}
+        {detailTab === 'nulmeting' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {(() => {
+              const rawHistory = Array.isArray(kw.history) && kw.history.length > 0
+                ? kw.history
+                : [{
+                    date: new Date().toISOString().slice(0, 10),
+                    displayDate: kw.last_updated || 'Nulmeting',
+                    isBaseline: true,
+                    label: 'Nulmeting',
+                    rank: kw.rank || '-',
+                    position: kw.position || '-',
+                    sov: typeof kw.sov === 'number' ? kw.sov : 0,
+                    citations: 0
+                  }];
+
+              const baselinePoint = kw.baseline || rawHistory[0];
+              const latestPoint = rawHistory[rawHistory.length - 1] || baselinePoint;
+
+              const basePosNum = parseNumericPos(baselinePoint?.position);
+              const currPosNum = parseNumericPos(kw.position !== '-' ? kw.position : latestPoint?.position);
+              const posDiff = (basePosNum !== null && currPosNum !== null) ? (basePosNum - currPosNum) : null;
+
+              const baseSov = Number(baselinePoint?.sov ?? kw.sov ?? 0);
+              const currSov = Number(kw.sov ?? latestPoint?.sov ?? 0);
+              const sovDiff = currSov - baseSov;
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* Header Card */}
+                  <div style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '12px',
+                    padding: '20px 24px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '16px'
+                  }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#111827', margin: 0 }}>
+                          Nulmeting & Voortgangsanalyse
+                        </h3>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          color: '#440099',
+                          backgroundColor: '#f5f0ff',
+                          border: '1px solid #e8d9ff',
+                          padding: '2px 10px',
+                          borderRadius: '12px',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.4px'
+                        }}>
+                          Vastgelegd Startpunt
+                        </span>
+                      </div>
+                      <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px', maxWidth: '640px', lineHeight: 1.5 }}>
+                        Het initiële startpunt van <strong>{kw.text}</strong> bij aanvang. Alle scans en AI-optimalisaties worden afgezet tegen deze referentiedatum.
+                      </p>
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '14px',
+                      backgroundColor: '#fafafa',
+                      border: '1px solid #e5e7eb',
+                      padding: '10px 18px',
+                      borderRadius: '10px'
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Startdatum Nulmeting</div>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>
+                          {baselinePoint?.displayDate || baselinePoint?.date || '-'}
+                        </div>
+                      </div>
+                      <div style={{ width: '1px', height: '24px', backgroundColor: '#e5e7eb' }} />
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Totaal Scans</div>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#440099' }}>
+                          {rawHistory.length} {rawHistory.length === 1 ? 'meting' : 'metingen'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* KPI Comparison Grid */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                    gap: '16px'
+                  }}>
+                    {/* Nulmeting Card */}
+                    <div style={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e9d5ff',
+                      borderRadius: '12px',
+                      padding: '20px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '14px',
+                      boxShadow: '0 1px 3px rgba(68, 0, 153, 0.04)'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          color: '#440099',
+                          backgroundColor: '#f3e8ff',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.3px'
+                        }}>
+                          Nulmeting (Start)
+                        </span>
+                        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
+                          {baselinePoint?.displayDate || baselinePoint?.date || '-'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', paddingTop: '4px' }}>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>AI Positie</div>
+                          <div style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
+                            {baselinePoint?.position && baselinePoint.position !== '-' ? baselinePoint.position : (kw.position || '-')}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Share of Voice</div>
+                          <div style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
+                            {baseSov}%
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Google Rank</div>
+                          <div style={{ fontSize: '20px', fontWeight: 700, color: '#4b5563', paddingTop: '2px' }}>
+                            {baselinePoint?.rank || kw.rank || '-'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Current Measurement Card */}
+                    <div style={{
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '12px',
+                      padding: '20px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '14px',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          color: '#1e40af',
+                          backgroundColor: '#dbeafe',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.3px'
+                        }}>
+                          Huidige Meting
+                        </span>
+                        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
+                          {latestPoint?.displayDate || kw.last_updated || 'Actueel'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', paddingTop: '4px' }}>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>AI Positie</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
+                              {kw.position || latestPoint?.position || '-'}
+                            </span>
+                            {posDiff !== null && posDiff !== 0 && (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                padding: '1px 6px',
+                                borderRadius: '8px',
+                                backgroundColor: posDiff > 0 ? '#dcfce7' : '#fee2e2',
+                                color: posDiff > 0 ? '#15803d' : '#dc2626'
+                              }}>
+                                {posDiff > 0 ? `+${posDiff}` : `${posDiff}`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Share of Voice</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
+                              {currSov}%
+                            </span>
+                            {sovDiff !== 0 && (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                padding: '1px 6px',
+                                borderRadius: '8px',
+                                backgroundColor: sovDiff > 0 ? '#dcfce7' : '#fee2e2',
+                                color: sovDiff > 0 ? '#15803d' : '#dc2626'
+                              }}>
+                                {sovDiff > 0 ? `+${sovDiff}%` : `${sovDiff}%`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Google Rank</div>
+                          <div style={{ fontSize: '20px', fontWeight: 700, color: '#4b5563', paddingTop: '2px' }}>
+                            {kw.rank || latestPoint?.rank || '-'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Compact Historical Timeline since Nulmeting */}
+                  <div style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '12px',
+                    padding: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 800, color: '#111827' }}>
+                        Historisch Verloop sinds Nulmeting
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#440099', display: 'inline-block' }} />
+                          <span>Nulmeting</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#2563eb', display: 'inline-block' }} />
+                          <span>Vervolgmeting</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{
+                      minHeight: '105px',
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'flex-end',
+                      gap: '6px',
+                      padding: '12px 10px 8px 10px',
+                      backgroundColor: '#fafafa',
+                      borderRadius: '10px',
+                      border: '1px solid #e5e7eb',
+                      overflowX: 'auto'
+                    }}>
+                      {rawHistory.map((item, i) => {
+                        const isFirst = i === 0 || !!item.isBaseline;
+                        const posNum = parseNumericPos(item.position);
+                        const itemSov = Number(item.sov ?? 0);
+                        let scorePct = 20;
+                        if (posNum !== null && posNum > 0) {
+                          scorePct = Math.max(15, Math.min(100, Math.round(((21 - Math.min(posNum, 20)) / 20) * 100)));
+                        } else if (itemSov > 0) {
+                          scorePct = Math.max(18, Math.min(100, itemSov));
+                        }
+                        const barHeightPx = Math.max(14, Math.round((scorePct / 100) * 58));
+
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              flex: '0 0 auto',
+                              width: '32px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'flex-end',
+                              gap: '4px'
+                            }}
+                          >
+                            <span style={{ fontSize: '9px', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>
+                              {item.position && item.position !== '-' ? item.position : `${itemSov}%`}
+                            </span>
+                            <div
+                              title={`${isFirst ? 'Nulmeting' : `Meting #${i + 1}`}: ${item.displayDate || item.date}\nAI Positie: ${item.position || '-'}\nShare of Voice: ${itemSov}%\nGoogle Rank: ${item.rank || '-'}`}
+                              style={{
+                                width: '12px',
+                                height: `${barHeightPx}px`,
+                                background: isFirst
+                                  ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
+                                  : 'linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)',
+                                borderRadius: '4px 4px 2px 2px',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                                cursor: 'pointer',
+                                transition: 'height 0.25s ease'
+                              }}
+                            />
+                            <span style={{ fontSize: '9px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                              {formatCompactDate(item.displayDate || item.date)}
+                            </span>
+                            <span style={{
+                              fontSize: '8px',
+                              fontWeight: 800,
+                              padding: '1px 3px',
+                              borderRadius: '3px',
+                              backgroundColor: isFirst ? '#f3e8ff' : '#eff6ff',
+                              color: isFirst ? '#6b21a8' : '#1d4ed8',
+                              lineHeight: 1
+                            }}>
+                              {isFirst ? 'NUL' : `#${i + 1}`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Prompts Nulmeting vs Huidig overzicht */}
+                  <div style={{
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '12px',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{
+                      padding: '16px 20px',
+                      borderBottom: '1px solid #e5e7eb',
+                      backgroundColor: '#f9fafb',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#111827', margin: 0 }}>
+                          Zoekvragen (Prompts) – Nulmeting vs. Huidig
+                        </h4>
+                        <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0 0' }}>
+                          Vergelijking van merkvermeldingen per zoekvraag tussen het startpunt en actueel.
+                        </p>
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
+                        {(kw.prompts || []).length} zoekvragen
+                      </span>
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#fafafa', borderBottom: '1px solid #e5e7eb', textAlign: 'left' }}>
+                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563' }}>Prompt / Zoekvraag</th>
+                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563', width: '170px' }}>Bij Nulmeting</th>
+                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563', width: '170px' }}>Huidige Status</th>
+                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563', width: '130px' }}>Voortgang</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(kw.prompts || []).map((p, pIdx) => {
+                            const pHistory = Array.isArray(p.history) && p.history.length > 0 ? p.history : [];
+                            const pBase = p.baseline || pHistory[0];
+                            const baseMentioned = Boolean(pBase?.mentioned);
+                            const currMentioned = Boolean(p.brand_mentioned || p.status === 'Cited' || p.mentioned);
+
+                            let statusBadge = (
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', backgroundColor: '#f3f4f6', padding: '2px 8px', borderRadius: '10px' }}>
+                                Gelijk
+                              </span>
+                            );
+                            if (!baseMentioned && currMentioned) {
+                              statusBadge = (
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#15803d', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '10px' }}>
+                                  ↑ Gewonnen
+                                </span>
+                              );
+                            } else if (baseMentioned && !currMentioned) {
+                              statusBadge = (
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#b91c1c', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '10px' }}>
+                                  ↓ Aandacht
+                                </span>
+                              );
+                            } else if (baseMentioned && currMentioned) {
+                              statusBadge = (
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#15803d', backgroundColor: '#f0fdf4', padding: '2px 8px', borderRadius: '10px' }}>
+                                  ✓ Behouden
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <tr key={pIdx} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                <td style={{ padding: '12px 16px', fontWeight: 600, color: '#111827' }}>
+                                  {p.text}
+                                </td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span style={{
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    padding: '2px 8px',
+                                    borderRadius: '10px',
+                                    backgroundColor: baseMentioned ? '#f3e8ff' : '#f3f4f6',
+                                    color: baseMentioned ? '#6b21a8' : '#6b7280'
+                                  }}>
+                                    {baseMentioned ? `Vermeld (${pBase?.position || '#1'})` : 'Niet vermeld'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span style={{
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    padding: '2px 8px',
+                                    borderRadius: '10px',
+                                    backgroundColor: currMentioned ? '#dcfce7' : '#fee2e2',
+                                    color: currMentioned ? '#15803d' : '#991b1b'
+                                  }}>
+                                    {currMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : 'AI'})` : 'Niet vermeld'}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  {statusBadge}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         {/* TAB: PROMPTS */}
         {detailTab === 'prompts' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h4 style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>Prompt explorer</h4>
-                <span style={{ fontSize: '12px', color: '#6b7280' }}>Breakdown of AI responses & sources for this keyword</span>
+                <h4 style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>Prompt explorer & Historie per prompt</h4>
+                <span style={{ fontSize: '12px', color: '#6b7280' }}>
+                  Klik op een zoekvraag om de nulmeting, resultaten-grafiek en antwoorden per AI-zoekmachine te bekijken
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => toggleEditPromptMode(kw.id)}
-                style={{
-                  padding: '6px 14px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                  backgroundColor: isEditMode ? '#f3f4f6' : 'transparent',
-                  color: '#111827',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  cursor: 'pointer'
-                }}
-              >
-                {isEditMode ? <X size={14} /> : <Edit2 size={14} />}
-                {isEditMode ? 'Klaar met bewerken' : 'Edit prompts'}
-              </button>
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => toggleEditPromptMode(kw.id)}
+                  style={{
+                    padding: '6px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    borderRadius: '6px',
+                    border: '1px solid #d1d5db',
+                    backgroundColor: isEditMode ? '#f3f4f6' : 'transparent',
+                    color: '#111827',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {isEditMode ? <X size={14} /> : <Edit2 size={14} />}
+                  {isEditMode ? 'Klaar met bewerken' : 'Edit prompts'}
+                </button>
+              )}
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -1442,6 +2362,21 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                   if (p.modelMentions && !(e.id in p.modelMentions) && (!enabledEngines || !enabledEngines[e.id])) return false;
                   return true;
                 });
+
+                const promptHistory = Array.isArray(p.history) && p.history.length > 0
+                  ? p.history
+                  : [{
+                      date: new Date().toISOString().slice(0, 10),
+                      displayDate: p.lastUpdated || kw.last_updated || 'Nulmeting',
+                      isBaseline: true,
+                      label: 'Nulmeting',
+                      mentioned: isMentioned,
+                      position: p.position && p.position !== '-' ? p.position : (isMentioned ? kw.position || '#1' : '-'),
+                      totalMentions: p.totalMentions ?? (isMentioned ? 2 : 0),
+                      totalModels: p.totalModels ?? Math.max(1, enginesList.length || 4),
+                      overallScore: p.overallScore ?? (isMentioned ? 50 : 0)
+                    }];
+                const promptBaseline = p.baseline || promptHistory[0];
 
                 return (
                   <div
@@ -1531,7 +2466,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                                 alignItems: 'center',
                                 gap: '4px'
                               }}>
-                                ✓ Mentioned
+                                ✓ Mentioned {p.position && p.position !== '-' ? `(${p.position})` : ''}
                               </span>
                             ) : (
                               <span style={{
@@ -1545,6 +2480,17 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                                 Not Mentioned
                               </span>
                             )}
+
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#6b21a8',
+                              backgroundColor: '#f3e8ff',
+                              padding: '3px 10px',
+                              borderRadius: '16px'
+                            }}>
+                              Nulmeting: {promptBaseline?.mentioned ? (promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : 'Vermeld') : 'Niet vermeld'}
+                            </span>
 
                             <span style={{
                               fontSize: '11px',
@@ -1570,39 +2516,41 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                           </>
                         )}
 
-                        {isEditMode ? (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.id); }}
-                            title="Verwijder prompt"
-                            style={{ padding: '6px', borderRadius: '4px', color: '#ef4444', cursor: 'pointer', background: 'none', border: 'none' }}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={isCrawling}
-                            onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
-                            style={{
-                              padding: '5px 12px',
-                              borderRadius: '6px',
-                              backgroundColor: isCrawling ? '#93c5fd' : '#000000',
-                              color: '#ffffff',
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              cursor: isCrawling ? 'not-allowed' : 'pointer',
-                              border: 'none',
-                              opacity: isCrawling ? 0.8 : 1,
-                              marginLeft: '4px'
-                            }}
-                          >
-                            {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
-                            {isCrawling ? 'Crawling...' : 'Crawl'}
-                          </button>
+                        {!isReadOnly && (
+                          isEditMode ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.id); }}
+                              title="Verwijder prompt"
+                              style={{ padding: '6px', borderRadius: '4px', color: '#ef4444', cursor: 'pointer', background: 'none', border: 'none' }}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isCrawling}
+                              onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
+                              style={{
+                                padding: '5px 12px',
+                                borderRadius: '6px',
+                                backgroundColor: isCrawling ? '#93c5fd' : '#000000',
+                                color: '#ffffff',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                cursor: isCrawling ? 'not-allowed' : 'pointer',
+                                border: 'none',
+                                opacity: isCrawling ? 0.8 : 1,
+                                marginLeft: '4px'
+                              }}
+                            >
+                              {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
+                              {isCrawling ? 'Crawling...' : 'Crawl'}
+                            </button>
+                          )
                         )}
 
                         <div style={{ color: '#9ca3af', marginLeft: '2px', display: 'flex', alignItems: 'center' }}>
@@ -1611,9 +2559,110 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                       </div>
                     </div>
 
-                    {/* LLMRefs Engine Breakdown Rows or Crawling state */}
+                    {/* LLMRefs Engine Breakdown Rows + Per-Prompt History */}
                     {isOpen && (
                       <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
+                        {/* Per-Prompt Nulmeting & Results History Graph */}
+                        <div style={{
+                          margin: '12px 20px',
+                          padding: '16px',
+                          backgroundColor: '#fafafa',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '10px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 800, color: '#111827' }}>
+                                Nulmeting & Resultaten Historie (Prompt)
+                              </span>
+                              <span style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: '10px',
+                                backgroundColor: '#f3e8ff',
+                                color: '#6b21a8'
+                              }}>
+                                Nulmeting ({promptBaseline?.displayDate || promptBaseline?.date}): {promptBaseline?.mentioned ? `Vermeld (${promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : `${promptBaseline.totalMentions || 1}/${promptBaseline.totalModels || 4} AI`})` : 'Niet vermeld'}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                              Huidig: {isMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : `${p.totalMentions || 1}/${p.totalModels || 4} AI`})` : 'Niet vermeld'}
+                            </span>
+                          </div>
+
+                          <div style={{
+                            minHeight: '100px',
+                            display: 'flex',
+                            alignItems: 'flex-end',
+                            gap: '6px',
+                            padding: '10px 8px 6px 8px',
+                            backgroundColor: '#ffffff',
+                            borderRadius: '8px',
+                            border: '1px solid #e5e7eb',
+                            overflowX: 'auto'
+                          }}>
+                            {promptHistory.map((hItem, hIdx) => {
+                              const isBase = hIdx === 0 || !!hItem.isBaseline;
+                              const scoreVal = typeof hItem.overallScore === 'number' && hItem.overallScore > 0
+                                ? hItem.overallScore
+                                : (hItem.mentioned ? 65 : 12);
+                              const barPx = Math.max(14, Math.round((Math.min(100, Math.max(15, scoreVal)) / 100) * 54));
+
+                              return (
+                                <div
+                                  key={hIdx}
+                                  style={{
+                                    flex: '0 0 auto',
+                                    width: '32px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    justifyContent: 'flex-end',
+                                    gap: '3px'
+                                  }}
+                                >
+                                  <span style={{ fontSize: '9px', fontWeight: 800, color: hItem.mentioned ? '#15803d' : '#9ca3af', whiteSpace: 'nowrap' }}>
+                                    {hItem.position && hItem.position !== '-' ? hItem.position : (hItem.mentioned ? '✓' : '✕')}
+                                  </span>
+                                  <div
+                                    title={`${isBase ? 'Nulmeting' : `Meting #${hIdx + 1}`}: ${hItem.displayDate || hItem.date}\nStatus: ${hItem.mentioned ? 'Vermeld' : 'Niet vermeld'}\nPositie: ${hItem.position || '-'}\nModellen: ${hItem.totalMentions ?? (hItem.mentioned ? 1 : 0)}/${hItem.totalModels ?? 4} AI`}
+                                    style={{
+                                      width: '12px',
+                                      height: `${barPx}px`,
+                                      borderRadius: '4px 4px 2px 2px',
+                                      background: isBase
+                                        ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
+                                        : (hItem.mentioned
+                                            ? 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)'
+                                            : '#e5e7eb'),
+                                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                                      cursor: 'pointer'
+                                    }}
+                                  />
+                                  <span style={{ fontSize: '8px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                                    {formatCompactDate(hItem.displayDate || hItem.date)}
+                                  </span>
+                                  <span style={{
+                                    fontSize: '7px',
+                                    fontWeight: 800,
+                                    padding: '1px 3px',
+                                    borderRadius: '3px',
+                                    backgroundColor: isBase ? '#f3e8ff' : '#f3f4f6',
+                                    color: isBase ? '#6b21a8' : '#6b7280',
+                                    lineHeight: 1
+                                  }}>
+                                    {isBase ? 'NUL' : `#${hIdx + 1}`}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
                         {isCrawling && !p.modelMentions ? (
                           <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', backgroundColor: '#f8fafc' }}>
                             <Loader2 size={24} className="spin" style={{ color: '#2563eb' }} />
@@ -1723,7 +2772,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
               })}
             </div>
 
-            {isEditMode && (
+            {!isReadOnly && isEditMode && (
               <div style={{
                 borderTop: '1px dashed #e5e7eb',
                 paddingTop: '16px',
@@ -1836,25 +2885,6 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
           </div>
         )}
 
-        {/* TAB: SHOPPING */}
-        {detailTab === 'shopping' && (
-          <div style={{ fontSize: '13px', color: '#374151' }}>
-            <h4 style={{ fontWeight: 700, color: '#111827' }}>AI Shopping Results</h4>
-            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-              Simulated product recommendations and shopping citation summaries generated for this keyword query.
-            </p>
-          </div>
-        )}
-
-        {/* TAB: SETTINGS */}
-        {detailTab === 'settings' && (
-          <div style={{ fontSize: '13px', color: '#374151' }}>
-            <h4 style={{ fontWeight: 700, color: '#111827' }}>Keyword Config</h4>
-            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-              Change category tag mapping, adjust tracking weights, or alter scan frequency.
-            </p>
-          </div>
-        )}
       </div>
     );
   }
@@ -1877,57 +2907,110 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       {renderPromptLimitAlert()}
 
       {/* Header bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div data-tour="keywords-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
         <div>
-          <h1 style={{
-            fontSize: '28px',
-            fontWeight: 800,
-            color: '#111827',
-            fontFamily: "'Outfit', sans-serif",
-            letterSpacing: '-0.5px'
-          }}>
-            Keywords
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <h1 style={{
+              fontSize: '28px',
+              fontWeight: 800,
+              color: '#111827',
+              fontFamily: "'Outfit', sans-serif",
+              letterSpacing: '-0.5px',
+              margin: 0
+            }}>
+              Keywords
+            </h1>
+            {isReadOnly && (
+              <span style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                padding: '4px 10px',
+                borderRadius: '12px',
+                backgroundColor: '#f3e8ff',
+                color: '#6b21a8',
+                border: '1px solid #d8b4fe'
+              }}>
+                Read-only Klantweergave
+              </span>
+            )}
+          </div>
           <p style={{ color: '#6b7280', fontSize: '13px', marginTop: '4px' }}>
-            Setup your keywords for {activeWorkspace ? activeWorkspace.replace('.nl', '') : 'Saleswizard'} brand visibility tracking.
+            {isReadOnly
+              ? `Live GEO resultaten, nulmeting en AI-zichtbaarheid voor ${activeWorkspace || 'uw merk'}.`
+              : `Setup your keywords for ${activeWorkspace ? activeWorkspace.replace('.nl', '') : 'Saleswizard'} brand visibility tracking.`}
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <span style={{
+            fontSize: '11px',
+            fontWeight: 700,
+            padding: '4px 10px',
+            borderRadius: '12px',
+            backgroundColor: '#f3f4f6',
+            color: '#374151',
+            border: '1px solid #e5e7eb'
+          }}>
+            Pakket: {activePlanName}
+          </span>
           <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
             Prompts: {totalUsedPrompts} / {activeLimit}
           </span>
           <button
             type="button"
-            onClick={() => {
-              setIsAdding(!isAdding);
-            }}
+            onClick={handleExportProjectCsv}
             style={{
-              backgroundColor: '#000000',
-              color: '#ffffff',
-              border: 'none',
+              backgroundColor: '#ffffff',
+              color: '#374151',
+              border: '1px solid #d1d5db',
               borderRadius: '24px',
-              padding: '10px 20px',
-              fontSize: '13px',
+              padding: '9px 16px',
+              fontSize: '12px',
               fontWeight: 700,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-              transition: 'background-color 0.15s ease'
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+            title="Exporteer alle keywords, nulmeting en prompts naar CSV (Excel)"
           >
-            <Plus size={14} strokeWidth={3} />
-            Add Keywords
+            <Download size={13} />
+            Export CSV
           </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsAdding(!isAdding);
+              }}
+              style={{
+                backgroundColor: '#000000',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '24px',
+                padding: '10px 20px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                transition: 'background-color 0.15s ease'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+            >
+              <Plus size={14} strokeWidth={3} />
+              Add Keywords
+            </button>
+          )}
         </div>
       </div>
 
       {/* Add Keywords Form */}
-      {isAdding && (
+      {!isReadOnly && isAdding && (
         <form onSubmit={handleAddKeywords} style={{
           display: 'flex',
           flexDirection: 'column',
@@ -2165,7 +3248,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       </div>
 
       {/* Bulk actions */}
-      {selectedKeywordIds.length > 0 && (
+      {!isReadOnly && selectedKeywordIds.length > 0 && (
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -2222,25 +3305,29 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       )}
 
       {/* Keywords Table */}
-      <div style={{ width: '100%', overflowX: 'auto' }}>
+      <div data-tour="keywords-table" style={{ width: '100%', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-              <th style={{ padding: '12px 16px', width: '40px' }}>
-                <input
-                  type="checkbox"
-                  checked={filteredKeywords.length > 0 && selectedKeywordIds.length === filteredKeywords.length}
-                  onChange={handleSelectAllKeywords}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </th>
+              {!isReadOnly && (
+                <th style={{ padding: '12px 16px', width: '40px' }}>
+                  <input
+                    type="checkbox"
+                    checked={filteredKeywords.length > 0 && selectedKeywordIds.length === filteredKeywords.length}
+                    onChange={handleSelectAllKeywords}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </th>
+              )}
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Het zoekwoord waarop de AI-zoekmachines worden gescand">Keyword</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De organische positie in de traditionele Google.nl zoekresultaten">Rank</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Percentage van de prompts waarin dit merk door AI-modellen wordt genoemd">Share of Voice</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De gemiddelde positie/volgorde waarin het merk wordt genoemd in de AI-antwoorden">Position</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Schatting van het aantal maandelijkse zoekopdrachten in Google Nederland">Search Volume</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De meest genoemde merken in de AI-zoekresultaten voor dit zoekwoord">Top Brands</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren, archiveren of verwijderen">Actions</th>
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren, archiveren of verwijderen">
+                {isReadOnly ? 'Details' : 'Actions'}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -2263,13 +3350,15 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                   onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f0f7ff' : '#f9fafb'}
                   onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f8faff' : 'transparent'}
                 >
-                  <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={selectedKeywordIds.includes(kw.id)}
-                      onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
-                    />
-                  </td>
+                  {!isReadOnly && (
+                    <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedKeywordIds.includes(kw.id)}
+                        onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
+                      />
+                    </td>
+                  )}
                   <td style={{ padding: '16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
@@ -2356,50 +3445,56 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
                   </div>
                 </td>
 
-                <td style={{ padding: '16px' }} onClick={(e) => e.stopPropagation()}>
-                  <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                    <button
-                      type="button"
-                      onClick={(e) => handleRescrapeKeyword(kw.id, e)}
-                      title="Keyword rankings en AI-prompts opnieuw scrapen"
-                      disabled={rescrapingKeywords[kw.id]}
-                      style={{
-                        padding: '6px',
-                        borderRadius: '4px',
-                        border: 'none',
-                        background: 'none',
-                        cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
-                        color: rescrapingKeywords[kw.id] ? '#2563eb' : '#9ca3af',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                      onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#2563eb'; }}
-                      onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#9ca3af'; }}
-                    >
-                      <RotateCw size={14} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleArchiveKeyword(kw)}
-                      title="Archive Keyword"
-                      style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = '#111827'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
-                    >
-                      <Archive size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteKeyword(kw.id)}
-                      title="Delete Keyword"
-                      style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                <td style={{ padding: '16px' }} onClick={(e) => { if (!isReadOnly) e.stopPropagation(); }}>
+                  {isReadOnly ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--brand-primary)', fontSize: '12px', fontWeight: 700 }}>
+                      Bekijken <ChevronRight size={14} />
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => handleRescrapeKeyword(kw.id, e)}
+                        title="Keyword rankings en AI-prompts opnieuw scrapen"
+                        disabled={rescrapingKeywords[kw.id]}
+                        style={{
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: 'none',
+                          background: 'none',
+                          cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
+                          color: rescrapingKeywords[kw.id] ? '#2563eb' : '#9ca3af',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                        onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#2563eb'; }}
+                        onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#9ca3af'; }}
+                      >
+                        <RotateCw size={14} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleArchiveKeyword(kw)}
+                        title="Archive Keyword"
+                        style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#111827'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
+                      >
+                        <Archive size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteKeyword(kw.id)}
+                        title="Delete Keyword"
+                        style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             );
@@ -2409,68 +3504,70 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
       </div>
 
       {/* Collapsible Archived Keywords Accordion */}
-      <div style={{ marginTop: '16px' }}>
-        <button
-          type="button"
-          onClick={() => setIsArchivedOpen(!isArchivedOpen)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            backgroundColor: 'transparent',
-            border: 'none',
-            fontSize: '14px',
-            color: '#4b5563',
-            fontWeight: 600,
-            cursor: 'pointer',
-            padding: '8px 0px'
-          }}
-        >
-          <span>Archived keywords ({archivedKeywords.length})</span>
-          {isArchivedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
+      {!isReadOnly && (
+        <div style={{ marginTop: '16px' }}>
+          <button
+            type="button"
+            onClick={() => setIsArchivedOpen(!isArchivedOpen)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: 'transparent',
+              border: 'none',
+              fontSize: '14px',
+              color: '#4b5563',
+              fontWeight: 600,
+              cursor: 'pointer',
+              padding: '8px 0px'
+            }}
+          >
+            <span>Archived keywords ({archivedKeywords.length})</span>
+            {isArchivedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
 
-        {isArchivedOpen && (
-          archivedKeywords.length > 0 ? (
-            <div style={{ marginTop: '12px', overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
-                <tbody>
-                  {archivedKeywords.map(kw => (
-                    <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '10px 16px' }}><span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>{kw.text}</span></td>
-                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
-                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
-                      <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleRestoreKeyword(kw)}
-                          style={{
-                            fontSize: '11px',
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            backgroundColor: '#f3f4f6',
-                            color: '#111827',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                            border: 'none'
-                          }}
-                        >
-                          Restore
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p style={{ fontSize: '13px', color: '#9ca3af', padding: '12px 0px', fontStyle: 'italic' }}>
-              Geen gearchiveerde keywords voor dit project.
-            </p>
-          )
-        )}
-      </div>
+          {isArchivedOpen && (
+            archivedKeywords.length > 0 ? (
+              <div style={{ marginTop: '12px', overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                  <tbody>
+                    {archivedKeywords.map(kw => (
+                      <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '10px 16px' }}><span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>{kw.text}</span></td>
+                        <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
+                        <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
+                        <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
+                        <td style={{ padding: '10px 16px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleRestoreKeyword(kw)}
+                            style={{
+                              fontSize: '11px',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              backgroundColor: '#f3f4f6',
+                              color: '#111827',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              border: 'none'
+                            }}
+                          >
+                            Restore
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p style={{ fontSize: '13px', color: '#9ca3af', padding: '12px 0px', fontStyle: 'italic' }}>
+                Geen gearchiveerde keywords voor dit project.
+              </p>
+            )
+          )}
+        </div>
+      )}
 
     </div>
   );

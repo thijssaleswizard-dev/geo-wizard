@@ -81,6 +81,7 @@ class ProjectController extends Controller
                 'name' => $proj->name,
                 'email' => $proj->email,
                 'subscription' => $proj->subscription,
+                'promptsLimit' => Project::getPromptLimit($proj->subscription),
                 'visibility_index' => $proj->visibility_index,
                 'setup_status' => $status,
                 'setup_progress' => $progress,
@@ -110,6 +111,17 @@ class ProjectController extends Controller
         }
 
         $hasKeywords = !empty($keywords) && strlen(trim($keywords)) > 0;
+        $maxPrompts = Project::getPromptLimit($subscription);
+        $maxKeywords = (int) floor($maxPrompts / 3);
+
+        if ($hasKeywords) {
+            $rawKeywordsCheck = array_values(array_filter(array_map('trim', explode(',', $keywords))));
+            if (count($rawKeywordsCheck) > $maxKeywords) {
+                return response()->json([
+                    'error' => "Het gekozen pakket ({$subscription}) staat maximaal {$maxKeywords} zoekwoorden ({$maxPrompts} prompts) toe. U heeft er " . count($rawKeywordsCheck) . " opgegeven."
+                ], 400);
+            }
+        }
 
         $project = Project::create([
             'company' => $company,
@@ -127,14 +139,14 @@ class ProjectController extends Controller
             "Project ID: #{$project->id}",
             "Bedrijfsnaam: {$company}",
             "Contactpersoon: {$name} ({$email})",
-            "Pakket: {$subscription}",
+            "Pakket: {$subscription} (Max {$maxPrompts} prompts)",
             "Keywords: " . ($hasKeywords ? $keywords : 'Geen'),
         ]);
 
         $userId = null;
         if (!empty($password)) {
             $klantRole = Role::firstOrCreate(['name' => 'klant']);
-            $user = User::firstOrCreate(
+            $user = User::updateOrCreate(
                 ['email' => $email],
                 [
                     'name' => $name,
@@ -144,6 +156,7 @@ class ProjectController extends Controller
                     'company_name' => $company,
                     'subscription' => $subscription,
                     'addon_prompts' => 0,
+                    'payment_status' => 'paid',
                 ]
             );
             $userId = $user->id;
@@ -172,6 +185,7 @@ class ProjectController extends Controller
                 'name' => $project->name,
                 'email' => $project->email,
                 'subscription' => $project->subscription,
+                'promptsLimit' => $maxPrompts,
                 'promptsCount' => $project->prompts_count,
                 'visibilityIndex' => $project->visibility_index,
                 'setup_status' => $project->setup_status,
@@ -253,6 +267,7 @@ class ProjectController extends Controller
         $name = trim($request->input('name', ''));
         $email = strtolower(trim($request->input('email', '')));
         $subscription = $request->input('subscription');
+        $password = $request->input('password');
 
         if (empty($name) || empty($email)) {
             return response()->json(['error' => 'Projectnaam en e-mailadres zijn verplicht.'], 400);
@@ -264,19 +279,35 @@ class ProjectController extends Controller
         }
 
         $oldEmail = $project->email;
+        $newSubscription = $subscription ?: $project->subscription;
 
         $project->update([
             'name' => $name,
             'email' => $email,
-            'subscription' => $subscription ?: $project->subscription,
+            'subscription' => $newSubscription,
             'updated_at' => now(),
         ]);
 
-        if (!empty($oldEmail)) {
+        if (!empty($password)) {
+            $klantRole = Role::firstOrCreate(['name' => 'klant']);
+            $user = User::updateOrCreate(
+                ['email' => $email],
+                [
+                    'name' => $name,
+                    'password' => Hash::make($password),
+                    'role_id' => $klantRole->id,
+                    'role' => 'klant',
+                    'company_name' => $project->company,
+                    'subscription' => $newSubscription,
+                    'payment_status' => 'paid',
+                ]
+            );
+            $project->users()->syncWithoutDetaching([$user->id]);
+        } elseif (!empty($oldEmail)) {
             User::where('email', $oldEmail)->update([
                 'name' => $name,
                 'email' => $email,
-                'subscription' => $subscription ?: $project->subscription,
+                'subscription' => $newSubscription,
             ]);
         }
 
@@ -289,6 +320,7 @@ class ProjectController extends Controller
                 'name' => $project->name,
                 'email' => $project->email,
                 'subscription' => $project->subscription,
+                'promptsLimit' => Project::getPromptLimit($project->subscription),
                 'promptsCount' => $project->prompts_count,
                 'visibilityIndex' => $project->visibility_index,
             ]

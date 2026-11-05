@@ -497,6 +497,67 @@ class ScraperService
         $totalSourcesCount = count($extractedCitations);
         $overallScore = (int) round(($totalMentionedCount / $totalModelsCount) * 100);
 
+        $mentionedPositions = [];
+        foreach ($modelMentions as $mItem) {
+            if (!empty($mItem['mentioned']) && !empty($mItem['position'])) {
+                $mentionedPositions[] = (float) $mItem['position'];
+            }
+        }
+        $calculatedPosition = !empty($mentionedPositions)
+            ? round(array_sum($mentionedPositions) / count($mentionedPositions), 1)
+            : ($modelMentions['chatgpt']['position'] ?? ($modelMentions['gemini']['position'] ?? 1));
+
+        // Build / preserve Prompt History (Nulmeting + subsequent scans)
+        $promptHistory = [];
+        if ($promptId) {
+            try {
+                $existingPrompt = Prompt::find($promptId);
+                if ($existingPrompt && !empty($existingPrompt->results)) {
+                    $oldRes = is_array($existingPrompt->results) ? $existingPrompt->results : json_decode($existingPrompt->results, true);
+                    if (is_array($oldRes)) {
+                        if (!empty($oldRes['history']) && is_array($oldRes['history'])) {
+                            $promptHistory = $oldRes['history'];
+                        } elseif (!empty($oldRes['modelMentions'])) {
+                            $baseDate = $existingPrompt->created_at ?: now();
+                            $oldMentions = $oldRes['totalMentions'] ?? ($existingPrompt->brand_mentioned ? 1 : 0);
+                            $oldModels = $oldRes['totalModels'] ?? $totalModelsCount;
+                            $promptHistory[] = [
+                                'date' => $baseDate->format('Y-m-d'),
+                                'displayDate' => $baseDate->format('d M Y'),
+                                'time' => $baseDate->format('H:i'),
+                                'isBaseline' => true,
+                                'label' => 'Nulmeting',
+                                'mentioned' => $oldMentions > 0,
+                                'position' => $oldMentions > 0 ? (float) ($oldRes['position'] ?? $existingPrompt->position ?? 1) : null,
+                                'totalMentions' => (int) $oldMentions,
+                                'totalModels' => (int) $oldModels,
+                                'overallScore' => (int) ($oldRes['overallScore'] ?? round(($oldMentions / max(1, $oldModels)) * 100)),
+                            ];
+                        }
+                    }
+                }
+            } catch (\Exception $histErr) {
+                // Ignore history read errors
+            }
+        }
+
+        $isFirstPromptScan = empty($promptHistory);
+        $promptHistory[] = [
+            'date' => now()->format('Y-m-d'),
+            'displayDate' => now()->format('d M Y'),
+            'time' => now()->format('H:i'),
+            'isBaseline' => $isFirstPromptScan,
+            'label' => $isFirstPromptScan ? 'Nulmeting' : now()->format('d M H:i'),
+            'mentioned' => $totalMentionedCount > 0,
+            'position' => $totalMentionedCount > 0 ? $calculatedPosition : null,
+            'totalMentions' => $totalMentionedCount,
+            'totalModels' => $totalModelsCount,
+            'overallScore' => $overallScore,
+        ];
+        if (count($promptHistory) > 15) {
+            $promptHistory = array_merge([$promptHistory[0]], array_slice($promptHistory, -14));
+        }
+
         // Persist citations to DB linked to project_id and prompt_id
         $crawlLogs[] = "[Hybrid Engine] Persisting evaluation & citations into MySQL database for project_id #" . ($projectId ?? 'N/A') . "...";
         try {
@@ -527,6 +588,7 @@ class ScraperService
             'company' => $companyName,
             'companyKey' => $companyKey,
             'prompt' => $promptText,
+            'position' => $calculatedPosition,
             'totalMentions' => $totalMentionedCount,
             'totalModels' => $totalModelsCount,
             'totalBrandsCount' => $totalBrandsCount,
@@ -536,6 +598,7 @@ class ScraperService
             'sources' => $extractedCitations,
             'citations' => $extractedCitations,
             'modelMentions' => $modelMentions,
+            'history' => $promptHistory,
             'logs' => $crawlLogs,
         ];
     }

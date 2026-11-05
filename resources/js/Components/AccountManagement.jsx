@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Award, Check, Sparkles, Zap, ShieldCheck, HelpCircle, FileText, Download, Loader2 } from 'lucide-react';
 
-export default function AccountManagement({ currentUser, onUpdateSubscription, onUpdateAddonPrompts }) {
+export default function AccountManagement({ currentUser, activeClient, onUpdateSubscription, onUpdateAddonPrompts }) {
+  const isReadOnly = currentUser?.role === 'klant';
   const plans = [
     {
       id: 'AI Starter',
@@ -77,7 +78,15 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
     { count: 50, price: 75, label: '+50 Extra Prompts' }
   ];
 
-  const currentPlan = plans.find(p => p.id === currentUser.subscription) || plans[0];
+  const resolvePlan = (subStr) => {
+    const s = (subStr || 'AI Pro').toLowerCase();
+    if (s.includes('starter') || s.includes('lite')) return plans[0];
+    if (s.includes('enterprise') || s.includes('top')) return plans[2];
+    return plans[1];
+  };
+
+  const activeSubString = activeClient?.subscription || currentUser?.subscription || 'AI Pro';
+  const currentPlan = resolvePlan(activeSubString);
   const currentAddonPrompts = currentUser.addonPrompts || 0;
   const currentAddon = addons.find(a => a.count === currentAddonPrompts) || addons[0];
 
@@ -142,7 +151,7 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
               color: 'var(--brand-primary)',
               fontFamily: "'Outfit', sans-serif"
             }}>
-              {currentUser.subscription}
+              {currentPlan.name}
             </span>
             {currentAddonPrompts > 0 && (
               <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--brand-accent)' }}>
@@ -172,6 +181,7 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
       </div>
 
       {/* Extra Prompts Add-on Bundles Selection */}
+      {!isReadOnly && (
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', border: '1px solid var(--brand-light-border)' }}>
         <div>
           <h3 style={{ fontSize: '16px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px', fontFamily: "'Outfit', sans-serif" }}>
@@ -228,6 +238,7 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
           })}
         </div>
       </div>
+      )}
 
       {/* Subscription Pricing Grid */}
       <div>
@@ -242,7 +253,7 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
           alignItems: 'stretch'
         }}>
           {plans.map((plan) => {
-            const isActive = currentUser.subscription === plan.id;
+            const isActive = currentPlan.id === plan.id;
             
             return (
               <div
@@ -292,28 +303,24 @@ export default function AccountManagement({ currentUser, onUpdateSubscription, o
 
                 {/* Action button */}
                 <button
-                  onClick={() => onUpdateSubscription(plan.id)}
-                  disabled={isActive}
+                  onClick={() => {
+                    if (!isReadOnly) onUpdateSubscription(plan.id);
+                  }}
+                  disabled={isActive || isReadOnly}
                   style={{
                     width: '100%',
                     padding: '10px',
                     borderRadius: 'var(--border-radius-sm)',
                     fontSize: '13px',
                     fontWeight: 700,
-                    backgroundColor: isActive ? 'var(--status-positive-bg)' : 'var(--brand-primary)',
-                    color: isActive ? 'var(--status-positive-text)' : 'white',
+                    backgroundColor: isActive ? 'var(--status-positive-bg)' : (isReadOnly ? '#f3f4f6' : 'var(--brand-primary)'),
+                    color: isActive ? 'var(--status-positive-text)' : (isReadOnly ? '#6b7280' : 'white'),
                     border: isActive ? '1px solid var(--status-positive-text)' : 'none',
                     textAlign: 'center',
-                    cursor: isActive ? 'default' : 'pointer'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'var(--brand-primary-hover)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'var(--brand-primary)';
+                    cursor: (isActive || isReadOnly) ? 'default' : 'pointer'
                   }}
                 >
-                  {isActive ? 'Actief abonnement' : 'Kies dit abonnement'}
+                  {isActive ? 'Actief abonnement' : (isReadOnly ? 'Neem contact op voor upgrade' : 'Kies dit abonnement')}
                 </button>
 
                 {/* Features */}

@@ -96,7 +96,15 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [editClient, setEditClient] = useState(null);
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
   const [editSubscription, setEditSubscription] = useState('AI Pro');
+
+  const getMaxKeywordsForPlan = (sub) => {
+    const s = String(sub || 'AI Pro').toLowerCase();
+    if (s.includes('starter') || s.includes('lite')) return 5;
+    if (s.includes('enterprise') || s.includes('top')) return 20;
+    return 10;
+  };
 
   // API Monitoring Modal state
   const [showMonitorModal, setShowMonitorModal] = useState(false);
@@ -182,7 +190,9 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
     setEditClient(client);
     setEditName(client.name || '');
     setEditEmail(client.email || '');
-    setEditSubscription(client.subscription || 'AI Pro');
+    setEditPassword('');
+    const normalizedSub = client.subscription === 'AI Lite' ? 'AI Starter' : (client.subscription || 'AI Pro');
+    setEditSubscription(normalizedSub);
     setError('');
     setShowEditModal(true);
   };
@@ -203,7 +213,8 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
         body: JSON.stringify({
           name: editName,
           email: editEmail,
-          subscription: editSubscription
+          subscription: editSubscription,
+          password: editPassword
         })
       });
 
@@ -252,6 +263,13 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
       setCompany(cleanedCompany);
       
       setStep(2);
+      return;
+    }
+
+    const enteredKeywords = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
+    const maxKws = getMaxKeywordsForPlan(subscription);
+    if (enteredKeywords.length > maxKws) {
+      setError(`Met het gekozen pakket (${subscription}) kunt u maximaal ${maxKws} keywords (${maxKws * 3} prompts) toevoegen. U heeft er nu ${enteredKeywords.length} ingevuld.`);
       return;
     }
 
@@ -326,7 +344,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div data-tour="projects-create-btn" style={{ display: 'flex', gap: '10px' }}>
             <button
               onClick={() => { fetchApiMonitorData(); setShowMonitorModal(true); }}
               style={{
@@ -486,7 +504,18 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     </span>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '3px 10px',
+                      borderRadius: '12px',
+                      backgroundColor: '#f3f4f6',
+                      color: '#4b5563',
+                      border: '1px solid #e5e7eb'
+                    }}>
+                      {client.subscription === 'AI Lite' ? 'AI Starter' : (client.subscription || 'AI Pro')}
+                    </span>
                     <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
                       {client.keywordsCount || 0} keywords
                     </span>
@@ -696,9 +725,9 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                       onChange={(e) => setSubscription(e.target.value)}
                       disabled={loading}
                     >
-                      <option value="AI Starter">AI Starter (€195/mnd)</option>
-                      <option value="AI Pro">AI Pro (€350/mnd)</option>
-                      <option value="AI Enterprise">AI Enterprise (€700/mnd)</option>
+                      <option value="AI Starter">AI Starter — max. 5 keywords / 15 prompts (€195/mnd)</option>
+                      <option value="AI Pro">AI Pro — max. 10 keywords / 30 prompts (€350/mnd)</option>
+                      <option value="AI Enterprise">AI Enterprise — max. 20 keywords / 60 prompts (€700/mnd)</option>
                     </select>
                   </div>
 
@@ -814,6 +843,29 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                         fontSize: '13px'
                       }}
                     />
+                    {(() => {
+                      const enteredKws = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
+                      const maxKws = getMaxKeywordsForPlan(subscription);
+                      const exceeded = enteredKws.length > maxKws;
+                      return (
+                        <div style={{
+                          marginTop: '6px',
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          backgroundColor: exceeded ? '#fef2f2' : '#f8fafc',
+                          border: `1px solid ${exceeded ? '#fecaca' : '#e2e8f0'}`,
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          color: exceeded ? '#dc2626' : '#475569',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}>
+                          <span>Pakket: <strong>{subscription}</strong> (max. {maxKws} keywords / {maxKws * 3} prompts)</span>
+                          <span>Ingevuld: <strong>{enteredKws.length} / {maxKws}</strong> keywords</span>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div style={{ display: 'flex', gap: '12px', marginTop: '12px', justifyContent: 'flex-end' }}>
@@ -1049,7 +1101,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
-                  E-mailadres
+                  E-mailadres (Klantlogin)
                 </label>
                 <input
                   type="email"
@@ -1069,7 +1121,26 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
-                  Abonnement
+                  Klant Wachtwoord instellen / wijzigen (Optioneel - Read-only klanttoegang)
+                </label>
+                <input
+                  type="password"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  placeholder="Laat leeg om huidig wachtwoord te behouden"
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: '30px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '13px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+                  Abonnement & Limiet
                 </label>
                 <select
                   value={editSubscription}
@@ -1083,9 +1154,9 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     backgroundColor: '#ffffff'
                   }}
                 >
-                  <option value="AI Lite">AI Lite</option>
-                  <option value="AI Pro">AI Pro</option>
-                  <option value="AI Enterprise">AI Enterprise</option>
+                  <option value="AI Starter">AI Starter (max. 5 keywords / 15 prompts)</option>
+                  <option value="AI Pro">AI Pro (max. 10 keywords / 30 prompts)</option>
+                  <option value="AI Enterprise">AI Enterprise (max. 20 keywords / 60 prompts)</option>
                 </select>
               </div>
 
