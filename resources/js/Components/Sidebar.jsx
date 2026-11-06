@@ -193,8 +193,8 @@ export default function Sidebar({
             <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               {(currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? 'Actief Project' : 'Uw Project'}
             </div>
-            <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeWorkspace ? 'white' : 'rgba(255,255,255,0.5)' }}>
-              {activeWorkspace || 'Select a project'}
+            <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeWorkspace ? 'white' : 'rgba(255,255,255,0.8)' }}>
+              {activeWorkspace || (currentUser.role === 'medewerker' ? 'Alle Projecten (Totaal)' : 'Select a project')}
             </div>
           </div>
           {(currentUser.role === 'medewerker' || (clients && clients.length > 1)) && (
@@ -217,6 +217,45 @@ export default function Sidebar({
             marginTop: '4px',
             overflow: 'hidden'
           }}>
+            {currentUser.role === 'medewerker' && (
+              <button
+                onClick={() => {
+                  onWorkspaceChange(null);
+                  setIsWorkspaceOpen(false);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  textAlign: 'left',
+                  fontSize: '13px',
+                  fontWeight: !activeWorkspace ? 700 : 500,
+                  backgroundColor: !activeWorkspace ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  color: !activeWorkspace ? '#c084fc' : 'rgba(255,255,255,0.85)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = !activeWorkspace ? 'rgba(255,255,255,0.08)' : 'transparent'}
+              >
+                <div style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '4px',
+                  backgroundColor: 'rgba(192, 132, 252, 0.2)',
+                  color: '#c084fc',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '11px',
+                  fontWeight: 800
+                }}>
+                  🌐
+                </div>
+                <span>Alle Projecten (Totaal overzicht)</span>
+              </button>
+            )}
             {clients.map((client) => (
               <button
                 key={client.company}
@@ -300,6 +339,30 @@ export default function Sidebar({
             >
               <LayoutDashboard size={16} style={{ color: '#c084fc' }} />
               Projects
+            </button>
+            <button
+              onClick={() => setActiveTab('llm_costs')}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: 'var(--border-radius-sm)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                fontSize: '13px',
+                fontWeight: activeTab === 'llm_costs' ? 600 : 400,
+                color: activeTab === 'llm_costs' ? '#f8fafc' : 'rgba(255,255,255,0.85)',
+                backgroundColor: activeTab === 'llm_costs' ? 'rgba(139, 92, 246, 0.2)' : 'transparent',
+                borderLeft: activeTab === 'llm_costs' ? '3px solid #a78bfa' : '3px solid transparent',
+                textAlign: 'left',
+                borderTop: 'none',
+                borderRight: 'none',
+                borderBottom: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Coins size={16} style={{ color: '#fbbf24' }} />
+              Totale LLM Kosten
             </button>
           </div>
         ) : (

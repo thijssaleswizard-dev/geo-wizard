@@ -4,12 +4,24 @@ import {
   Download, Search, CheckCircle2, Layers, Plus, X, CreditCard
 } from 'lucide-react';
 
-export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines }) {
+export default function LlmCosts({
+  activeWorkspace,
+  clients = [],
+  currentUser,
+  enabledEngines,
+  onSelectWorkspace
+}) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState('all');
+  const [selectedProject, setSelectedProject] = useState(activeWorkspace || 'all');
   const [selectedEngineFilter, setSelectedEngineFilter] = useState('all');
   const [searchLogQuery, setSearchLogQuery] = useState('');
+
+  // Synchronize when activeWorkspace changes externally
+  useEffect(() => {
+    setSelectedProject(activeWorkspace || 'all');
+  }, [activeWorkspace]);
 
   // Modal state for manual invoice / payment entry
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -33,12 +45,20 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     return '$ ' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
-  const fetchCostData = async (selectedPeriod = period) => {
+  const fetchCostData = async (selectedPeriod = period, projectToFetch = selectedProject) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedPeriod) params.append('period', selectedPeriod);
-      if (activeWorkspace) params.append('company', activeWorkspace);
+      if (projectToFetch && projectToFetch !== 'all') {
+        params.append('company', projectToFetch);
+      }
+      if (currentUser?.role) {
+        params.append('role', currentUser.role);
+      }
+      if (currentUser?.id) {
+        params.append('userId', currentUser.id);
+      }
 
       const res = await fetch(`/api/llm-costs?${params.toString()}`);
       const json = await res.json();
@@ -53,8 +73,15 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
   };
 
   useEffect(() => {
-    fetchCostData(period);
-  }, [period, activeWorkspace]);
+    fetchCostData(period, selectedProject);
+  }, [period, selectedProject]);
+
+  const handleProjectFilterChange = (newProject) => {
+    setSelectedProject(newProject);
+    if (onSelectWorkspace) {
+      onSelectWorkspace(newProject === 'all' ? null : newProject);
+    }
+  };
 
   const handleSyncAiStudio = async () => {
     setSyncingStudio(true);
@@ -177,6 +204,54 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
     return matchesEngine && matchesSearch;
   });
 
+  const clientOptions = React.useMemo(() => {
+    const map = new Map();
+    (clients || []).forEach(c => {
+      const name = c.company || c.name;
+      if (name) map.set(name.toLowerCase(), name);
+    });
+    (byProject || []).forEach(p => {
+      if (p.company && p.company !== 'Algemeen / Systeem' && !map.has(p.company.toLowerCase())) {
+        map.set(p.company.toLowerCase(), p.company);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }, [clients, byProject]);
+
+  if (currentUser?.role === 'klant') {
+    return (
+      <div style={{
+        padding: '60px 24px',
+        textAlign: 'center',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '60vh',
+        gap: '12px'
+      }}>
+        <div style={{
+          width: '48px',
+          height: '48px',
+          borderRadius: '50%',
+          backgroundColor: '#fee2e2',
+          color: '#dc2626',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <X size={24} />
+        </div>
+        <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
+          Geen toegang
+        </h3>
+        <p style={{ fontSize: '13px', color: 'var(--text-secondary, #475569)', maxWidth: '420px', lineHeight: 1.5 }}>
+          Inkoop- en LLM-kosten zijn vertrouwelijk en uitsluitend inzichtelijk voor medewerkers en beheerders.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="fade-in" style={{ padding: '32px 40px', display: 'flex', flexDirection: 'column', gap: '24px', backgroundColor: '#ffffff', minHeight: '100%' }}>
 
@@ -189,16 +264,73 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         gap: '16px'
       }}>
         <div>
-          <h2 style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)', margin: 0 }}>
-            LLM Kosten & Verbruik
-          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2 style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)', margin: 0 }}>
+              LLM Kosten & Verbruik
+            </h2>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '3px 8px',
+              borderRadius: '12px',
+              backgroundColor: '#fee2e2',
+              color: '#b91c1c',
+              border: '1px solid #fecaca',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}>
+              🔒 Alleen Admin
+            </span>
+          </div>
           <p style={{ color: 'var(--text-secondary, #475569)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
-            Overzicht van API-kosten, tokenverbruik en Google AI Studio transacties.
+            {selectedProject === 'all'
+              ? 'Totaaloverzicht van alle API-inkoopkosten, tokenverbruik en facturen over alle projecten heen.'
+              : `Gefilterd overzicht van API-kosten en tokenverbruik voor project "${selectedProject}".`}
           </p>
         </div>
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+
+          {/* Project Filter Select */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            backgroundColor: 'var(--bg-app, #f8fafc)',
+            padding: '3px 8px',
+            borderRadius: '8px',
+            border: '1px solid var(--border-medium, #e2e8f0)'
+          }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary, #475569)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Project:
+            </span>
+            <select
+              value={selectedProject}
+              onChange={(e) => handleProjectFilterChange(e.target.value)}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: '1px solid var(--border-medium, #e2e8f0)',
+                backgroundColor: selectedProject === 'all' ? 'var(--brand-primary, #440099)' : '#ffffff',
+                color: selectedProject === 'all' ? '#ffffff' : 'var(--text-primary, #0f172a)',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                outline: 'none'
+              }}
+            >
+              <option value="all" style={{ backgroundColor: '#ffffff', color: '#0f172a' }}>
+                🌐 Alle Projecten (Totale Kosten)
+              </option>
+              {clientOptions.map((comp) => (
+                <option key={comp} value={comp} style={{ backgroundColor: '#ffffff', color: '#0f172a' }}>
+                  📁 {comp}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* Period selector */}
           <div style={{
@@ -298,7 +430,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
           </button>
 
           <button
-            onClick={() => fetchCostData()}
+            onClick={() => fetchCostData(period, selectedProject)}
             disabled={loading}
             style={{
               padding: '7px 14px',
@@ -320,6 +452,73 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
         </div>
       </div>
 
+      {/* Active Scope Banner */}
+      <div style={{
+        padding: '12px 18px',
+        borderRadius: '10px',
+        backgroundColor: selectedProject === 'all' ? '#f5f0ff' : '#eff6ff',
+        border: selectedProject === 'all' ? '1px solid #d8b4fe' : '1px solid #bfdbfe',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '12px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{
+            width: '28px',
+            height: '28px',
+            borderRadius: '6px',
+            backgroundColor: selectedProject === 'all' ? 'var(--brand-primary, #440099)' : '#2563eb',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '13px',
+            fontWeight: 800
+          }}>
+            {selectedProject === 'all' ? 'Σ' : '📁'}
+          </div>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 800, color: selectedProject === 'all' ? 'var(--brand-primary, #440099)' : '#1e40af' }}>
+              {selectedProject === 'all'
+                ? 'Totale LLM Inkoopkosten — Alle projecten gecombineerd'
+                : `Gefilterd op project: ${selectedProject}`}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary, #475569)' }}>
+              {selectedProject === 'all'
+                ? `Inclusief alle ${clientOptions.length} projecten, directe facturen en live API-scans.`
+                : 'U bekijkt uitsluitend de API-aanroepen en tokens voor dit specifieke project.'}
+            </div>
+          </div>
+        </div>
+
+        {selectedProject !== 'all' ? (
+          <button
+            onClick={() => handleProjectFilterChange('all')}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '6px',
+              border: '1px solid #93c5fd',
+              backgroundColor: '#ffffff',
+              color: '#1d4ed8',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            ← Bekijk Totale Kosten (Alle Projecten)
+          </button>
+        ) : (
+          <span style={{ fontSize: '11px', color: '#6b21a8', fontWeight: 600 }}>
+            Tip: Klik in de tabel "Kosten per Project" op een project om direct in te zoomen.
+          </span>
+        )}
+      </div>
+
       {/* KPI Cards Grid (Eenvoudig, wit, zonder felle gradiënten) */}
       <div style={{
         display: 'grid',
@@ -338,7 +537,7 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
           gap: '6px'
         }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Totale LLM Kosten
+            {selectedProject === 'all' ? 'Totale LLM Kosten (Alle Projecten)' : `LLM Kosten (${selectedProject})`}
           </span>
           <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
             {formatEur(summary.totalCostEur)}
@@ -485,6 +684,9 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
             <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
               Kosten per Project
             </span>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', fontWeight: 600 }}>
+              Klik op een project om in te zoomen
+            </span>
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -505,22 +707,37 @@ export default function LlmCosts({ activeWorkspace, currentUser, enabledEngines 
                     </td>
                   </tr>
                 ) : (
-                  byProject.map((proj, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-light, #f1f5f9)' }}>
-                      <td style={{ padding: '10px 4px', fontWeight: 600, color: 'var(--text-primary, #0f172a)' }}>
-                        {proj.company}
-                      </td>
-                      <td style={{ padding: '10px 4px', textAlign: 'center', color: 'var(--text-secondary, #475569)' }}>
-                        {proj.requests}
-                      </td>
-                      <td style={{ padding: '10px 4px', textAlign: 'right', color: 'var(--text-secondary, #475569)', fontFamily: 'monospace' }}>
-                        {Number(proj.tokens).toLocaleString('nl-NL')}
-                      </td>
-                      <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                        {formatEur(proj.costEur)}
-                      </td>
-                    </tr>
-                  ))
+                  byProject.map((proj, idx) => {
+                    const isSelected = selectedProject.toLowerCase() === (proj.company || '').toLowerCase();
+                    return (
+                      <tr
+                        key={idx}
+                        onClick={() => handleProjectFilterChange(proj.company)}
+                        style={{
+                          borderBottom: '1px solid var(--border-light, #f1f5f9)',
+                          cursor: 'pointer',
+                          backgroundColor: isSelected ? 'rgba(68, 0, 153, 0.05)' : 'transparent',
+                          transition: 'background-color 0.15s ease'
+                        }}
+                        onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-app, #f8fafc)'; }}
+                        onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                        title={`Filter alle weergaven op ${proj.company}`}
+                      >
+                        <td style={{ padding: '10px 4px', fontWeight: 600, color: isSelected ? 'var(--brand-primary, #440099)' : 'var(--text-primary, #0f172a)' }}>
+                          {isSelected ? '▶ ' : ''}📁 {proj.company}
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'center', color: 'var(--text-secondary, #475569)' }}>
+                          {proj.requests}
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'right', color: 'var(--text-secondary, #475569)', fontFamily: 'monospace' }}>
+                          {Number(proj.tokens).toLocaleString('nl-NL')}
+                        </td>
+                        <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+                          {formatEur(proj.costEur)}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

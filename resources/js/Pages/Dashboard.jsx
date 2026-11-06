@@ -309,7 +309,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
     }
     if (activeTab === 'llm_costs') {
-      return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} currentUser={currentUser} enabledEngines={enabledEngines} />;
+      return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} clients={clients} currentUser={currentUser} enabledEngines={enabledEngines} onSelectWorkspace={setActiveWorkspace} />;
     }
     if (currentUser.role === 'medewerker' && !activeWorkspace) {
       return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
@@ -330,7 +330,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       case 'audit_tools':
         return <AuditTools key={activeWorkspace} activeWorkspace={activeWorkspace} />;
       case 'llm_costs':
-        return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} currentUser={currentUser} enabledEngines={enabledEngines} />;
+        return <LlmCosts key={activeWorkspace || 'all'} activeWorkspace={activeWorkspace} clients={clients} currentUser={currentUser} enabledEngines={enabledEngines} onSelectWorkspace={setActiveWorkspace} />;
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} activeClient={activeClient} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':

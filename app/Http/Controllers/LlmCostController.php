@@ -10,10 +10,40 @@ use Illuminate\Http\Request;
 class LlmCostController extends Controller
 {
     /**
+     * Authorize that only administrators / medewerkers can view or manage LLM costs.
+     */
+    protected function authorizeMedewerker(Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+        $role = $request->query('role') ?? $request->input('role') ?? ($user?->role);
+        $userId = $request->query('userId') ?? $request->input('userId') ?? ($user?->id);
+
+        if ($userId && !$role) {
+            $dbUser = \App\Models\User::find($userId);
+            if ($dbUser) {
+                $role = $dbUser->role;
+            }
+        }
+
+        if ($role === 'klant' || ($user && $user->role === 'klant')) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Geen toegang. LLM- en inkoopkosten zijn uitsluitend inzichtelijk voor medewerkers en beheerders.'
+            ], 403);
+        }
+
+        return null;
+    }
+
+    /**
      * Get LLM usage and cost analytics breakdown.
      */
     public function index(Request $request): JsonResponse
     {
+        if ($deny = $this->authorizeMedewerker($request)) {
+            return $deny;
+        }
+
         // Automatically ensure Google AI Studio billing data is synchronized
         LlmCostService::syncGoogleAiStudioBilling();
 
@@ -48,6 +78,10 @@ class LlmCostController extends Controller
      */
     public function storeInvoice(Request $request): JsonResponse
     {
+        if ($deny = $this->authorizeMedewerker($request)) {
+            return $deny;
+        }
+
         $validated = $request->validate([
             'engine' => 'required|string',
             'amount_eur' => 'required|numeric|min:0.01',
@@ -76,8 +110,12 @@ class LlmCostController extends Controller
     /**
      * Force synchronize Google AI Studio statement charges (€250,00).
      */
-    public function syncAiStudio(): JsonResponse
+    public function syncAiStudio(Request $request): JsonResponse
     {
+        if ($deny = $this->authorizeMedewerker($request)) {
+            return $deny;
+        }
+
         LlmCostService::syncGoogleAiStudioBilling(true);
 
         return response()->json([

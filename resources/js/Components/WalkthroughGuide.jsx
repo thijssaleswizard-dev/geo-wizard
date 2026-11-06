@@ -628,8 +628,8 @@ export default function WalkthroughGuide({
                     {
                       title: 'Metingen & Crawlen',
                       desc: isKlant
-                        ? 'De Nulmeting is bij de start vastgelegd. Periodieke scans houden uw grafiek en merkaanbevelingen up-to-date.'
-                        : 'De eerste scan is de Nulmeting. Handmatig op "Opnieuw Scrapen" klikken telt niet mee voor de 15/30/60 limiet, maar kost wel AI-tegoed.'
+                        ? 'De Nulmeting is bij de start vastgelegd. Dagelijkse automatische scans houden uw grafiek en merkaanbevelingen actueel.'
+                        : 'De eerste scan is de Nulmeting. Handmatig op "Opnieuw Scrapen" klikken kost AI-tegoed. Afspraak: scan alleen handmatig opnieuw bij de status "Mislukt". Wijzigingen op de website worden vanzelf meegenomen in de eerstvolgende dagelijkse scan.'
                     },
                     {
                       title: 'Excel / CSV Rapportage',

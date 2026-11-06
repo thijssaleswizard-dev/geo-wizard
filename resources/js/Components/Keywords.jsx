@@ -1356,7 +1356,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 type="button"
                 onClick={(e) => handleRescrapeKeyword(kw.id, e)}
                 disabled={rescrapingKeywords[kw.id]}
-                title="Rankings live opnieuw crawlen en alle gekoppelde AI-prompts opnieuw scannen"
+                title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
                 style={{
                   padding: '6px 14px',
                   borderRadius: '20px',
@@ -3267,6 +3267,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             <button
               type="button"
               onClick={handleBulkRescrapeKeywords}
+              title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
               style={{
                 padding: '6px 14px',
                 borderRadius: '20px',
