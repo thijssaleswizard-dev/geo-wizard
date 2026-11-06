@@ -78,8 +78,7 @@ export default function Sidebar({
   const getAdminItems = () => {
     if (currentUser.role === 'medewerker') {
       return [
-        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard },
-        { id: 'llm_costs', label: 'LLM Kosten', icon: Coins }
+        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard }
       ];
     }
     return [

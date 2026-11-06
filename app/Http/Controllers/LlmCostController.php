@@ -36,7 +36,7 @@ class LlmCostController extends Controller
     }
 
     /**
-     * Get LLM usage and cost analytics breakdown.
+     * Get generic LLM usage and total tool cost analytics (global tool overview).
      */
     public function index(Request $request): JsonResponse
     {
@@ -47,28 +47,10 @@ class LlmCostController extends Controller
         // Automatically ensure Google AI Studio billing data is synchronized
         LlmCostService::syncGoogleAiStudioBilling();
 
-        $projectId = $request->query('project_id');
-        $company = $request->query('company');
         $period = $request->query('period', 'all');
 
-        if (!$projectId && $company) {
-            $decoded = trim(urldecode($company));
-            $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
-
-            $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
-                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
-                ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
-                ->first();
-
-            if ($project) {
-                $projectId = $project->id;
-            }
-        }
-
-        $analytics = LlmCostService::getSummary(
-            $projectId ? (int) $projectId : null,
-            $period
-        );
+        // Always calculate generic/global tool costs across all LLM engines & invoices
+        $analytics = LlmCostService::getSummary(null, $period);
 
         return response()->json(array_merge(['success' => true], $analytics));
     }

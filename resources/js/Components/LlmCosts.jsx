@@ -1,27 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import {
   Coins, Receipt, Cpu, Activity, TrendingUp, RefreshCw,
-  Download, Search, CheckCircle2, Layers, Plus, X, CreditCard
+  Download, Search, CheckCircle2, Layers, Plus, X, CreditCard, ShieldCheck
 } from 'lucide-react';
 
-export default function LlmCosts({
-  activeWorkspace,
-  clients = [],
-  currentUser,
-  enabledEngines,
-  onSelectWorkspace
-}) {
+export default function LlmCosts({ currentUser, enabledEngines }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState('all');
-  const [selectedProject, setSelectedProject] = useState(activeWorkspace || 'all');
   const [selectedEngineFilter, setSelectedEngineFilter] = useState('all');
   const [searchLogQuery, setSearchLogQuery] = useState('');
-
-  // Synchronize when activeWorkspace changes externally
-  useEffect(() => {
-    setSelectedProject(activeWorkspace || 'all');
-  }, [activeWorkspace]);
 
   // Modal state for manual invoice / payment entry
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -45,20 +33,14 @@ export default function LlmCosts({
     return '$ ' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
-  const fetchCostData = async (selectedPeriod = period, projectToFetch = selectedProject) => {
+  // Always fetch generic tool-wide costs
+  const fetchCostData = async (selectedPeriod = period) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedPeriod) params.append('period', selectedPeriod);
-      if (projectToFetch && projectToFetch !== 'all') {
-        params.append('company', projectToFetch);
-      }
-      if (currentUser?.role) {
-        params.append('role', currentUser.role);
-      }
-      if (currentUser?.id) {
-        params.append('userId', currentUser.id);
-      }
+      if (currentUser?.role) params.append('role', currentUser.role);
+      if (currentUser?.id) params.append('userId', currentUser.id);
 
       const res = await fetch(`/api/llm-costs?${params.toString()}`);
       const json = await res.json();
@@ -73,15 +55,8 @@ export default function LlmCosts({
   };
 
   useEffect(() => {
-    fetchCostData(period, selectedProject);
-  }, [period, selectedProject]);
-
-  const handleProjectFilterChange = (newProject) => {
-    setSelectedProject(newProject);
-    if (onSelectWorkspace) {
-      onSelectWorkspace(newProject === 'all' ? null : newProject);
-    }
-  };
+    fetchCostData(period);
+  }, [period]);
 
   const handleSyncAiStudio = async () => {
     setSyncingStudio(true);
@@ -146,13 +121,13 @@ export default function LlmCosts({
   const handleExportCsv = () => {
     if (!data?.recentLogs || data.recentLogs.length === 0) return;
 
-    const headers = ['ID', 'Tijdstip', 'Engine', 'Model', 'Project', 'Operatie', 'Factuur Referentie', 'Input Tokens', 'Output Tokens', 'Totaal Tokens', 'Kosten EUR', 'Kosten USD', 'Latency', 'Status'];
+    const headers = ['ID', 'Tijdstip', 'Engine', 'Model', 'Bron / Project', 'Operatie', 'Factuur Referentie', 'Input Tokens', 'Output Tokens', 'Totaal Tokens', 'Kosten EUR', 'Kosten USD', 'Latency', 'Status'];
     const rows = data.recentLogs.map(l => [
       l.id,
       `"${l.timestamp || ''}"`,
       `"${l.engineLabel || l.engine}"`,
       `"${l.model}"`,
-      `"${l.projectName || ''}"`,
+      `"${l.projectName || 'Generiek / Tool'}"`,
       `"${l.operation}"`,
       `"${l.invoiceRef || ''}"`,
       l.inputTokens,
@@ -168,56 +143,13 @@ export default function LlmCosts({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `llm_kosten_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `llm_kosten_generiek_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const summary = data?.summary || {
-    totalCostEur: 0,
-    totalCostUsd: 0,
-    totalTokens: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalRequests: 0,
-    successfulRequests: 0,
-    avgCostPerRequestEur: 0,
-  };
-
-  const byEngine = data?.byEngine || [];
-  const byProject = data?.byProject || [];
-  const recentLogs = data?.recentLogs || [];
-
-  const filteredLogs = recentLogs.filter(log => {
-    const matchesEngine = selectedEngineFilter === 'all' ||
-      log.engine === selectedEngineFilter ||
-      (selectedEngineFilter === 'gemini' && (log.engine === 'gemini' || log.engineLabel === 'Google AI Studio'));
-
-    const matchesSearch = !searchLogQuery ||
-      log.engine.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
-      (log.engineLabel && log.engineLabel.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
-      log.model.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
-      (log.projectName && log.projectName.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
-      (log.invoiceRef && log.invoiceRef.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
-      log.operation.toLowerCase().includes(searchLogQuery.toLowerCase());
-    return matchesEngine && matchesSearch;
-  });
-
-  const clientOptions = React.useMemo(() => {
-    const map = new Map();
-    (clients || []).forEach(c => {
-      const name = c.company || c.name;
-      if (name) map.set(name.toLowerCase(), name);
-    });
-    (byProject || []).forEach(p => {
-      if (p.company && p.company !== 'Algemeen / Systeem' && !map.has(p.company.toLowerCase())) {
-        map.set(p.company.toLowerCase(), p.company);
-      }
-    });
-    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
-  }, [clients, byProject]);
-
+  // Restrict access for client accounts
   if (currentUser?.role === 'klant') {
     return (
       <div style={{
@@ -252,6 +184,35 @@ export default function LlmCosts({
     );
   }
 
+  const summary = data?.summary || {
+    totalCostEur: 0,
+    totalCostUsd: 0,
+    totalTokens: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalRequests: 0,
+    successfulRequests: 0,
+    avgCostPerRequestEur: 0,
+  };
+
+  const byEngine = data?.byEngine || [];
+  const recentLogs = data?.recentLogs || [];
+
+  const filteredLogs = recentLogs.filter(log => {
+    const matchesEngine = selectedEngineFilter === 'all' ||
+      log.engine === selectedEngineFilter ||
+      (selectedEngineFilter === 'gemini' && (log.engine === 'gemini' || log.engineLabel === 'Google AI Studio'));
+
+    const matchesSearch = !searchLogQuery ||
+      log.engine.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
+      (log.engineLabel && log.engineLabel.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
+      log.model.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
+      (log.projectName && log.projectName.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
+      (log.invoiceRef && log.invoiceRef.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
+      log.operation.toLowerCase().includes(searchLogQuery.toLowerCase());
+    return matchesEngine && matchesSearch;
+  });
+
   return (
     <div className="fade-in" style={{ padding: '32px 40px', display: 'flex', flexDirection: 'column', gap: '24px', backgroundColor: '#ffffff', minHeight: '100%' }}>
 
@@ -280,57 +241,16 @@ export default function LlmCosts({
               alignItems: 'center',
               gap: '4px'
             }}>
-              🔒 Alleen Admin
+              🔒 Generiek Tool Overzicht
             </span>
           </div>
           <p style={{ color: 'var(--text-secondary, #475569)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
-            {selectedProject === 'all'
-              ? 'Totaaloverzicht van alle API-inkoopkosten, tokenverbruik en facturen over alle projecten heen.'
-              : `Gefilterd overzicht van API-kosten en tokenverbruik voor project "${selectedProject}".`}
+            Centraal overzicht van alle API-kosten, tokenverbruik en facturen voor het draaien van de GEO Wizard.
           </p>
         </div>
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-
-          {/* Project Filter Select */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            backgroundColor: 'var(--bg-app, #f8fafc)',
-            padding: '3px 8px',
-            borderRadius: '8px',
-            border: '1px solid var(--border-medium, #e2e8f0)'
-          }}>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary, #475569)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Project:
-            </span>
-            <select
-              value={selectedProject}
-              onChange={(e) => handleProjectFilterChange(e.target.value)}
-              style={{
-                padding: '4px 10px',
-                borderRadius: '6px',
-                border: '1px solid var(--border-medium, #e2e8f0)',
-                backgroundColor: selectedProject === 'all' ? 'var(--brand-primary, #440099)' : '#ffffff',
-                color: selectedProject === 'all' ? '#ffffff' : 'var(--text-primary, #0f172a)',
-                fontSize: '12px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                outline: 'none'
-              }}
-            >
-              <option value="all" style={{ backgroundColor: '#ffffff', color: '#0f172a' }}>
-                🌐 Alle Projecten (Totale Kosten)
-              </option>
-              {clientOptions.map((comp) => (
-                <option key={comp} value={comp} style={{ backgroundColor: '#ffffff', color: '#0f172a' }}>
-                  📁 {comp}
-                </option>
-              ))}
-            </select>
-          </div>
 
           {/* Period selector */}
           <div style={{
@@ -430,7 +350,7 @@ export default function LlmCosts({
           </button>
 
           <button
-            onClick={() => fetchCostData(period, selectedProject)}
+            onClick={() => fetchCostData(period)}
             disabled={loading}
             style={{
               padding: '7px 14px',
@@ -452,74 +372,51 @@ export default function LlmCosts({
         </div>
       </div>
 
-      {/* Active Scope Banner */}
+      {/* Generic Info Banner */}
       <div style={{
-        padding: '12px 18px',
+        padding: '14px 20px',
         borderRadius: '10px',
-        backgroundColor: selectedProject === 'all' ? '#f5f0ff' : '#eff6ff',
-        border: selectedProject === 'all' ? '1px solid #d8b4fe' : '1px solid #bfdbfe',
+        backgroundColor: '#f5f0ff',
+        border: '1px solid #d8b4fe',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         gap: '12px'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
-            width: '28px',
-            height: '28px',
-            borderRadius: '6px',
-            backgroundColor: selectedProject === 'all' ? 'var(--brand-primary, #440099)' : '#2563eb',
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            backgroundColor: 'var(--brand-primary, #440099)',
             color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '13px',
+            fontSize: '15px',
             fontWeight: 800
           }}>
-            {selectedProject === 'all' ? 'Σ' : '📁'}
+            Σ
           </div>
           <div>
-            <div style={{ fontSize: '13px', fontWeight: 800, color: selectedProject === 'all' ? 'var(--brand-primary, #440099)' : '#1e40af' }}>
-              {selectedProject === 'all'
-                ? 'Totale LLM Inkoopkosten — Alle projecten gecombineerd'
-                : `Gefilterd op project: ${selectedProject}`}
+            <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--brand-primary, #440099)' }}>
+              Generiek Tool Kostenoverzicht
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-secondary, #475569)' }}>
-              {selectedProject === 'all'
-                ? `Inclusief alle ${clientOptions.length} projecten, directe facturen en live API-scans.`
-                : 'U bekijkt uitsluitend de API-aanroepen en tokens voor dit specifieke project.'}
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)', marginTop: '2px' }}>
+              Dit overzicht toont wat Saleswizard in totaal uitgeeft aan LLM API's en AI platforms voor alle actieve scans. Klanten hebben geen inzage in deze pagina.
             </div>
           </div>
         </div>
 
-        {selectedProject !== 'all' ? (
-          <button
-            onClick={() => handleProjectFilterChange('all')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '6px',
-              border: '1px solid #93c5fd',
-              backgroundColor: '#ffffff',
-              color: '#1d4ed8',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            ← Bekijk Totale Kosten (Alle Projecten)
-          </button>
-        ) : (
-          <span style={{ fontSize: '11px', color: '#6b21a8', fontWeight: 600 }}>
-            Tip: Klik in de tabel "Kosten per Project" op een project om direct in te zoomen.
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className="badge badge-positive" style={{ gap: '4px', fontSize: '11px' }}>
+            <ShieldCheck size={12} /> Afgeschermd voor klanten
           </span>
-        )}
+        </div>
       </div>
 
-      {/* KPI Cards Grid (Eenvoudig, wit, zonder felle gradiënten) */}
+      {/* KPI Cards Grid */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
@@ -537,7 +434,7 @@ export default function LlmCosts({
           gap: '6px'
         }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            {selectedProject === 'all' ? 'Totale LLM Kosten (Alle Projecten)' : `LLM Kosten (${selectedProject})`}
+            Totale Tool LLM Kosten
           </span>
           <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
             {formatEur(summary.totalCostEur)}
@@ -558,13 +455,13 @@ export default function LlmCosts({
           gap: '6px'
         }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Totaal Tokens
+            Totaal Tokens Verbruikt
           </span>
           <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
             {Number(summary.totalTokens).toLocaleString('nl-NL')}
           </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            {Number(summary.totalInputTokens).toLocaleString('nl-NL')} in / {Number(summary.totalOutputTokens).toLocaleString('nl-NL')} uit
+            {Number(summary.totalInputTokens).toLocaleString('nl-NL')} in · {Number(summary.totalOutputTokens).toLocaleString('nl-NL')} out
           </span>
         </div>
 
@@ -579,17 +476,17 @@ export default function LlmCosts({
           gap: '6px'
         }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Transacties / Aanroepen
+            Aanroepen & Transacties
           </span>
           <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
             {summary.totalRequests}
           </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            {summary.successfulRequests} succesvol verwerkt
+            {summary.successfulRequests} geslaagd ({summary.totalRequests > 0 ? Math.round((summary.successfulRequests / summary.totalRequests) * 100) : 100}%)
           </span>
         </div>
 
-        {/* Card 4: Average Cost */}
+        {/* Card 4: Avg Cost */}
         <div style={{
           padding: '18px 20px',
           backgroundColor: '#ffffff',
@@ -600,19 +497,19 @@ export default function LlmCosts({
           gap: '6px'
         }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Gem. per Post
+            Gem. Kosten per Scan
           </span>
           <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
             {formatEur(summary.avgCostPerRequestEur)}
           </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            Automatische drempelbedragen (€ 25,00)
+            Op basis van {summary.totalRequests} transacties
           </span>
         </div>
 
       </div>
 
-      {/* Rustige uitsplitsing: Provider Verdeling & Projecten */}
+      {/* Provider Verdeling & Facturatie Status */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
@@ -631,13 +528,12 @@ export default function LlmCosts({
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
-              Kosten per Provider
+              Kosten per AI Provider / Engine
             </span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {byEngine.map(eng => {
-              const isStudio = eng.isAiStudio || eng.engine === 'gemini';
               return (
                 <div key={eng.engine} style={{
                   padding: '12px 14px',
@@ -670,7 +566,7 @@ export default function LlmCosts({
           </div>
         </div>
 
-        {/* Projecten Overzicht */}
+        {/* Facturatie & Platformstatus Card */}
         <div style={{
           padding: '20px',
           backgroundColor: '#ffffff',
@@ -682,71 +578,93 @@ export default function LlmCosts({
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
-              Kosten per Project
+              Facturatie & Platformstatus
             </span>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', fontWeight: 600 }}>
-              Klik op een project om in te zoomen
+            <span className="badge badge-positive" style={{ gap: '4px', fontSize: '11px' }}>
+              <CheckCircle2 size={12} /> Actief
             </span>
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-medium, #e2e8f0)', color: 'var(--text-muted, #94a3b8)', textAlign: 'left' }}>
-                  <th style={{ padding: '8px 4px', fontWeight: 600 }}>Project</th>
-                  <th style={{ padding: '8px 4px', textAlign: 'center', fontWeight: 600 }}>Posten</th>
-                  <th style={{ padding: '8px 4px', textAlign: 'right', fontWeight: 600 }}>Tokens</th>
-                  <th style={{ padding: '8px 4px', textAlign: 'right', fontWeight: 600 }}>Kosten</th>
-                </tr>
-              </thead>
-              <tbody>
-                {byProject.length === 0 ? (
-                  <tr>
-                    <td colSpan="4" style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
-                      Geen project-gebonden kosten geregistreerd.
-                    </td>
-                  </tr>
-                ) : (
-                  byProject.map((proj, idx) => {
-                    const isSelected = selectedProject.toLowerCase() === (proj.company || '').toLowerCase();
-                    return (
-                      <tr
-                        key={idx}
-                        onClick={() => handleProjectFilterChange(proj.company)}
-                        style={{
-                          borderBottom: '1px solid var(--border-light, #f1f5f9)',
-                          cursor: 'pointer',
-                          backgroundColor: isSelected ? 'rgba(68, 0, 153, 0.05)' : 'transparent',
-                          transition: 'background-color 0.15s ease'
-                        }}
-                        onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-app, #f8fafc)'; }}
-                        onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; }}
-                        title={`Filter alle weergaven op ${proj.company}`}
-                      >
-                        <td style={{ padding: '10px 4px', fontWeight: 600, color: isSelected ? 'var(--brand-primary, #440099)' : 'var(--text-primary, #0f172a)' }}>
-                          {isSelected ? '▶ ' : ''}📁 {proj.company}
-                        </td>
-                        <td style={{ padding: '10px 4px', textAlign: 'center', color: 'var(--text-secondary, #475569)' }}>
-                          {proj.requests}
-                        </td>
-                        <td style={{ padding: '10px 4px', textAlign: 'right', color: 'var(--text-secondary, #475569)', fontFamily: 'monospace' }}>
-                          {Number(proj.tokens).toLocaleString('nl-NL')}
-                        </td>
-                        <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                          {formatEur(proj.costEur)}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: 'var(--border-radius-sm, 6px)',
+              backgroundColor: 'var(--bg-app, #f8fafc)',
+              border: '1px solid var(--border-light, #f1f5f9)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+                  Google AI Studio Billing
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: '#16a34a' }}>
+                  Gesynchroniseerd
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)' }}>
+                Mastercard ••••3171 — Automatische synchronisatie van creditcard declaraties en facturen.
+              </div>
+            </div>
+
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: 'var(--border-radius-sm, 6px)',
+              backgroundColor: 'var(--bg-app, #f8fafc)',
+              border: '1px solid var(--border-light, #f1f5f9)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+                  Live API Verbruik
+                </span>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--brand-primary, #440099)' }}>
+                  Pay-as-you-go
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)' }}>
+                Directe afrekening op tokenbasis voor OpenAI (gpt-4o), Perplexity (sonar) en Anthropic (claude-sonnet-5-5).
+              </div>
+            </div>
+
+            <div style={{
+              padding: '12px 14px',
+              borderRadius: 'var(--border-radius-sm, 6px)',
+              backgroundColor: 'rgba(68, 0, 153, 0.03)',
+              border: '1px solid var(--brand-light-border, #e8d9ff)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div style={{ fontSize: '12px', color: 'var(--brand-primary, #440099)', fontWeight: 600 }}>
+                Handmatige declaratie of factuur toevoegen?
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowInvoiceModal(true)}
+                style={{
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: 'var(--brand-primary, #440099)',
+                  color: '#ffffff',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                + Factuur invoeren
+              </button>
+            </div>
           </div>
         </div>
 
       </div>
 
-      {/* Logboek Tabel (Strak, overzichtelijk) */}
+      {/* Logboek Tabel */}
       <div style={{
         padding: '20px',
         backgroundColor: '#ffffff',
@@ -768,7 +686,7 @@ export default function LlmCosts({
               Transactielogboek
             </span>
             <p style={{ fontSize: '12px', color: 'var(--text-muted, #94a3b8)', margin: '2px 0 0 0' }}>
-              Overzicht van afschrijvingen en API-calls
+              Overzicht van afschrijvingen en API-aanroepen over de gehele applicatie
             </p>
           </div>
 
@@ -779,7 +697,8 @@ export default function LlmCosts({
                 { id: 'all', label: 'Alle' },
                 { id: 'gemini', label: 'Google AI Studio' },
                 { id: 'openai', label: 'ChatGPT' },
-                { id: 'perplexity', label: 'Perplexity' }
+                { id: 'perplexity', label: 'Perplexity' },
+                { id: 'anthropic', label: 'Claude' }
               ].map(eng => (
                 <button
                   key={eng.id}
@@ -828,8 +747,8 @@ export default function LlmCosts({
               <tr style={{ borderBottom: '1px solid var(--border-medium, #e2e8f0)', color: 'var(--text-muted, #94a3b8)', textAlign: 'left' }}>
                 <th style={{ padding: '8px', fontWeight: 600 }}>Datum</th>
                 <th style={{ padding: '8px', fontWeight: 600 }}>Provider</th>
-                <th style={{ padding: '8px', fontWeight: 600 }}>Referentie</th>
-                <th style={{ padding: '8px', fontWeight: 600 }}>Project</th>
+                <th style={{ padding: '8px', fontWeight: 600 }}>Referentie / Operatie</th>
+                <th style={{ padding: '8px', fontWeight: 600 }}>Bron</th>
                 <th style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>Tokens</th>
                 <th style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>Bedrag</th>
                 <th style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>Status</th>
@@ -861,7 +780,7 @@ export default function LlmCosts({
                         {log.invoiceRef || log.operation}
                       </td>
                       <td style={{ padding: '9px 8px', color: 'var(--text-secondary, #475569)' }}>
-                        {log.projectName || '-'}
+                        {log.projectName || 'Generiek / Tool'}
                       </td>
                       <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-secondary, #475569)' }}>
                         {Number(log.totalTokens).toLocaleString('nl-NL')}
@@ -985,7 +904,7 @@ export default function LlmCosts({
                 </label>
                 <input
                   type="text"
-                  placeholder="bv. CLOUD PQQ8PX"
+                  placeholder="bijv. Factuur GOOG-2026-09"
                   value={invoiceForm.invoice_ref}
                   onChange={e => setInvoiceForm({ ...invoiceForm, invoice_ref: e.target.value })}
                   style={{
@@ -1006,6 +925,7 @@ export default function LlmCosts({
                 <input
                   type="text"
                   required
+                  placeholder="bijv. Afschrijving Mastercard Google AI Studio"
                   value={invoiceForm.description}
                   onChange={e => setInvoiceForm({ ...invoiceForm, description: e.target.value })}
                   style={{
@@ -1021,7 +941,7 @@ export default function LlmCosts({
 
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
-                  Factuurdatum
+                  Datum
                 </label>
                 <input
                   type="date"
@@ -1038,17 +958,17 @@ export default function LlmCosts({
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
                 <button
                   type="button"
                   onClick={() => setShowInvoiceModal(false)}
                   style={{
-                    padding: '7px 14px',
+                    padding: '8px 16px',
                     borderRadius: '6px',
                     border: '1px solid var(--border-medium, #e2e8f0)',
                     backgroundColor: '#ffffff',
                     color: 'var(--text-secondary, #475569)',
-                    fontSize: '12px',
+                    fontSize: '13px',
                     fontWeight: 600,
                     cursor: 'pointer'
                   }}
@@ -1059,17 +979,17 @@ export default function LlmCosts({
                   type="submit"
                   disabled={invoiceSubmitting}
                   style={{
-                    padding: '7px 16px',
+                    padding: '8px 18px',
                     borderRadius: '6px',
+                    border: 'none',
                     backgroundColor: 'var(--brand-primary, #440099)',
                     color: '#ffffff',
-                    border: 'none',
-                    fontSize: '12px',
+                    fontSize: '13px',
                     fontWeight: 700,
                     cursor: invoiceSubmitting ? 'wait' : 'pointer'
                   }}
                 >
-                  {invoiceSubmitting ? 'Opslaan...' : 'Opslaan'}
+                  {invoiceSubmitting ? 'Opslaan...' : 'Factuur Opslaan'}
                 </button>
               </div>
             </form>
