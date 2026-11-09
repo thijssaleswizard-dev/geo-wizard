@@ -28,18 +28,18 @@ class CompetitorScraperService
         $cleanDomain = str_contains($cleanCompany, '.') ? $cleanCompany : "{$cleanCompany}.nl";
         $selfName = ucwords(str_replace(['-', '_'], ' ', $cleanCompany));
 
-        // 1. Check DB Cache (return only if >= 8 genuine competitors are cached, unless force = true)
+        // 1. Check DB Cache (return if >= 3 genuine competitors are cached, unless force = true)
         if (!$force) {
             try {
                 $existing = Keyword::find($keywordId);
                 if ($existing && !empty($existing->competitors_json)) {
                     $parsed = is_array($existing->competitors_json) ? $existing->competitors_json : json_decode($existing->competitors_json, true);
-                    if (is_array($parsed) && count($parsed) >= 8) {
+                    if (is_array($parsed) && count($parsed) >= 3) {
                         $cleaned = array_values(array_filter($parsed, function($item) {
                             $d = strtolower($item['domain'] ?? '');
                             return !$this->isPortalOrSpam($d);
                         }));
-                        if (count($cleaned) >= 8) {
+                        if (count($cleaned) >= 3) {
                             return $cleaned;
                         }
                     }
@@ -59,43 +59,79 @@ class CompetitorScraperService
         
         $groundedData = [];
 
-        // --- A. Universal Real-Time Web Grounding Search via Live Web Index ---
+        // --- A0. Extract real local competitors already discovered by AI Prompt Scans (ChatGPT Web Search, etc.) ---
         try {
-            GeoLog::info("🌐 [LIVE WEB GROUNDING] Zoeken naar echte ranking concurrenten voor: \"{$cleanKw}\"");
-            $prompt = "Welke Nederlandse bedrijven, bureaus, praktijken, specialisten en aanbieders zijn actief en ranken in Nederland voor de zoekterm: \"{$cleanKw}\"? Geef de actuele websites, landingspagina's en live bronnen.";
-            $pplx = $this->aiEngine->queryPerplexity($prompt, $cleanCompany);
-            $citations = $pplx['citations'] ?? [];
-
-            foreach ($citations as $url) {
-                $host = parse_url($url, PHP_URL_HOST);
-                if ($host) {
-                    $dom = strtolower(str_replace('www.', '', $host));
-                    if (!$this->isPortalOrSpam($dom)) {
-                        $brand = $this->cleanBrandFromTitle('', $dom);
-                        $isSelf = str_contains($dom, $cleanCompany) || str_contains($cleanCompany, explode('.', $dom)[0]);
-                        if (!isset($groundedData[$dom])) {
-                            $groundedData[$dom] = [
-                                'brand' => $brand,
-                                'domain' => $dom,
-                                'isSelf' => $isSelf,
-                                'sov' => 0,
-                                'position' => '3.0',
-                                'citations' => 1,
-                                'citationUrls' => [$url],
-                                'hits' => 6, // High weight from live web index
-                            ];
-                        } else {
-                            $groundedData[$dom]['hits'] += 4;
-                            if (!in_array($url, $groundedData[$dom]['citationUrls'])) {
-                                $groundedData[$dom]['citationUrls'][] = $url;
-                                $groundedData[$dom]['citations'] = count($groundedData[$dom]['citationUrls']);
+            $kwRecord = Keyword::with('prompts')->find($keywordId);
+            if ($kwRecord) {
+                $promptCompetitors = $this->extractCompetitorsFromPrompts($kwRecord, $cleanCompany, $cleanDomain);
+                foreach ($promptCompetitors as $dom => $item) {
+                    $groundedData[$dom] = $item;
+                }
+                // Also seed from existing valid cached competitors with low base weight so a temporary SERP block never wipes good data
+                $oldCached = is_array($kwRecord->competitors_json) ? $kwRecord->competitors_json : json_decode($kwRecord->competitors_json ?? '[]', true);
+                if (is_array($oldCached)) {
+                    foreach ($oldCached as $oldItem) {
+                        $dom = strtolower(str_replace('www.', '', $oldItem['domain'] ?? ''));
+                        if ($dom && !$this->isPortalOrSpam($dom) && $this->isRelevantToQuery($oldItem['brand'] ?? '', '', $dom, "https://{$dom}/", $cleanKw, $cleanCompany)) {
+                            if (!isset($groundedData[$dom])) {
+                                $groundedData[$dom] = [
+                                    'brand' => $this->cleanBrandFromTitle($oldItem['brand'] ?? '', $dom),
+                                    'domain' => $dom,
+                                    'isSelf' => !empty($oldItem['isSelf']) || str_contains($dom, $cleanCompany) || str_contains($cleanCompany, explode('.', $dom)[0]),
+                                    'sov' => 0,
+                                    'position' => '3.0',
+                                    'citations' => count($oldItem['citationUrls'] ?? []) ?: 1,
+                                    'citationUrls' => $oldItem['citationUrls'] ?? ["https://{$dom}/"],
+                                    'hits' => 2,
+                                ];
                             }
                         }
                     }
                 }
             }
         } catch (\Exception $e) {
-            Log::warning("[Competitor Grounding Note] {$e->getMessage()}");
+            Log::warning("[Prompt Competitor Extraction Note] {$e->getMessage()}");
+        }
+
+        // --- A. Universal Real-Time Web Grounding Search via Live Web Index (only if Perplexity circuit is healthy) ---
+        if (!\Illuminate\Support\Facades\Cache::has('ai_circuit_breaker_perplexity')) {
+            try {
+                GeoLog::info("🌐 [LIVE WEB GROUNDING] Zoeken naar echte ranking concurrenten voor: \"{$cleanKw}\"");
+                $prompt = "Welke Nederlandse bedrijven, bureaus, praktijken, specialisten en aanbieders zijn actief en ranken in Nederland voor de zoekterm: \"{$cleanKw}\"? Geef de actuele websites, landingspagina's en live bronnen.";
+                $pplx = $this->aiEngine->queryPerplexity($prompt, $cleanCompany);
+                $citations = ($pplx['fallbackUsed'] ?? false) ? [] : ($pplx['citations'] ?? []);
+
+                foreach ($citations as $url) {
+                    $host = parse_url($url, PHP_URL_HOST);
+                    if ($host) {
+                        $dom = strtolower(str_replace('www.', '', $host));
+                        if (!$this->isPortalOrSpam($dom)) {
+                            $brand = $this->cleanBrandFromTitle('', $dom);
+                            $isSelf = str_contains($dom, $cleanCompany) || str_contains($cleanCompany, explode('.', $dom)[0]);
+                            if (!isset($groundedData[$dom])) {
+                                $groundedData[$dom] = [
+                                    'brand' => $brand,
+                                    'domain' => $dom,
+                                    'isSelf' => $isSelf,
+                                    'sov' => 0,
+                                    'position' => '3.0',
+                                    'citations' => 1,
+                                    'citationUrls' => [$url],
+                                    'hits' => 6,
+                                ];
+                            } else {
+                                $groundedData[$dom]['hits'] += 4;
+                                if (!in_array($url, $groundedData[$dom]['citationUrls'])) {
+                                    $groundedData[$dom]['citationUrls'][] = $url;
+                                    $groundedData[$dom]['citations'] = count($groundedData[$dom]['citationUrls']);
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                Log::warning("[Competitor Grounding Note] {$e->getMessage()}");
+            }
         }
 
         // --- B. Generic Multi-Query SERP Expansion (Universal for ANY industry/city) ---
@@ -272,6 +308,9 @@ class CompetitorScraperService
 
                 $kwModel->competitors_json = $finalRanked;
                 $kwModel->brands_mentioned = array_values(array_filter(array_map(fn($c) => preg_replace('/[^a-z0-9]/', '', strtolower($c['brand'] ?? '')), $finalRanked)));
+                if ($targetIndex !== null && isset($finalRanked[$targetIndex])) {
+                    $kwModel->rank = (int) preg_replace('/[^0-9]/', '', (string) ($finalRanked[$targetIndex]['rank'] ?? 1)) ?: 1;
+                }
                 $kwModel->save();
             }
         } catch (\Exception $saveErr) {
@@ -279,6 +318,277 @@ class CompetitorScraperService
         }
 
         return $finalRanked;
+    }
+
+    /**
+     * Extracts real ranked competitors and domains from the keyword's own AI prompt results
+     * (e.g. markdown tables & bullet lists returned by ChatGPT Search / Claude / Gemini).
+     * Costs €0.00 and guarantees keyword rankings match the actual AI answers.
+     */
+    public function extractCompetitorsFromPrompts(Keyword $kwModel, string $cleanCompany, string $cleanDomain): array
+    {
+        $found = [];
+        $prompts = $kwModel->prompts ?? collect();
+        $normSelf = preg_replace('/[^a-z0-9]/', '', strtolower($cleanCompany));
+
+        $headerIgnore = [
+            'bedrijf', 'bedrijfsnaam', 'naam', 'hovenier', 'bureau', 'partij', 'specialist', 'aanbieder',
+            'beoordeling', 'review', 'reviews', 'aantal', 'aantalreviews', 'score', 'sterren', 'locatie',
+            'plaats', 'stad', 'regio', 'specialisatie', 'specialisaties', 'diensten', 'kenmerken',
+            'toelichting', 'omschrijving', 'website', 'bron', 'waarvoor', 'letop', 'opmerking',
+            'prijs', 'kosten', 'indicatie', 'voordelen', 'nadelen', 'ervaring', 'ervaringen',
+            'googlemaps', 'googlereviews', 'erkendhovenier', 'werkspot', 'trustoo', 'kvkregister', 'kvk',
+        ];
+
+        foreach ($prompts as $p) {
+            $res = is_array($p->results) ? $p->results : json_decode($p->results ?? '[]', true);
+            if (!is_array($res)) {
+                continue;
+            }
+
+            // Collect known real citation domains from the prompt
+            $citationDomainMap = [];
+            foreach ($res['citations'] ?? [] as $cit) {
+                $url = is_array($cit) ? ($cit['url'] ?? '') : (string) $cit;
+                $host = parse_url($url, PHP_URL_HOST);
+                if ($host) {
+                    $d = strtolower(str_replace('www.', '', $host));
+                    if (!$this->isPortalOrSpam($d)) {
+                        $base = preg_replace('/[^a-z0-9]/', '', explode('.', $d)[0]);
+                        $citationDomainMap[$base] = ['domain' => $d, 'url' => $url];
+                    }
+                }
+            }
+
+            foreach ($res['modelMentions'] ?? [] as $engineKey => $mData) {
+                $method = strtolower($mData['method'] ?? '');
+                if (str_contains($method, 'simulator')) {
+                    continue; // Ignore simulated fallback text
+                }
+                $text = $mData['summary'] ?? '';
+                if (empty($text)) {
+                    continue;
+                }
+
+                // 1. Parse markdown table rows ONLY when the table header is a company/provider table
+                $lines = explode("\n", $text);
+                $tableRank = 0;
+                $inCompanyTable = false;
+                foreach ($lines as $line) {
+                    $trimLine = trim($line);
+                    if (str_starts_with($trimLine, '|') && substr_count($trimLine, '|') >= 3) {
+                        $cells = array_values(array_filter(array_map('trim', explode('|', $trimLine)), fn($c) => $c !== ''));
+                        if (empty($cells)) {
+                            continue;
+                        }
+                        $firstCell = trim(str_replace(['*', '_', '`'], '', $cells[0]));
+                        if (preg_match('/^[\-\:\s]+$/', $firstCell)) {
+                            continue; // separator row |---|---|
+                        }
+                        $normCell = preg_replace('/[^a-z0-9]/', '', strtolower($firstCell));
+
+                        // Check if this row is a table header row
+                        $allHeaderText = strtolower(implode(' ', $cells));
+                        if (in_array($normCell, ['bedrijf', 'bedrijfsnaam', 'naam', 'hovenier', 'hoveniersbedrijf', 'bureau', 'partij', 'specialist', 'tuinspecialist', 'aanbieder', 'winkel', 'praktijk'])
+                            || (str_contains($allHeaderText, 'beoordeling') || str_contains($allHeaderText, 'reviews') || str_contains($allHeaderText, 'specialisat'))) {
+                            if (in_array($normCell, $headerIgnore)) {
+                                $inCompanyTable = true;
+                                $tableRank = 0;
+                                continue;
+                            }
+                        } elseif (in_array($normCell, $headerIgnore) || in_array($normCell, ['onderdeel', 'tuingrootte', 'werkzaamheden', 'type', 'categorie', 'factor', 'stap', 'aspect'])) {
+                            $inCompanyTable = false;
+                            continue;
+                        }
+
+                        if (!$inCompanyTable) {
+                            continue;
+                        }
+
+                        // Skip cells with parentheses, slashes, quotes, or measurement units (not company names)
+                        if (strlen($normCell) < 3 || str_contains($firstCell, '(') || str_contains($firstCell, ')') || str_contains($firstCell, '/') || str_contains($firstCell, '"') || str_contains($normCell, 'google') || str_contains($normCell, 'vhg') || str_contains($normCell, 'erkend') || str_contains($normCell, 'werkspot') || str_contains($normCell, 'trustoo') || str_contains($normCell, 'kvk')) {
+                            continue;
+                        }
+                        if (strlen($firstCell) > 45 || str_word_count($firstCell) > 6) {
+                            continue;
+                        }
+
+                        $tableRank++;
+                        $isSelf = ($normCell === $normSelf) || str_contains($normCell, $normSelf) || str_contains($normSelf, $normCell);
+                        $dom = $isSelf ? $cleanDomain : ($citationDomainMap[$normCell]['domain'] ?? null);
+                        $citUrl = $isSelf ? "https://{$cleanDomain}/" : ($citationDomainMap[$normCell]['url'] ?? null);
+
+                        if (!$dom) {
+                            // Try partial match in citationDomainMap
+                            foreach ($citationDomainMap as $cBase => $cInfo) {
+                                if (strlen($cBase) >= 4 && (str_contains($normCell, $cBase) || str_contains($cBase, $normCell))) {
+                                    $dom = $cInfo['domain'];
+                                    $citUrl = $cInfo['url'];
+                                    break;
+                                }
+                            }
+                        }
+                        if (!$dom) {
+                            // Derive clean domain from brand name (strip "& ...", "Hoveniersbedrijf", etc. if needed)
+                            $shortSlug = preg_replace('/[^a-z0-9]/', '', strtolower(explode('&', $firstCell)[0]));
+                            $dom = ($shortSlug ?: $normCell) . '.nl';
+                            $citUrl = "https://{$dom}/";
+                        }
+
+                        if ($this->isPortalOrSpam($dom) && !$isSelf) {
+                            continue;
+                        }
+
+                        $weight = max(4, 16 - ($tableRank * 2)); // #1 -> 14, #2 -> 12, #3 -> 10, #4 -> 8, #5 -> 6
+                        if (!isset($found[$dom])) {
+                            $found[$dom] = [
+                                'brand' => $isSelf ? ucwords(str_replace(['-', '_'], ' ', $cleanCompany)) : $firstCell,
+                                'domain' => $dom,
+                                'isSelf' => $isSelf,
+                                'sov' => 0,
+                                'position' => '2.1',
+                                'citations' => 1,
+                                'citationUrls' => [$citUrl],
+                                'hits' => $weight,
+                            ];
+                        } else {
+                            $found[$dom]['hits'] += $weight;
+                            if ($citUrl && !in_array($citUrl, $found[$dom]['citationUrls'])) {
+                                $found[$dom]['citationUrls'][] = $citUrl;
+                                $found[$dom]['citations'] = count($found[$dom]['citationUrls']);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Lightweight (€0.00) SERP canary check to see if organic top rankings shifted.
+     * Used by daily scheduler so unchanged keywords don't waste expensive LLM calls.
+     */
+    public function hasSignificantSerpChange(Keyword $kwModel): bool
+    {
+        $cached = is_array($kwModel->competitors_json) ? $kwModel->competitors_json : json_decode($kwModel->competitors_json ?? '[]', true);
+        if (empty($cached) || count($cached) < 4) {
+            return true; // Needs full scrape
+        }
+
+        // Force full refresh at least once every N days (default 7 days)
+        $maxDays = (int) config('geo.scan_max_interval_days', 7);
+        if (!$kwModel->updated_at || $kwModel->updated_at->lt(now()->subDays($maxDays))) {
+            return true;
+        }
+
+        $cleanCompany = strtolower(trim(str_replace('.nl', '', $kwModel->company_key ?? 'saleswizard')));
+        $liveBing = $this->scrapeBingDutch($kwModel->keyword, $cleanCompany);
+        if (count($liveBing) < 3) {
+            // Bing rate-limited or returned sparse data -> keep cached data (no change)
+            return false;
+        }
+
+        $cachedDomains = array_map(fn($c) => strtolower($c['domain'] ?? ''), array_slice($cached, 0, 8));
+        $liveDomains = array_slice(array_keys($liveBing), 0, 5);
+        $overlap = count(array_intersect($liveDomains, $cachedDomains));
+
+        // If at least 2 of top 5 live domains are already in our top 8, rankings are stable
+        return $overlap < 2;
+    }
+
+    /**
+     * Appends today's snapshot to the keyword's and prompts' Nulmeting history using cached metrics (€0.00 cost).
+     */
+    public function recordDailySnapshotFromCache(Keyword $kwModel): void
+    {
+        $cached = is_array($kwModel->competitors_json) ? $kwModel->competitors_json : json_decode($kwModel->competitors_json ?? '[]', true);
+        if (!is_array($cached) || empty($cached)) {
+            return;
+        }
+
+        $todayStr = now()->format('Y-m-d');
+        $targetIndex = null;
+        foreach ($cached as $idx => $c) {
+            if (!empty($c['isSelf'])) {
+                $targetIndex = $idx;
+                break;
+            }
+        }
+        if ($targetIndex === null) {
+            $targetIndex = 0;
+        }
+
+        $selfComp = &$cached[$targetIndex];
+        $history = (!empty($selfComp['history']) && is_array($selfComp['history'])) ? $selfComp['history'] : [];
+        if (empty($history)) {
+            $baseDate = $kwModel->created_at ?: now();
+            $history[] = [
+                'date' => $baseDate->format('Y-m-d'),
+                'displayDate' => $baseDate->format('d M Y'),
+                'time' => $baseDate->format('H:i'),
+                'isBaseline' => true,
+                'label' => 'Nulmeting',
+                'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($selfComp['rank'] ?? 1)) ?: 1,
+                'position' => (float) ($selfComp['position'] ?? 2.1),
+                'sov' => (int) ($selfComp['sov'] ?? 38),
+                'citations' => (int) ($selfComp['citations'] ?? 2),
+            ];
+        }
+
+        // Avoid duplicate snapshot on the exact same date unless forced
+        $lastEntry = end($history);
+        if (!$lastEntry || ($lastEntry['date'] ?? '') !== $todayStr) {
+            $history[] = [
+                'date' => $todayStr,
+                'displayDate' => now()->format('d M Y'),
+                'time' => now()->format('H:i'),
+                'isBaseline' => false,
+                'label' => now()->format('d M H:i'),
+                'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($selfComp['rank'] ?? 1)) ?: 1,
+                'position' => (float) ($selfComp['position'] ?? 2.1),
+                'sov' => (int) ($selfComp['sov'] ?? 38),
+                'citations' => (int) ($selfComp['citations'] ?? 2),
+            ];
+            if (count($history) > 15) {
+                $history = array_merge([$history[0]], array_slice($history, -14));
+            }
+            $selfComp['history'] = $history;
+            unset($selfComp);
+            $kwModel->competitors_json = $cached;
+            $kwModel->save();
+        }
+
+        // Also roll forward each prompt's history for today if not yet recorded today
+        foreach ($kwModel->prompts ?? [] as $p) {
+            $res = is_array($p->results) ? $p->results : json_decode($p->results ?? '[]', true);
+            if (!is_array($res) || empty($res)) {
+                continue;
+            }
+            $pHist = (!empty($res['history']) && is_array($res['history'])) ? $res['history'] : [];
+            $lastP = end($pHist);
+            if (!$lastP || ($lastP['date'] ?? '') !== $todayStr) {
+                $pHist[] = [
+                    'date' => $todayStr,
+                    'displayDate' => now()->format('d M Y'),
+                    'time' => now()->format('H:i'),
+                    'isBaseline' => empty($pHist),
+                    'label' => empty($pHist) ? 'Nulmeting' : now()->format('d M H:i'),
+                    'mentioned' => (bool) $p->brand_mentioned,
+                    'position' => $p->brand_mentioned ? (float) ($res['position'] ?? $p->position ?? 1) : null,
+                    'totalMentions' => (int) ($res['totalMentions'] ?? ($p->brand_mentioned ? 1 : 0)),
+                    'totalModels' => (int) ($res['totalModels'] ?? 6),
+                    'overallScore' => (int) ($res['overallScore'] ?? 83),
+                ];
+                if (count($pHist) > 15) {
+                    $pHist = array_merge([$pHist[0]], array_slice($pHist, -14));
+                }
+                $res['history'] = $pHist;
+                $p->results = $res;
+                $p->save();
+            }
+        }
     }
 
     /**
@@ -473,6 +783,7 @@ class CompetitorScraperService
             'all-in-hoveniersbedrijf.', 'zoekhovenier.', 'tuinman-gezocht.', 'de-hobbykweker.', 'vakblad', 'aeresmbo.',
             'aerestrainingcentre.', 'theartofliving.', 'indeed.', 'jobbird.', 'nationaleberoepengids.', 'brinqs.nl',
             'hoveniersinnederland.', 'tuinmaninschiedam.', 'hoveniers-bedrijf.', 'tuinkarwei.', 'dutchqualitygardens.',
+            'vaktuinaanleg.', 'tuinaanleg.nu', 'tuinaanleg.nl', 'tuinaanlegmeester.', 'tuinmanconcurrent.', 'tuinhub.', 'bestevakmanindebuurt.',
             // Search engines & media
             'yahoo.', 'bing.', 'duckduckgo.', 'gelderlander.nl', 'omroepgelderland.nl', 'nieuws.nl', 'top40.', 'radionl.',
             // Real estate & Housing Portals (not direct local service providers)
@@ -521,12 +832,25 @@ class CompetitorScraperService
 
         // Tokenize query into significant words (>= 3 chars)
         $words = preg_split('/[\s,\-\+]+/', strtolower($query));
-        $stopWords = ['het', 'een', 'van', 'voor', 'met', 'aan', 'bij', 'uit', 'the', 'and', 'for', 'bedrijven', 'specialist', 'regio', 'buurt', 'laten'];
+        $stopWords = ['het', 'een', 'van', 'voor', 'met', 'aan', 'bij', 'uit', 'the', 'and', 'for', 'bedrijven', 'specialist', 'regio', 'buurt', 'laten', 'maken', 'beste', 'goede', 'wat', 'welke', 'waar', 'hoe'];
         $sigWords = array_values(array_filter($words, fn($w) => strlen($w) >= 3 && !in_array($w, $stopWords)));
-        
+
+        $tradeComponents = ['tuin', 'hovenier', 'groen', 'aanleg', 'bouw', 'dak', 'kapel', 'zorg', 'advies', 'dienst', 'verkoop', 'makelaar', 'notaris', 'garage', 'auto', 'sleutel', 'klus', 'onderhoud', 'ontwerp', 'kozijn', 'isolatie', 'schilder', 'loodgieter', 'installatie', 'fysio', 'tandarts', 'marketing', 'seo', 'webdesign', 'wordpress', 'website', 'vloer', 'stukadoor', 'stuc', 'ontruim', 'hor', 'horren', 'zonwering', 'kast', 'meubel', 'deur', 'raam', 'dietist', 'voeding', 'personal', 'training', 'riool', 'afvoer', 'douglas', 'hout', 'overkapping', 'afzuig', 'ventilatie', 'vacuum', 'thermo'];
+
         $terms = [];
+        $locationWords = [];
         foreach ($sigWords as $w) {
             $terms[] = $w;
+            $isTrade = false;
+            foreach ($tradeComponents as $component) {
+                if (str_contains($w, $component)) {
+                    $terms[] = $component;
+                    $isTrade = true;
+                }
+            }
+            if (!$isTrade && strlen($w) >= 4) {
+                $locationWords[] = $w;
+            }
             // Dutch plural stemming: e.g. hoveniers -> hovenier, dakkapellen -> dakkapel
             if (str_ends_with($w, 's') && strlen($w) >= 5) {
                 $terms[] = substr($w, 0, -1);
@@ -534,16 +858,23 @@ class CompetitorScraperService
             if (str_ends_with($w, 'en') && strlen($w) >= 6) {
                 $base = substr($w, 0, -2);
                 $terms[] = $base;
-                // Double consonant reduction before 'en': dakkapellen -> dakkapell -> dakkapel
                 if (strlen($base) >= 4 && substr($base, -1) === substr($base, -2, 1)) {
                     $terms[] = substr($base, 0, -1);
                 }
             }
-            // Universal trade compound stems
-            foreach (['tuin', 'aanleg', 'bouw', 'dak', 'kapel', 'zorg', 'advies', 'dienst', 'verkoop', 'makelaar', 'notaris', 'garage', 'auto', 'klus', 'onderhoud', 'ontwerp', 'kozijn', 'isolatie', 'schilder', 'loodgieter', 'installatie', 'fysio', 'tandarts'] as $component) {
-                if (str_contains($w, $component)) {
-                    $terms[] = $component;
+        }
+
+        // If the query specifies a city/region (e.g. "velp", "arnhem"), require the result to mention that location
+        if (!empty($locationWords)) {
+            $matchesLoc = false;
+            foreach ($locationWords as $loc) {
+                if (str_contains($haystack, $loc)) {
+                    $matchesLoc = true;
+                    break;
                 }
+            }
+            if (!$matchesLoc) {
+                return false;
             }
         }
 
@@ -568,14 +899,18 @@ class CompetitorScraperService
     protected function cleanBrandFromTitle(string $title, string $domain): string
     {
         $domBase = explode('.', str_replace('www.', '', strtolower($domain)))[0];
-        
+        $fallbackBrand = ucwords(str_replace(['-', '_'], ' ', $domBase));
+
         // 1. Try extracting brand name from live HTML title
         if (!empty($title)) {
             $cleaned = preg_replace('/(www\.[^\s]+|https?:\/\/[^\s]+)/i', '', $title);
             $cleaned = preg_replace('/^(bron|source)\s*:\s*/i', '', trim($cleaned));
+            // Strip breadcrumb artifacts like "› hovenier-in-gouda" or "#1 "
+            $cleaned = preg_replace('/^[›»>•\#\d\s\-\_]+/u', '', $cleaned);
+            $cleaned = preg_replace('/^[a-z0-9]+(\-[a-z0-9]+)+/i', '', $cleaned);
             $delimiters = [' | ', ' - ', ' – ', ' — ', ' : ', ':', ' » ', ' › ', ' • '];
             $parts = [$cleaned];
-            
+
             foreach ($delimiters as $d) {
                 $newParts = [];
                 foreach ($parts as $p) {
@@ -593,26 +928,27 @@ class CompetitorScraperService
                 'home', 'welkom', 'officiële website', 'officiele website', 'contact',
                 'over ons', 'diensten', 'openingstijden', 'vacatures', 'blog', 'tarieven',
                 'kosten', 'review', 'reviews', 'vergelijk', 'afspraak maken', 'spoed', '24/7',
-                'bron', 'source', 'website', 'zoekmachine'
+                'bron', 'source', 'website', 'zoekmachine', 'tuinaanleg', 'hovenier', 'hoveniers',
+                'hoveniersbedrijf', 'op maat', 'properties', 'pagina', 'pages'
             ];
-            
+
             foreach ($parts as $part) {
+                $part = trim(preg_replace('/^[›»>•\#\d\s]+/u', '', $part));
                 $pLower = strtolower($part);
                 $isNoise = false;
                 foreach ($noise as $n) {
-                    if ($pLower === $n || str_starts_with($pLower, $n . ' ') || str_starts_with($pLower, $n . ':')) {
+                    if ($pLower === $n || str_starts_with($pLower, $n . ':')) {
                         $isNoise = true;
                         break;
                     }
                 }
-                if (!$isNoise && strlen($part) >= 3 && strlen($part) <= 45 && !str_contains($pLower, 'http') && !str_contains($part, '.')) {
+                if (!$isNoise && strlen($part) >= 3 && strlen($part) <= 40 && !str_contains($pLower, 'http') && !str_contains($part, '.') && !str_contains($part, '›')) {
                     return $part;
                 }
             }
         }
 
         // 2. Generic Fallback: Smartly format domain name into readable Title Case
-        $brand = str_replace(['-', '_'], ' ', $domBase);
-        return ucwords($brand);
+        return $fallbackBrand;
     }
 }

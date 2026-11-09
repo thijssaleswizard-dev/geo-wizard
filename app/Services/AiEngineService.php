@@ -235,8 +235,12 @@ class AiEngineService
                     $outputItems = $data['output'] ?? [];
                     $content = '';
                     $citations = [];
+                    $searchCalls = 0;
 
                     foreach ($outputItems as $item) {
+                        if (($item['type'] ?? '') === 'web_search_call') {
+                            $searchCalls++;
+                        }
                         if (($item['type'] ?? '') === 'message') {
                             foreach ($item['content'] ?? [] as $c) {
                                 if (($c['type'] ?? '') === 'output_text') {
@@ -257,11 +261,11 @@ class AiEngineService
 
                     $mentionsBrand = $this->isBrandMentioned($content, $companyName, $citations);
 
-                    // Track tokens and cost
+                    // Track tokens and cost (including web_search_preview tool calls)
                     $usage = $data['usage'] ?? [];
                     $inTokens = $usage['prompt_tokens'] ?? $usage['input_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
                     $outTokens = $usage['completion_tokens'] ?? $usage['output_tokens'] ?? (int) ceil(mb_strlen($content) / 4);
-                    $costLog = LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName]);
+                    $costLog = LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, $promptId, false, ['company' => $companyName], max(1, $searchCalls));
 
                     self::logApiCall('openai', 'SUCCESS', 'Call completed successfully with Live Web Search.', $duration, $costLog->cost_eur, $costLog->total_tokens);
                     GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'SUCCESS', $duration, count($citations) . " web citaties | Merk vermeld: " . ($mentionsBrand ? "JA (Positie 1, Score 92)" : "NEE (Score 20)") . " | Kosten: €" . number_format($costLog->cost_eur, 4));
@@ -369,9 +373,8 @@ class AiEngineService
 
         GeoLog::aiCall('Google Suite', 'gemini-flash-lite-latest', $promptSnippet, 'START', null, "Querying consolidated Google AI Suite (RAG " . ($useSearchGrounding ? '+ Google Grounding' : 'Web Grounded') . ") for [{$companyName}]");
 
-        if ($apiKey) {
+        if ($apiKey && !Cache::has('ai_circuit_breaker_gemini')) {
             try {
-                // Build grounding citations context from Phase 1 web crawl
                 $sourcesContext = '';
                 $citationUrls = [];
                 if (!empty($webCitations)) {
@@ -514,6 +517,9 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
+                if (str_contains(strtolower($errorMsg), 'spending cap') || str_contains(strtolower($errorMsg), 'quota')) {
+                    Cache::put('ai_circuit_breaker_gemini', $errorMsg, 3600);
+                }
                 LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('gemini', 'ERROR', $errorMsg, $duration);
                 GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
@@ -601,7 +607,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
 
         GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'START', null, "Querying live model & search index for [{$companyName}]");
 
-        if ($apiKey) {
+        if ($apiKey && !Cache::has('ai_circuit_breaker_perplexity')) {
             try {
                 // Perplexity Agent API (v1/responses) with live web search
                 $response = Http::withToken($apiKey)
@@ -676,6 +682,9 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $errorMsg = $response->json('error.message') ?? $response->body();
+                if (str_contains(strtolower($errorMsg), 'paid credits') || str_contains(strtolower($errorMsg), 'quota')) {
+                    Cache::put('ai_circuit_breaker_perplexity', $errorMsg, 3600);
+                }
                 LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
                 self::logApiCall('perplexity', 'ERROR', $errorMsg, $duration);
                 GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
@@ -749,7 +758,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     if (empty($content) && !empty($data['content'][0]['text'])) {
                         $content = $data['content'][0]['text'];
                     }
-                    $mentionsBrand = str_contains(strtolower($content), $companyKey);
+                    $mentionsBrand = $this->isBrandMentioned($content, $companyName);
 
                     // Track tokens and cost
                     $usage = $data['usage'] ?? [];

@@ -15,14 +15,17 @@ class LlmCostController extends Controller
     protected function authorizeMedewerker(Request $request): ?JsonResponse
     {
         $user = $request->user();
-        $role = $request->query('role') ?? $request->input('role') ?? ($user?->role);
-        $userId = $request->query('userId') ?? $request->input('userId') ?? ($user?->id);
+        $userId = $user?->id ?? $request->query('userId') ?? $request->input('userId');
+        $role = $user?->role;
 
         if ($userId && !$role) {
             $dbUser = \App\Models\User::find($userId);
             if ($dbUser) {
                 $role = $dbUser->role;
             }
+        }
+        if (!$role) {
+            $role = $request->query('role') ?? $request->input('role');
         }
 
         if ($role === 'klant' || ($user && $user->role === 'klant')) {
@@ -43,9 +46,6 @@ class LlmCostController extends Controller
         if ($deny = $this->authorizeMedewerker($request)) {
             return $deny;
         }
-
-        // Automatically ensure Google AI Studio billing data is synchronized
-        LlmCostService::syncGoogleAiStudioBilling();
 
         $projectId = $request->query('project_id');
         $company = $request->query('company');

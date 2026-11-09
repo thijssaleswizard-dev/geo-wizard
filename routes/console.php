@@ -16,11 +16,12 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--sync : Run jobs synchronously instead of queued}', function (ScraperService $scraperService, CompetitorScraperService $competitorScraper) {
+Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--sync : Run jobs synchronously instead of queued} {--force : Force full AI re-scan even when rankings have not changed}', function (ScraperService $scraperService, CompetitorScraperService $competitorScraper) {
     $projectId = $this->option('project');
     $runSync = (bool) $this->option('sync');
+    $forceFull = (bool) $this->option('force') || (config('geo.scan_mode', 'adaptive') === 'daily');
 
-    $this->info('Starting automated daily GEO mention, competitor and ranking scan...');
+    $this->info('Starting automated daily GEO scan (' . ($forceFull ? 'FULL mode' : 'SMART CHANGE-DETECTION mode') . ')...');
 
     $query = Project::query();
     if ($projectId) {
@@ -38,10 +39,19 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
         try {
             $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
 
-            // 1. Sync & Rescrape Keywords (Competitor Scraper / Serp / Rankings)
-            $keywords = $project->keywords()->get();
+            // 1. Check each Keyword via lightweight SERP Canary check
+            $keywords = $project->keywords()->with('prompts')->get();
             $this->line("  Found {$keywords->count()} keywords for {$project->company}");
+
             foreach ($keywords as $kw) {
+                $needsFullScan = $forceFull || $competitorScraper->hasSignificantSerpChange($kw);
+
+                if (!$needsFullScan) {
+                    $this->line("  - [Cached €0.00] No ranking shift for keyword #{$kw->id} (\"{$kw->keyword}\") -> carrying forward daily snapshot");
+                    $competitorScraper->recordDailySnapshotFromCache($kw);
+                    continue;
+                }
+
                 if ($runSync) {
                     $this->line("  - [Sync] Scraping competitors for keyword #{$kw->id}: \"{$kw->keyword}\"");
                     $competitors = $competitorScraper->getOrScrapeCompetitors($kw->id, $kw->keyword, $kw->company_key, true);
@@ -52,20 +62,12 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
                         $kw->update(['rank' => $rankInt, 'updated_at' => now()]);
                     }
                 } else {
-                    $this->line("  - [Queue] Dispatching competitor scrape for keyword #{$kw->id}: \"{$kw->keyword}\"");
+                    $this->line("  - [Queue] Change detected -> dispatching competitor scrape for keyword #{$kw->id}: \"{$kw->keyword}\"");
                     ProcessKeywordCompetitorsJob::dispatch($kw->id, $kw->keyword, $kw->company_key, true);
                 }
-            }
 
-            // 2. Sync & Rescan Prompts
-            $prompts = $project->prompts()->get();
-            $this->line("  Found {$prompts->count()} prompts for {$project->company}");
-
-            if ($prompts->isEmpty()) {
-                $defaultPrompt = 'Zoek een betrouwbaar online marketing bureau voor mijn webshop';
-                $scraperService->runScraper($defaultPrompt, $project->company, $project->id);
-            } else {
-                foreach ($prompts as $p) {
+                // Only rescan prompts belonging to keywords where a change was detected (or when forced)
+                foreach ($kw->prompts as $p) {
                     if ($runSync) {
                         $this->line("  - [Sync] Scanning prompt #{$p->id}: \"{$p->prompt_text}\"");
                         $res = $scraperService->runScraper($p->prompt_text, $project->company, $project->id, $p->id);
@@ -96,7 +98,7 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
                 }
             }
 
-            // 3. Recalculate overview statistics and project metrics
+            // 2. Recalculate overview statistics and project metrics
             $citationsCount = Citation::where('project_id', $project->id)->count();
             $promptsCount = $project->prompts()->count() ?: 1;
             $mentionedCount = $project->prompts()->where('brand_mentioned', true)->count();
