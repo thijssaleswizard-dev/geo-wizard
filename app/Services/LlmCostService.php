@@ -53,6 +53,8 @@ class LlmCostService
                     'input_per_m' => 2.50,
                     'output_per_m' => 10.00,
                     'fixed_per_request' => 0.00,
+                    // web_search_preview tool fee per search call (USD). Override via OPENAI_WEB_SEARCH_FEE_USD.
+                    'search_call_fee' => 0.025,
                 ],
                 'gpt-4o-mini' => [
                     'input_per_m' => 0.15,
@@ -129,7 +131,8 @@ class LlmCostService
         string $model,
         int $inputTokens,
         int $outputTokens,
-        bool $groundingUsed = false
+        bool $groundingUsed = false,
+        int $searchCalls = 0
     ): array {
         $engineKey = strtolower(trim($engine));
         $pricing = self::PRICING_RATES[$engineKey] ?? null;
@@ -164,8 +167,17 @@ class LlmCostService
             $fixedCost += $modelConfig['grounding_fee'];
         }
 
-        $costUsd = round($inputCost + $outputCost + $fixedCost, 2);
-        $costEur = round($costUsd * self::USD_TO_EUR_RATE, 2);
+        if ($searchCalls > 0 && isset($modelConfig['search_call_fee'])) {
+            $fee = $engineKey === 'openai'
+                ? (float) config('geo.openai_web_search_fee_usd', $modelConfig['search_call_fee'])
+                : (float) $modelConfig['search_call_fee'];
+            $fixedCost += $searchCalls * $fee;
+        }
+
+        // Keep full precision per request (DB columns are DECIMAL(12,6)); round only when displaying totals.
+        $rawUsd = $inputCost + $outputCost + $fixedCost;
+        $costUsd = round($rawUsd, 6);
+        $costEur = round($rawUsd * self::USD_TO_EUR_RATE, 6);
 
         return [
             'usd' => $costUsd,
@@ -187,12 +199,17 @@ class LlmCostService
         ?int $projectId = null,
         ?int $promptId = null,
         bool $groundingUsed = false,
-        array $metadata = []
+        array $metadata = [],
+        int $searchCalls = 0
     ): LlmCostLog {
-        if ($status === 'FALLBACK') {
+        // Failed (ERROR) and simulated (FALLBACK) calls are not billed by the providers.
+        if ($status !== 'SUCCESS') {
             $costs = ['usd' => 0.00, 'eur' => 0.00];
         } else {
-            $costs = self::calculateCost($engine, $model, $inputTokens, $outputTokens, $groundingUsed);
+            $costs = self::calculateCost($engine, $model, $inputTokens, $outputTokens, $groundingUsed, $searchCalls);
+        }
+        if ($searchCalls > 0) {
+            $metadata['search_calls'] = $searchCalls;
         }
 
         $totalTokens = $inputTokens + $outputTokens;
@@ -230,9 +247,6 @@ class LlmCostService
      */
     public static function getSummary(?int $projectId = null, ?string $period = 'all'): array
     {
-        // Automatically ensure Google AI Studio historical costs are synchronized
-        self::syncGoogleAiStudioBilling();
-
         $query = LlmCostLog::query();
 
         if ($projectId) {
@@ -261,7 +275,10 @@ class LlmCostService
         $fallbackRequests = $allLogs->where('status', 'FALLBACK')->count();
         $failedRequests = $allLogs->where('status', 'ERROR')->count();
 
-        $avgCostPerRequestEur = $totalRequests > 0 ? round($totalCostEur / $totalRequests, 2) : 0.00;
+        // Average over billable (successful) requests only, with 4 decimals (calls cost fractions of a cent)
+        $billableCount = $allLogs->where('status', 'SUCCESS')->where('operation', '!=', 'manual_invoice')->where('operation', '!=', 'google_ai_studio_billing')->count();
+        $billableCost = (float) $allLogs->where('status', 'SUCCESS')->where('operation', '!=', 'manual_invoice')->where('operation', '!=', 'google_ai_studio_billing')->sum('cost_eur');
+        $avgCostPerRequestEur = $billableCount > 0 ? round($billableCost / $billableCount, 4) : 0.00;
 
         // Breakdown per Engine
         $byEngine = [];
@@ -305,7 +322,7 @@ class LlmCostService
                 'costEur' => $engCostEur,
                 'costUsd' => $engCostUsd,
                 'percentage' => $percentage,
-                'avgCostEur' => $engRequests > 0 ? round($engCostEur / $engRequests, 2) : 0.00,
+                'avgCostEur' => ($engSuccess = $engineLogs->where('status', 'SUCCESS')->count()) > 0 ? round((float) $engineLogs->where('status', 'SUCCESS')->sum('cost_eur') / $engSuccess, 4) : 0.00,
                 'pricingLabel' => $pricingLabel,
                 'isActive' => AiEngineService::isEngineEnabled($engineKey),
                 'isAiStudio' => ($engineKey === 'gemini'),
@@ -378,8 +395,8 @@ class LlmCostService
                 'inputTokens' => $log->input_tokens,
                 'outputTokens' => $log->output_tokens,
                 'totalTokens' => $log->total_tokens,
-                'costEur' => round((float) $log->cost_eur, 2),
-                'costUsd' => round((float) $log->cost_usd, 2),
+                'costEur' => round((float) $log->cost_eur, 4),
+                'costUsd' => round((float) $log->cost_usd, 4),
                 'latency' => $log->latency_ms ? "{$log->latency_ms}ms" : 'N/A',
                 'status' => $log->status,
                 'invoiceRef' => $invoiceRef,
@@ -404,6 +421,7 @@ class LlmCostService
                 'currency' => 'EUR',
                 'rateUsdToEur' => self::USD_TO_EUR_RATE,
                 'googleAiStudioConnected' => true,
+                'providerBilled' => self::getProviderBilledCosts(),
             ],
             'byEngine' => array_values($byEngine),
             'byProject' => $byProject,
@@ -426,11 +444,12 @@ class LlmCostService
             return;
         }
 
-        // Clean up any test dummy logs if forcing or initial sync
+        // Clean up only the AI Studio billing rows if forcing a re-sync (never truncate real API usage logs!)
         if ($force) {
-            LlmCostLog::truncate();
+            LlmCostLog::where('engine', 'gemini')
+                ->where('operation', 'google_ai_studio_billing')
+                ->delete();
         } else {
-            // Remove test micro-logs from initial seed so total matches exactly €250,00
             LlmCostLog::where('metadata->historical', true)->delete();
         }
 
@@ -534,5 +553,79 @@ class LlmCostService
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
+    }
+
+    /**
+     * Optionally query live organization billing endpoints if Admin keys or api.usage.read scope are present.
+     */
+    public static function getProviderBilledCosts(): array
+    {
+        return \Illuminate\Support\Facades\Cache::remember('llm_provider_billed_costs', 900, function () {
+            $result = [
+                'openai' => ['connected' => false, 'amountUsd' => null, 'amountEur' => null, 'note' => null],
+                'anthropic' => ['connected' => false, 'amountUsd' => null, 'amountEur' => null, 'note' => null],
+            ];
+
+            $oaKey = config('geo.openai_admin_key') ?: config('services.openai.key');
+            if ($oaKey) {
+                try {
+                    $start = Carbon::now()->startOfMonth()->timestamp;
+                    $res = \Illuminate\Support\Facades\Http::withToken($oaKey)
+                        ->timeout(5)
+                        ->get("https://api.openai.com/v1/organization/costs?start_time={$start}&limit=31");
+                    if ($res->successful()) {
+                        $buckets = $res->json('data') ?? [];
+                        $usd = 0.0;
+                        foreach ($buckets as $b) {
+                            foreach ($b['results'] ?? [] as $r) {
+                                $usd += (float) ($r['amount']['value'] ?? 0);
+                            }
+                        }
+                        $result['openai'] = [
+                            'connected' => true,
+                            'amountUsd' => round($usd, 4),
+                            'amountEur' => round($usd * self::USD_TO_EUR_RATE, 4),
+                            'note' => 'Live geverifieerd via OpenAI Organization Costs API',
+                        ];
+                    } else {
+                        $result['openai']['note'] = $res->json('error.message') ?? $res->json('error') ?? 'Mist api.usage.read scope';
+                    }
+                } catch (\Exception $e) {
+                    $result['openai']['note'] = $e->getMessage();
+                }
+            }
+
+            $anKey = config('geo.anthropic_admin_key');
+            if ($anKey) {
+                try {
+                    $startIso = Carbon::now()->startOfMonth()->toIso8601ZuluString();
+                    $res = \Illuminate\Support\Facades\Http::withHeaders([
+                        'x-api-key' => $anKey,
+                        'anthropic-version' => '2023-06-01',
+                    ])->timeout(5)->get("https://api.anthropic.com/v1/organizations/cost_report?starting_at={$startIso}");
+                    if ($res->successful()) {
+                        $buckets = $res->json('data') ?? [];
+                        $usd = 0.0;
+                        foreach ($buckets as $b) {
+                            foreach ($b['results'] ?? [] as $r) {
+                                $usd += ((float) ($r['amount'] ?? 0)) / 100.0;
+                            }
+                        }
+                        $result['anthropic'] = [
+                            'connected' => true,
+                            'amountUsd' => round($usd, 4),
+                            'amountEur' => round($usd * self::USD_TO_EUR_RATE, 4),
+                            'note' => 'Live geverifieerd via Anthropic Admin API',
+                        ];
+                    } else {
+                        $result['anthropic']['note'] = $res->json('error.message') ?? 'Admin API key (sk-ant-admin...) vereist';
+                    }
+                } catch (\Exception $e) {
+                    $result['anthropic']['note'] = $e->getMessage();
+                }
+            }
+
+            return $result;
+        });
     }
 }
