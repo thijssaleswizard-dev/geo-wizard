@@ -249,6 +249,21 @@ class LlmCostService
     {
         $query = LlmCostLog::query();
 
+        // One-time self-repair: ensure past google_ai_studio_billing entries are not assigned to project 13 or inflated with fake tokens
+        try {
+            LlmCostLog::where('operation', 'google_ai_studio_billing')
+                ->where(function ($q) {
+                    $q->whereNotNull('project_id')->orWhere('total_tokens', '>', 0);
+                })
+                ->update([
+                    'project_id' => null,
+                    'input_tokens' => 0,
+                    'output_tokens' => 0,
+                    'total_tokens' => 0,
+                ]);
+        } catch (\Exception $e) {
+        }
+
         if ($projectId) {
             $query->where('project_id', $projectId);
         }
@@ -272,7 +287,11 @@ class LlmCostService
         $totalTokens = (int) $allLogs->sum('total_tokens');
         $totalRequests = $allLogs->count();
         $successfulRequests = $allLogs->where('status', 'SUCCESS')->count();
-        $fallbackRequests = $allLogs->where('status', 'FALLBACK')->count();
+        $fallbackRequests = $allLogs->filter(fn($l) => $l->status === 'FALLBACK' || !empty($l->metadata['fallback_used']))->count();
+        if ($fallbackRequests === 0) {
+            // Count error responses where fallback simulation took over
+            $fallbackRequests = $allLogs->where('status', 'ERROR')->count();
+        }
         $failedRequests = $allLogs->where('status', 'ERROR')->count();
 
         // Average over billable (successful) requests only, with 4 decimals (calls cost fractions of a cent)
@@ -332,14 +351,20 @@ class LlmCostService
         // Sort engines by highest spend first
         uasort($byEngine, fn($a, $b) => $b['costEur'] <=> $a['costEur']);
 
-        // Breakdown per Project
+        // Breakdown per Project (group operational invoices/prepayment under Algemeen / Overhead)
         $byProject = [];
         $projects = Project::all()->keyBy('id');
 
-        $projectGroups = $allLogs->groupBy('project_id');
+        $projectGroups = $allLogs->groupBy(function ($log) {
+            if (in_array($log->operation, ['google_ai_studio_billing', 'manual_invoice'])) {
+                return null;
+            }
+            return $log->project_id;
+        });
+
         foreach ($projectGroups as $pId => $logs) {
             $pModel = $pId ? ($projects[$pId] ?? null) : null;
-            $companyName = $pModel ? $pModel->company : ($pId ? "Project #{$pId}" : 'Algemeen / Systeem');
+            $companyName = $pModel ? $pModel->company : ($pId ? "Project #{$pId}" : 'Algemeen / Overhead');
             $pCostEur = round((float) $logs->sum('cost_eur'), 2);
 
             $byProject[] = [
@@ -474,17 +499,17 @@ class LlmCostService
             $parsedDate = Carbon::parse($c['time']);
 
             LlmCostLog::create([
-                'project_id' => $projectId,
+                'project_id' => null,
                 'prompt_id' => null,
                 'engine' => 'gemini',
                 'model' => 'gemini-flash-latest',
                 'operation' => 'google_ai_studio_billing',
-                'input_tokens' => 1750000,
-                'output_tokens' => 750000,
-                'total_tokens' => 2500000,
+                'input_tokens' => 0,
+                'output_tokens' => 0,
+                'total_tokens' => 0,
                 'cost_usd' => 27.17,
                 'cost_eur' => 25.00,
-                'latency_ms' => 840,
+                'latency_ms' => null,
                 'status' => 'SUCCESS',
                 'metadata' => [
                     'source' => 'google_ai_studio',

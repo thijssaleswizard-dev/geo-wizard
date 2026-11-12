@@ -17,6 +17,7 @@ class Keyword extends Model
         'sentiment',
         'citations_count',
         'monthly_searches',
+        'is_archived',
         'competitors_json',
         'brands_mentioned',
     ];
@@ -26,6 +27,7 @@ class Keyword extends Model
         'rank' => 'integer',
         'citations_count' => 'integer',
         'monthly_searches' => 'integer',
+        'is_archived' => 'boolean',
         'competitors_json' => 'array',
         'brands_mentioned' => 'array',
     ];

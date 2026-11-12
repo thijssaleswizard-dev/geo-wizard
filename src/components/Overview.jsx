@@ -57,7 +57,7 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
 };
 
 export default function Overview({ activeWorkspace, enabledEngines }) {
-  const currentCompany = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '');
+  const currentCompany = (activeWorkspace || 'Saleswizard.nl').replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '');
   
   // Filters state
   const [dateRange, setDateRange] = useState('Last 14 days');
@@ -91,14 +91,15 @@ export default function Overview({ activeWorkspace, enabledEngines }) {
       .then(res => res.json())
       .then(data => {
         if (data.success && data.keywords) {
-          setKeywords(data.keywords);
+          const activeList = data.keywords.filter(k => !k.is_archived);
+          setKeywords(activeList);
 
           const tempVisible = {};
-          const cleanWorkspace = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '').trim();
+          const cleanWorkspace = (activeWorkspace || 'Saleswizard.nl').replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').trim();
           const selfBrandName = cleanWorkspace.charAt(0).toUpperCase() + cleanWorkspace.slice(1);
           tempVisible[selfBrandName] = true;
 
-          data.keywords.forEach(kw => {
+          activeList.forEach(kw => {
             if (kw.competitors && Array.isArray(kw.competitors)) {
               kw.competitors.forEach(c => {
                 let name = c.brand || c.name || (c.domain ? c.domain.split('.')[0] : 'BEDRIJF');
@@ -216,7 +217,7 @@ export default function Overview({ activeWorkspace, enabledEngines }) {
   const getAggregatedCompetitors = () => {
     const competitorMap = {};
     const workspace = activeWorkspace || 'Saleswizard.nl';
-    const cleanWorkspace = workspace.replace('.nl', '').trim();
+    const cleanWorkspace = workspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').trim();
     const selfBrandName = cleanWorkspace.charAt(0).toUpperCase() + cleanWorkspace.slice(1);
 
     // Initialize with target company

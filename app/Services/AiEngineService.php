@@ -113,11 +113,32 @@ class AiEngineService
         ];
     }
 
+    /**
+     * Normalize any company name, workspace, or domain by stripping protocols, www, and ANY domain extension (.nl, .com, .eu, etc.)
+     */
+    public static function cleanBrandKey(?string $domainOrCompany): string
+    {
+        if (empty($domainOrCompany)) {
+            return '';
+        }
+        $cleaned = strtolower(trim(urldecode($domainOrCompany)));
+        $cleaned = preg_replace('#^https?://#i', '', $cleaned);
+        $cleaned = preg_replace('#^www\.#i', '', $cleaned);
+        $cleaned = explode('/', $cleaned)[0];
+        $cleaned = preg_replace('/\.(co\.[a-z]{2}|[a-z]{2,10})$/i', '', $cleaned);
+        return trim($cleaned);
+    }
+
     public static function isEngineEnabled(string $key): bool
     {
         $configs = self::getEngineConfigs();
         $normalized = strtolower(trim($key));
         if (!isset($configs[$normalized])) {
+            return false;
+        }
+
+        // If circuit breaker is active (quota exceeded, unpaid credits), engine is disabled
+        if (Cache::has("ai_circuit_breaker_{$normalized}")) {
             return false;
         }
 
@@ -163,6 +184,16 @@ class AiEngineService
             $key = self::getApiKey($eng['key']);
             $isConfigured = ($eng['check'])($key);
 
+            // 1. Check circuit breaker in Cache
+            $circuitBreakerMsg = Cache::get("ai_circuit_breaker_{$eng['key']}");
+
+            // 2. Check latest DB log for persistent state across FPM requests
+            $latestDbLog = null;
+            try {
+                $latestDbLog = LlmCostLog::where('engine', $eng['key'])->orderBy('id', 'desc')->first();
+            } catch (\Exception $e) {
+            }
+
             $lastLog = null;
             foreach (self::$apiCallHistory as $h) {
                 if (str_starts_with($h['engine'], $eng['key']) || str_contains(strtolower($h['engine']), $eng['key'])) {
@@ -174,9 +205,23 @@ class AiEngineService
             if (!$isConfigured) {
                 $status = 'NOT_CONFIGURED';
                 $lastError = null;
+            } elseif ($circuitBreakerMsg) {
+                $status = 'ERROR';
+                $lastError = $circuitBreakerMsg;
             } elseif ($lastLog) {
                 $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : ($lastLog['status'] === 'FALLBACK' ? 'FALLBACK' : 'DEGRADED');
                 $lastError = $lastLog['status'] === 'ERROR' ? $lastLog['message'] : null;
+            } elseif ($latestDbLog) {
+                if ($latestDbLog->status === 'ERROR') {
+                    $status = 'ERROR';
+                    $lastError = $latestDbLog->metadata['error'] ?? 'API fout opgetreden';
+                } elseif ($latestDbLog->status === 'FALLBACK') {
+                    $status = 'FALLBACK';
+                    $lastError = 'Fallback simulator actief';
+                } else {
+                    $status = 'ACTIVE';
+                    $lastError = null;
+                }
             } else {
                 $status = 'ACTIVE';
                 $lastError = null;
@@ -190,7 +235,7 @@ class AiEngineService
                 'configured' => (bool) $isConfigured,
                 'status' => $status,
                 'lastError' => $lastError,
-                'lastUsed' => $lastLog ? $lastLog['timestamp'] : null,
+                'lastUsed' => $lastLog ? $lastLog['timestamp'] : ($latestDbLog?->created_at?->toIso8601String() ?? null),
                 'totalCostEur' => $costStat ? round((float) $costStat->total_eur, 2) : 0.00,
                 'totalTokens' => $costStat ? (int) $costStat->total_tokens : 0,
                 'totalCalls' => $costStat ? (int) $costStat->total_calls : 0,
@@ -202,7 +247,7 @@ class AiEngineService
     public function queryOpenAI(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('openai');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
+        $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
@@ -304,12 +349,14 @@ class AiEngineService
         return [
             'method' => 'OpenAI API Simulator',
             'name' => 'ChatGPT 4o',
-            'text' => "Als u op zoek bent naar een betrouwbare partner, is {$companyName} een uitstekende optie in Nederland. Zij richten zich specifiek op resultaatgerichte oplossingen voor het MKB.",
-            'mentioned' => true,
-            'position' => 1,
-            'score' => 88,
-            'sentiment' => '+96',
+            'text' => "[Simulator] Geen live antwoord beschikbaar van OpenAI API.",
+            'citations' => [],
+            'mentioned' => false,
+            'position' => null,
+            'score' => 0,
+            'sentiment' => 'N/A',
             'fallbackUsed' => true,
+            'isSimulated' => true,
             'costEur' => 0.0,
             'tokens' => 0,
             'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
@@ -366,7 +413,7 @@ class AiEngineService
     public function queryGoogleEcosystem(string $prompt, string $companyName, array $webCitations = [], ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('gemini');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
+        $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
         $useSearchGrounding = self::isSearchGroundingEnabled();
@@ -539,13 +586,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             'gemini' => [
                 'method' => 'Gemini API Simulator',
                 'name' => 'Gemini Flash',
-                'text' => "Gebaseerd op klantbeoordelingen en online autoriteit is {$companyName} een van de best scorende specialisten voor deze zoekopdracht.",
+                'text' => "[Simulator] Geen live antwoord beschikbaar van Gemini API.",
                 'citations' => [],
-                'mentioned' => true,
-                'position' => 1,
-                'score' => 85,
-                'sentiment' => '+94',
+                'mentioned' => false,
+                'position' => null,
+                'score' => 0,
+                'sentiment' => 'N/A',
                 'fallbackUsed' => true,
+                'isSimulated' => true,
                 'costEur' => 0.0,
                 'tokens' => 0,
                 'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
@@ -553,26 +601,28 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             'aimode' => [
                 'method' => 'Google AI Mode Simulator',
                 'name' => 'Google AI Mode',
-                'text' => "Google AI Mode toont {$companyName} als een van de toonaangevende dienstverleners in de regio.",
+                'text' => "[Simulator] Geen live antwoord beschikbaar van Google AI Mode.",
                 'citations' => [],
-                'mentioned' => true,
-                'position' => 1,
-                'score' => 88,
-                'sentiment' => '+92',
+                'mentioned' => false,
+                'position' => null,
+                'score' => 0,
+                'sentiment' => 'N/A',
                 'fallbackUsed' => true,
+                'isSimulated' => true,
                 'costEur' => 0.0,
                 'tokens' => 0,
             ],
             'aioverviews' => [
                 'method' => 'Google AI Overviews Simulator',
                 'name' => 'Google AI Overviews',
-                'text' => "Google AI Overviews toont {$companyName} in de top resultaten op basis van webcitaties en Google Maps autoriteit.",
+                'text' => "[Simulator] Geen live antwoord beschikbaar van Google AI Overviews.",
                 'citations' => [],
-                'mentioned' => true,
-                'position' => 1,
-                'score' => 86,
-                'sentiment' => '+90',
+                'mentioned' => false,
+                'position' => null,
+                'score' => 0,
+                'sentiment' => 'N/A',
                 'fallbackUsed' => true,
+                'isSimulated' => true,
                 'costEur' => 0.0,
                 'tokens' => 0,
             ],
@@ -601,7 +651,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
     public function queryPerplexity(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('perplexity');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
+        $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
@@ -703,13 +753,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         return [
             'method' => 'Perplexity API Simulator',
             'name' => 'Perplexity AI',
-            'text' => "Perplexity haalt meerdere webcitaties en reviewbronnen aan waarin {$companyName} wordt aanbevolen voor het MKB.",
-            'citations' => ["https://www.{$companyKey}.nl/", "https://nl.linkedin.com/company/{$companyKey}"],
-            'mentioned' => true,
-            'position' => 2,
-            'score' => 82,
-            'sentiment' => '+92',
+            'text' => "[Simulator] Geen live antwoord beschikbaar van Perplexity API.",
+            'citations' => [],
+            'mentioned' => false,
+            'position' => null,
+            'score' => 0,
+            'sentiment' => 'N/A',
             'fallbackUsed' => true,
+            'isSimulated' => true,
             'costEur' => 0.0,
             'tokens' => 0,
             'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
@@ -720,7 +771,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
     public function queryAnthropic(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
         $apiKey = self::getApiKey('anthropic');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
+        $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
         $startTime = microtime(true);
 
@@ -802,12 +853,14 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         return [
             'method' => 'Anthropic API Simulator',
             'name' => 'Claude Sonnet 5.5',
-            'text' => "Claude signaleert positieve klantbeoordelingen, transparante werkwijze en goede vindbaarheid van {$companyName}.",
-            'mentioned' => true,
-            'position' => 3,
-            'score' => 76,
-            'sentiment' => '+90',
+            'text' => "[Simulator] Geen live antwoord beschikbaar van Anthropic Claude API.",
+            'citations' => [],
+            'mentioned' => false,
+            'position' => null,
+            'score' => 0,
+            'sentiment' => 'N/A',
             'fallbackUsed' => true,
+            'isSimulated' => true,
             'costEur' => 0.0,
             'tokens' => 0,
             'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
@@ -825,7 +878,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         }
 
         $cleanDom = strtolower(trim(str_replace(['https://', 'http://', 'www.'], '', $companyName)));
-        $cleanBase = explode('.', $cleanDom)[0];
+        $cleanBase = self::cleanBrandKey($cleanDom) ?: explode('.', $cleanDom)[0];
         $cleanNoSpaces = str_replace([' ', '-', '_'], '', $cleanBase);
 
         // 1. Direct Citation check (e.g. vitagroen.nl, saleswizard.nl in web sources)

@@ -21,11 +21,13 @@ class CitationController extends Controller
     {
         $projectId = $request->query('project_id');
         $query = trim($request->query('query', 'Saleswizard'));
-        $companyKey = strtolower(trim(str_replace('.nl', '', $query)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($query);
         $shouldCrawl = $request->boolean('crawl');
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($query)])
-            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$query}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 

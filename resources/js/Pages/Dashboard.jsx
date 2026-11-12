@@ -296,8 +296,8 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
 
   const activeClient = clients.find(c => {
     if (!activeWorkspace || !c.company) return false;
-    const cleanA = c.company.toLowerCase().replace('.nl', '').trim();
-    const cleanB = activeWorkspace.toLowerCase().replace('.nl', '').trim();
+    const cleanA = c.company.toLowerCase().replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').trim();
+    const cleanB = activeWorkspace.toLowerCase().replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').trim();
     return c.company.toLowerCase() === activeWorkspace.toLowerCase() || cleanA === cleanB;
   }) || null;
 

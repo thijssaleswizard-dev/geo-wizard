@@ -129,7 +129,7 @@ class ProjectController extends Controller
             'email' => $email,
             'subscription' => $subscription,
             'prompts_count' => 0,
-            'visibility_index' => 74,
+            'visibility_index' => 0,
             'setup_status' => $hasKeywords ? 'processing' : 'completed',
             'setup_progress' => $hasKeywords ? 20 : 100,
         ]);
@@ -199,7 +199,7 @@ class ProjectController extends Controller
      */
     protected function queueKeywordsSetup(Project $project, string $keywordsString): void
     {
-        $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
         $rawKeywords = array_values(array_filter(array_map('trim', explode(',', $keywordsString))));
 
         if (empty($rawKeywords)) {
@@ -334,7 +334,7 @@ class ProjectController extends Controller
     public function destroy(string $company): JsonResponse
     {
         $decodedCompany = trim(urldecode($company));
-        $companyKey = strtolower(trim(str_replace('.nl', '', $decodedCompany)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($decodedCompany);
 
         // Find by ID or company name
         $project = is_numeric($decodedCompany) 

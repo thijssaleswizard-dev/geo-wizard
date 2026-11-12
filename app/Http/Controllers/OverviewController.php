@@ -25,10 +25,12 @@ class OverviewController extends Controller
     {
         $projectId = $request->query('project_id');
         $company = $request->query('company', 'saleswizard');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $company)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($company);
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($company)])
-            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$company}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 
@@ -40,13 +42,14 @@ class OverviewController extends Controller
             $stats = OverviewStat::where('company_key', $companyKey)->first();
         }
         if (!$stats) {
+            $hasPrompts = $project && $project->prompts()->count() > 0;
             $stats = OverviewStat::create([
                 'project_id' => $project ? $project->id : null,
                 'company_key' => $companyKey,
-                'geo_score' => 74,
-                'brand_share' => 68,
-                'citations_total' => 24,
-                'sentiment_avg' => 94,
+                'geo_score' => $hasPrompts ? 74 : 0,
+                'brand_share' => $hasPrompts ? 68 : 0,
+                'citations_total' => $hasPrompts ? 24 : 0,
+                'sentiment_avg' => $hasPrompts ? 94 : 0,
             ]);
         }
 
@@ -57,10 +60,12 @@ class OverviewController extends Controller
     {
         $projectId = $request->query('project_id');
         $company = $request->query('company', 'saleswizard');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $company)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($company);
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($company)])
-            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$company}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 
@@ -108,10 +113,12 @@ class OverviewController extends Controller
     {
         $projectId = $request->query('project_id');
         $company = $request->query('company', 'saleswizard');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $company)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($company);
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($company)])
-            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$company}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 
@@ -165,7 +172,7 @@ class OverviewController extends Controller
                     'status' => 'completed',
                     'brand_mentioned' => $totalMentioned > 0,
                     'position' => $chatgpt['position'] ?? ($gemini['position'] ?? 1),
-                    'response_summary' => strtolower(trim(str_replace('.nl', '', $company))) . " wordt door {$totalMentioned} van de {$totalModels} AI-modellen aanbevolen.",
+                    'response_summary' => AiEngineService::cleanBrandKey($company) . " wordt door {$totalMentioned} van de {$totalModels} AI-modellen aanbevolen.",
                     'sentiment' => $chatgpt['sentiment'] ?? '+90',
                     'logs' => $result['logs'] ?? [],
                     'results' => $result,
@@ -183,7 +190,7 @@ class OverviewController extends Controller
     {
         $projectId = $request->input('project_id') ?? $request->input('projectId');
         $company = $request->input('company', 'Saleswizard');
-        $companyKey = strtolower(trim(str_replace('.nl', '', $company)));
+        $companyKey = AiEngineService::cleanBrandKey($company);
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($company)])
             ->orWhereRaw('LOWER(company) = ?', [strtolower("{$company}.nl")])

@@ -487,7 +487,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
             position: '-',
             volume: 100,
             is_crawling: true,
-            brands: [workspace.replace('.nl', '').toLowerCase()],
+            brands: [workspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').toLowerCase()],
             competitors: [],
             prompts: savedPrompts.map(p => ({
               id: p.id,
@@ -664,7 +664,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
         rank: `#${idx + 1}`,
         brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
         domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
-        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '')))),
+        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').replace(/[^a-z0-9]/g, '')))),
         sov: typeof c.sov === 'number' ? c.sov : 0,
         position: c.position || '-',
         citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
@@ -1753,7 +1753,7 @@ export default function Keywords({ currentUser, activeWorkspace, enabledEngines,
             Keywords
           </h1>
           <p style={{ color: '#6b7280', fontSize: '13px', marginTop: '4px' }}>
-            Setup your keywords for {activeWorkspace ? activeWorkspace.replace('.nl', '') : 'Saleswizard'} brand visibility tracking.
+            Setup your keywords for {activeWorkspace ? activeWorkspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '') : 'Saleswizard'} brand visibility tracking.
           </p>
         </div>
 

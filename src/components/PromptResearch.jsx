@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 
 export default function PromptResearch({ activeWorkspace }) {
-  const targetCompany = (activeWorkspace || 'Saleswizard.nl').replace('.nl', '');
+  const targetCompany = (activeWorkspace || 'Saleswizard.nl').replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '');
   const [query, setQuery] = useState('Zoek een betrouwbaar online marketing bureau voor mijn webshop');
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);

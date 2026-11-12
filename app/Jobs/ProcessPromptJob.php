@@ -89,12 +89,18 @@ class ProcessPromptJob implements ShouldQueue
             if ($project) {
                 try {
                     $citationsCount = \App\Models\Citation::where('project_id', $project->id)->count();
-                    $promptsCount = $project->prompts()->count() ?: 1;
+                    $actualPromptsCount = $project->prompts()->count();
+                    $promptsCount = max(1, $actualPromptsCount);
                     $mentionedCount = $project->prompts()->where('brand_mentioned', true)->count();
 
-                    $geoScore = min(98, max(45, (int) round(($mentionedCount / max(1, $promptsCount)) * 85 + ($citationsCount * 2))));
-                    $brandShare = min(95, max(35, (int) round(($mentionedCount / max(1, $promptsCount)) * 75)));
-                    $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
+                    if ($actualPromptsCount === 0) {
+                        $geoScore = 0;
+                        $brandShare = 0;
+                    } else {
+                        $geoScore = min(100, max(0, (int) round(($mentionedCount / $promptsCount) * 85 + min(15, $citationsCount * 2))));
+                        $brandShare = min(100, max(0, (int) round(($mentionedCount / $promptsCount) * 100)));
+                    }
+                    $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
 
                     \App\Models\OverviewStat::updateOrCreate(
                         ['project_id' => $project->id, 'company_key' => $companyKey],

@@ -53,7 +53,7 @@ class LlmCostController extends Controller
 
         if (!$projectId && $company) {
             $decoded = trim(urldecode($company));
-            $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
+            $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
 
             $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])

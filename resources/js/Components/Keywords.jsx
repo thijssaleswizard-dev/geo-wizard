@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  ChevronRight, ChevronDown, ChevronUp, Plus, Search, Archive, Trash2,
+  ChevronRight, ChevronDown, ChevronUp, Plus, Search, Trash2, Archive, RotateCcw,
   Sparkles, Play, Edit2, X, AlertTriangle, Loader2,
   ArrowLeft, Download, Share2, RotateCw, RefreshCw
 } from 'lucide-react';
@@ -147,6 +147,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     position: k.average_position || (k.competitors && k.competitors[0] ? k.competitors[0].position : '-'),
     volume: k.search_volume || k.monthly_searches || '-',
     is_crawling: !!k.is_crawling,
+    is_archived: Boolean(k.is_archived),
     brands: k.brands_mentioned ? String(k.brands_mentioned).split(',').map(b => b.trim()).filter(Boolean) : [],
     competitors: k.competitors || [],
     history: Array.isArray(k.history) ? k.history : [],
@@ -189,9 +190,9 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
   };
 
-  const handleBulkDeleteKeywords = async () => {
+  const handleBulkArchiveKeywords = async () => {
     if (selectedKeywordIds.length === 0) return;
-    if (!window.confirm(`Weet u zeker dat u de ${selectedKeywordIds.length} geselecteerde keywords wilt verwijderen?`)) return;
+    if (!window.confirm(`Weet u zeker dat u de ${selectedKeywordIds.length} geselecteerde zoekwoorden wilt archiveren? De bijbehorende prompts blijven veilig bewaard in het archief.`)) return;
 
     try {
       const response = await fetch('/api/keywords/bulk-delete', {
@@ -201,10 +202,10 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       });
       const data = await response.json();
       if (data.success) {
-        setKeywords(prev => prev.filter(k => !selectedKeywordIds.includes(k.id)));
+        setKeywords(prev => prev.map(k => selectedKeywordIds.includes(k.id) ? { ...k, is_archived: true } : k));
         setSelectedKeywordIds([]);
       } else {
-        alert(data.error || 'Fout bij verwijderen van keywords.');
+        alert(data.error || 'Fout bij archiveren van keywords.');
       }
     } catch (err) {
       console.error(err);
@@ -396,18 +397,6 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       setRecommending(false);
     }
   };
-
-  // Sync archived keywords with localStorage per workspace
-  const [archivedKeywords, setArchivedKeywords] = useState(() => {
-    const workspace = activeWorkspace || 'Saleswizard.nl';
-    const saved = localStorage.getItem(`archived_keywords_${workspace}`);
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  useEffect(() => {
-    const workspace = activeWorkspace || 'Saleswizard.nl';
-    localStorage.setItem(`archived_keywords_${workspace}`, JSON.stringify(archivedKeywords));
-  }, [archivedKeywords, activeWorkspace]);
 
   // Smart background polling when prompts are being crawled / analyzed
   useEffect(() => {
@@ -887,7 +876,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             position: '-',
             volume: 100,
             is_crawling: true,
-            brands: [workspace.replace('.nl', '').toLowerCase()],
+            brands: [workspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').toLowerCase()],
             competitors: [],
             prompts: savedPrompts.map(p => ({
               id: p.id,
@@ -909,55 +898,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
   };
 
-  const handleDeleteKeyword = async (id) => {
-    const kw = keywords.find(k => k.id === id);
-    if (kw && kw.prompts) {
-      for (const p of kw.prompts) {
-        if (p.id) {
-          try {
-            await fetch(`/api/prompts/${p.id}`, { method: 'DELETE' });
-          } catch (err) {
-            console.error('Failed to delete prompt:', err);
-          }
-        }
-      }
-    }
-
-    try {
-      const response = await fetch(`/api/keywords/${id}`, { method: 'DELETE' });
-      if (response.ok) {
-        setKeywords(keywords.filter(kw => kw.id !== id));
-        setTotalUsedPrompts(prev => Math.max(0, prev - (kw ? kw.prompts.length : 0)));
-        if (selectedKeyword && selectedKeyword.id === id) {
-          setSelectedKeyword(null);
-        }
-      } else {
-        alert('Fout bij verwijderen van keyword.');
-      }
-    } catch (err) {
-      console.error('Failed to delete keyword:', err);
-    }
-  };
-
   const handleArchiveKeyword = async (kw) => {
-    if (kw.prompts) {
-      for (const p of kw.prompts) {
-        if (p.id) {
-          try {
-            await fetch(`/api/prompts/${p.id}`, { method: 'DELETE' });
-          } catch (err) {
-            console.error('Failed to delete associated prompt:', err);
-          }
-        }
-      }
+    if (!window.confirm(`Weet u zeker dat u zoekwoord "${kw.text}" wilt archiveren? De bijbehorende prompts en data blijven veilig bewaard in uw archief.`)) {
+      return;
     }
 
     try {
-      const response = await fetch(`/api/keywords/${kw.id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/keywords/${kw.id}/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+      });
       if (response.ok) {
-        setKeywords(keywords.filter(k => k.id !== kw.id));
-        setArchivedKeywords(prev => [kw, ...prev]);
-        setTotalUsedPrompts(prev => Math.max(0, prev - (kw.prompts ? kw.prompts.length : 0)));
+        setKeywords(prev => prev.map(k => k.id === kw.id ? { ...k, is_archived: true } : k));
         if (selectedKeyword && selectedKeyword.id === kw.id) {
           setSelectedKeyword(null);
         }
@@ -970,62 +922,15 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   };
 
   const handleRestoreKeyword = async (kw) => {
-    const workspace = activeWorkspace || 'Saleswizard.nl';
     try {
-      const kwResponse = await fetch('/api/keywords', {
+      const response = await fetch(`/api/keywords/${kw.id}/restore`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: workspace, keyword: kw.text, volume: kw.volume })
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
       });
-      const kwData = await kwResponse.json();
-
-      if (kwData.success) {
-        const insertedKw = kwData.keyword;
-
-        // Generate 3 dynamic prompts using backend AI service
-        const genResponse = await fetch('/api/prompts/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company: workspace, keyword: kw.text })
-        });
-        const genData = await genResponse.json();
-        const prompts = genData.success && genData.prompts ? genData.prompts : [
-          `Wat is het beste ${kw.text} in Nederland?`,
-          `Welke ${kw.text} partijen zijn gespecialiseerd in MKB groei?`,
-          `Hoe kies ik een betrouwbare partner voor ${kw.text}?`
-        ];
-
-        const savedPrompts = [];
-        for (const pText of prompts) {
-          const pResponse = await fetch('/api/prompts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ company: workspace, text: pText, tag: 'AI Generated', keyword_id: insertedKw.id })
-          });
-          const pData = await pResponse.json();
-          if (pData.success) {
-            savedPrompts.push(pData.prompt);
-            // Automatically trigger crawl immediately for restored prompt
-            handleRunPromptScan(pData.prompt.id, pData.prompt.text);
-          }
-        }
-
-        const restoredKw = {
-          ...kw,
-          id: insertedKw.id,
-          prompts: savedPrompts.map(p => ({
-            id: p.id,
-            text: p.text,
-            status: 'Not Cited',
-            engines: ['chatgpt', 'gemini', 'perplexity'],
-            brandsCount: 0,
-            sourcesCount: 0
-          }))
-        };
-
-        setKeywords(prev => [restoredKw, ...prev]);
-        setArchivedKeywords(prev => prev.filter(k => k.id !== kw.id));
-        setTotalUsedPrompts(prev => prev + prompts.length);
+      if (response.ok) {
+        setKeywords(prev => prev.map(k => k.id === kw.id ? { ...k, is_archived: false } : k));
+      } else {
+        alert('Fout bij herstellen van keyword.');
       }
     } catch (err) {
       console.error('Failed to restore keyword:', err);
@@ -1083,7 +988,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         rank: `#${idx + 1}`,
         brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
         domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
-        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace('.nl', '').replace(/[^a-z0-9]/g, '')))),
+        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').replace(/[^a-z0-9]/g, '')))),
         sov: typeof c.sov === 'number' ? c.sov : 0,
         position: c.position || '-',
         citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
@@ -1196,7 +1101,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   };
 
   const filteredKeywords = keywords.filter(kw =>
-    kw && kw.text ? String(kw.text).toLowerCase().includes((searchQuery || '').toLowerCase()) : false
+    !kw.is_archived && (kw && kw.text ? String(kw.text).toLowerCase().includes((searchQuery || '').toLowerCase()) : false)
+  );
+
+  const archivedKeywords = keywords.filter(kw =>
+    kw.is_archived && (kw && kw.text ? String(kw.text).toLowerCase().includes((searchQuery || '').toLowerCase()) : false)
   );
 
 
@@ -2937,7 +2846,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           <p style={{ color: '#6b7280', fontSize: '13px', marginTop: '4px' }}>
             {isReadOnly
               ? `Live GEO resultaten, nulmeting en AI-zichtbaarheid voor ${activeWorkspace || 'uw merk'}.`
-              : `Setup your keywords for ${activeWorkspace ? activeWorkspace.replace('.nl', '') : 'Saleswizard'} brand visibility tracking.`}
+              : `Setup your keywords for ${activeWorkspace ? activeWorkspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '') : 'Saleswizard'} brand visibility tracking.`}
           </p>
         </div>
 
@@ -3287,19 +3196,23 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             </button>
             <button
               type="button"
-              onClick={handleBulkDeleteKeywords}
+              onClick={handleBulkArchiveKeywords}
               style={{
                 padding: '6px 14px',
                 borderRadius: '20px',
                 border: 'none',
-                backgroundColor: '#ef4444',
+                backgroundColor: '#f59e0b',
                 color: 'white',
                 fontSize: '12px',
                 fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
                 cursor: 'pointer'
               }}
             >
-              Verwijder Geselecteerde
+              <Archive size={12} />
+              Archiveer Geselecteerde
             </button>
           </div>
         </div>
@@ -3326,7 +3239,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De gemiddelde positie/volgorde waarin het merk wordt genoemd in de AI-antwoorden">Position</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Schatting van het aantal maandelijkse zoekopdrachten in Google Nederland">Search Volume</th>
               <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De meest genoemde merken in de AI-zoekresultaten voor dit zoekwoord">Top Brands</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren, archiveren of verwijderen">
+              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren of archiveren">
                 {isReadOnly ? 'Details' : 'Actions'}
               </th>
             </tr>
@@ -3476,23 +3389,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleArchiveKeyword(kw)}
-                        title="Archive Keyword"
+                        onClick={(e) => { e.stopPropagation(); handleArchiveKeyword(kw); }}
+                        title="Zoekwoord Archiveren"
                         style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = '#111827'; }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#f59e0b'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
                       >
                         <Archive size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteKeyword(kw.id)}
-                        title="Delete Keyword"
-                        style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
-                      >
-                        <Trash2 size={14} />
                       </button>
                     </div>
                   )}
@@ -3506,54 +3409,89 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
       {/* Collapsible Archived Keywords Accordion */}
       {!isReadOnly && (
-        <div style={{ marginTop: '16px' }}>
+        <div style={{ marginTop: '24px' }}>
           <button
             type="button"
             onClick={() => setIsArchivedOpen(!isArchivedOpen)}
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              backgroundColor: 'transparent',
-              border: 'none',
-              fontSize: '14px',
+              gap: '8px',
+              backgroundColor: '#f9fafb',
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '13px',
               color: '#4b5563',
               fontWeight: 600,
               cursor: 'pointer',
-              padding: '8px 0px'
+              padding: '10px 14px',
+              width: '100%',
+              justifyContent: 'space-between',
+              transition: 'background-color 0.15s ease'
             }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
           >
-            <span>Archived keywords ({archivedKeywords.length})</span>
-            {isArchivedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Archive size={15} style={{ color: '#d97706' }} />
+              <span>Gearchiveerde zoekwoorden ({archivedKeywords.length})</span>
+              <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>
+                (prompts blijven bewaard en tellen mee in het prompts-verbruik)
+              </span>
+            </div>
+            {isArchivedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
 
           {isArchivedOpen && (
             archivedKeywords.length > 0 ? (
-              <div style={{ marginTop: '12px', overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+              <div style={{ marginTop: '10px', overflowX: 'auto', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#6b7280', fontSize: '12px' }}>
+                      <th style={{ padding: '10px 16px' }}>Zoekwoord</th>
+                      <th style={{ padding: '10px 16px' }}>Prompts</th>
+                      <th style={{ padding: '10px 16px' }}>Rank</th>
+                      <th style={{ padding: '10px 16px' }}>Share of Voice</th>
+                      <th style={{ padding: '10px 16px' }}>Volume</th>
+                      <th style={{ padding: '10px 16px', textAlign: 'right' }}>Actie</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {archivedKeywords.map(kw => (
                       <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                        <td style={{ padding: '10px 16px' }}><span style={{ textDecoration: 'line-through', color: '#9ca3af' }}>{kw.text}</span></td>
+                        <td style={{ padding: '10px 16px', fontWeight: 500, color: '#374151' }}>
+                          <span style={{ textDecoration: 'line-through', color: '#9ca3af', marginRight: '8px' }}>{kw.text}</span>
+                          <span style={{ fontSize: '10px', color: '#b45309', backgroundColor: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>Gearchiveerd</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', color: '#6b7280' }}>
+                          {(kw.prompts || []).length} prompt{(kw.prompts || []).length === 1 ? '' : 's'}
+                        </td>
                         <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
                         <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
                         <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
-                        <td style={{ padding: '10px 16px' }}>
+                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
                           <button
                             type="button"
                             onClick={() => handleRestoreKeyword(kw)}
                             style={{
-                              fontSize: '11px',
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              backgroundColor: '#f3f4f6',
-                              color: '#111827',
-                              fontWeight: 700,
+                              fontSize: '12px',
+                              padding: '5px 12px',
+                              borderRadius: '6px',
+                              backgroundColor: '#ffffff',
+                              border: '1px solid #d1d5db',
+                              color: '#1f2937',
+                              fontWeight: 600,
                               cursor: 'pointer',
-                              border: 'none'
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '5px'
                             }}
+                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.borderColor = '#9ca3af'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
+                            title="Herstel dit zoekwoord naar de actieve lijst"
                           >
-                            Restore
+                            <RotateCcw size={13} />
+                            Dearchiveren
                           </button>
                         </td>
                       </tr>
@@ -3562,14 +3500,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 </table>
               </div>
             ) : (
-              <p style={{ fontSize: '13px', color: '#9ca3af', padding: '12px 0px', fontStyle: 'italic' }}>
-                Geen gearchiveerde keywords voor dit project.
+              <p style={{ fontSize: '13px', color: '#9ca3af', padding: '16px', fontStyle: 'italic', textAlign: 'center', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb', marginTop: '10px' }}>
+                Er zijn momenteel geen gearchiveerde zoekwoorden voor dit project.
               </p>
             )
           )}
         </div>
       )}
-
     </div>
   );
 }

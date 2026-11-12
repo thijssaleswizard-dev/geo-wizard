@@ -348,7 +348,7 @@ class WebsiteCrawlerService
         }
 
         if (count($finalKeywords) < 3) {
-            $cleanName = strtolower(trim(str_replace('.nl', '', $companyName)));
+            $cleanName = AiEngineService::cleanBrandKey($companyName);
             $finalKeywords = array_unique(array_merge($finalKeywords, [
                 $primaryLocation ? "specialist {$primaryLocation}" : "specialist {$cleanName}",
                 $primaryLocation ? "bureau {$primaryLocation}" : "expert {$cleanName}",

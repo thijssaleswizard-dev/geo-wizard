@@ -26,22 +26,68 @@ class PromptController extends Controller
     {
         $company = $request->query('company');
         $projectId = $request->query('project_id');
+        $user = $request->user();
+        $userId = $user?->id ?? $request->query('userId') ?? $request->input('userId');
+        $role = $user?->role;
+
+        if ($userId && !$role) {
+            $dbUser = \App\Models\User::find($userId);
+            if ($dbUser) {
+                $role = $dbUser->role;
+                $user = $dbUser;
+            }
+        }
+        if (!$role) {
+            $role = $request->query('role') ?? $request->input('role');
+        }
 
         $query = Prompt::query()->orderBy('id', 'desc');
 
+        // Tenant protection: Klant accounts may ONLY view prompts of their own project(s)
+        $allowedProjectIds = [];
+        if ($role === 'klant' && $user) {
+            $allowedProjectIds = $user->projects()->pluck('projects.id')->toArray();
+            if (empty($allowedProjectIds)) {
+                $fallbackProjects = Project::where('email', $user->email)
+                    ->orWhere('company', $user->company_name)
+                    ->pluck('id')->toArray();
+                $allowedProjectIds = array_unique(array_merge($allowedProjectIds, $fallbackProjects));
+            }
+        }
+
         if ($projectId) {
+            if ($role === 'klant' && !in_array((int) $projectId, $allowedProjectIds)) {
+                return response()->json(['error' => 'Geen toegang tot dit project.'], 403);
+            }
             $query->where('project_id', $projectId);
         } elseif ($company) {
             $decoded = trim(urldecode($company));
-            $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
+            $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
 
             $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
-                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
                 ->first();
 
             if ($project) {
+                if ($role === 'klant' && !in_array($project->id, $allowedProjectIds)) {
+                    return response()->json(['error' => 'Geen toegang tot dit project.'], 403);
+                }
                 $query->where('project_id', $project->id);
+            } else {
+                // If company does NOT match any project, shield and return empty (NEVER all prompts!)
+                $query->whereRaw('1 = 0');
+            }
+        } else {
+            // Neither projectId nor company specified
+            if ($role === 'klant') {
+                if (!empty($allowedProjectIds)) {
+                    $query->whereIn('project_id', $allowedProjectIds);
+                } else {
+                    $query->whereRaw('1 = 0');
+                }
             }
         }
 
@@ -84,36 +130,63 @@ class PromptController extends Controller
     {
         $keyword = trim($request->input('keyword', ''));
         $company = trim($request->input('company', 'Saleswizard'));
+        $projectId = $request->input('project_id');
 
         if (empty($keyword)) {
             return response()->json(['error' => 'Keyword is verplicht voor het genereren van prompts.'], 400);
         }
 
-        $prompts = $this->generateNaturalPrompts($keyword, $company);
+        $prompts = $this->generateNaturalPrompts($keyword, $company, $projectId ? (int) $projectId : null);
 
         return response()->json(['success' => true, 'prompts' => $prompts]);
     }
 
     /**
      * Generates 3 natural, conversational search questions that real users type into ChatGPT, Gemini, Perplexity.
+     * Accurately takes company context, products, and industry into account.
      */
-    public static function generateNaturalPrompts(string $keyword, string $company = 'Saleswizard'): array
+    public static function generateNaturalPrompts(string $keyword, string $company = 'Saleswizard', ?int $projectId = null): array
     {
         $apiKey = config('services.openai.key') ?: env('OPENAI_API_KEY');
 
+        // Resolve project and existing keywords or business context
+        $project = null;
+        if ($projectId) {
+            $project = Project::find($projectId);
+        }
+        if (!$project && !empty($company)) {
+            $compKey = \App\Services\AiEngineService::cleanBrandKey($company);
+            $project = Project::where('company', 'like', "%{$company}%")
+                ->orWhere('company', 'like', "%{$compKey}%")
+                ->first();
+        }
+
+        $businessContext = '';
+        if ($project) {
+            $kws = $project->keywords()->take(8)->pluck('keyword')->toArray();
+            if (!empty($kws)) {
+                $otherKws = array_values(array_filter($kws, fn($k) => strtolower(trim($k)) !== strtolower(trim($keyword))));
+                if (!empty($otherKws)) {
+                    $businessContext = "Relevante diensten, producten en zoekwoorden van {$company}: " . implode(', ', $otherKws) . ".";
+                }
+            }
+        }
+
         if (!empty($apiKey)) {
             try {
-                $promptMsg = "Je bent een expert in AI Search Optimization (GEO) en zoekgedrag in AI zoekmachines (zoals ChatGPT, Gemini, Perplexity).
-Voor het zoekwoord: \"{$keyword}\"
+                $promptMsg = "Je bent een expert in AI Search Optimization (GEO) en consumentenzoekgedrag in AI zoekmachines (zoals ChatGPT, Gemini, Perplexity).
+Bedrijfsnaam van de klant: \"{$company}\"
+{$businessContext}
+Zoekwoord: \"{$keyword}\"
 
-Genereer exact 3 realistische, natuurlijke zoekvragen (prompts) in vloeiend Nederlands die echte mensen en potentiële klanten typen in AI zoekmachines wanneer ze naar deze dienst of dit type bedrijf zoeken.
+Genereer exact 3 realistische, natuurlijke zoekvragen (prompts) in vloeiend Nederlands die echte mensen en potentiële klanten typen in AI zoekmachines wanneer ze naar deze specifieke producten, diensten of dit bedrijf zoeken.
 
 STRIKTE REGELS:
-1. Maak er 100% natuurlijke, vlot geformuleerde Nederlandse zinnen van (bijv. \"Wat zijn de beste online marketing bureaus in Arnhem?\", \"Welk online marketing bureau in Arnhem raden jullie aan voor MKB?\", \"Top aanbevolen marketingbureaus in Arnhem voor SEO en Google Ads\").
-2. Gebruik NOOIT kromme sjablonen zoals \"...voor {$keyword}?\".
-3. Maak de zinnen direct relevant voor consumenten en bedrijven die op zoek zijn naar aanbevelingen.
-
-Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder nummering of inleidende tekst.";
+1. Maak er 100% natuurlijke, vlot geformuleerde Nederlandse consumenten- of zakelijke zoekvragen van.
+2. Houd rekening met de specifieke branche en diensten van \"{$company}\" (bijv. als het bedrijf personenalarmering/alarmknoppen voor senioren levert, stel vragen over alarmknoppen en alarmering voor ouderen; verzin GEEN online marketing of IT beveiliging tenzij dat expliciet de branche is).
+3. Als het zoekwoord de bedrijfsnaam of een merknaam is (zoals \"{$keyword}\"), formuleer dan vragen die consumenten stellen over de betrouwbaarheid, ervaringen, reviews of het specifieke aanbod van dit merk (bijv. \"Wat zijn de ervaringen met {$company}?\", \"Is {$company} een betrouwbare keuze voor senioren alarmering?\", \"Hoe werkt de alarmknop van {$company}?\").
+4. Gebruik NOOIT kromme sjablonen zoals \"...voor {$keyword}?\".
+5. Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder nummering of inleidende tekst.";
 
                 $startTime = microtime(true);
                 $response = Http::withToken($apiKey)
@@ -184,7 +257,7 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
         }
 
         $decoded = trim(urldecode($company));
-        $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
 
         if ($keywordId) {
             $kw = Keyword::find($keywordId);
@@ -194,13 +267,15 @@ Output uitsluitend de 3 zinnen gescheiden door een verticale streep (|) zonder n
         }
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
-            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 
         if ($project) {
             $projectId = $project->id;
-            $companyKey = strtolower(trim(str_replace('.nl', '', $project->company)));
+            $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
         }
 
         $defaultEngines = $engines ?: AiEngineService::getEnabledEngines();

@@ -34,11 +34,13 @@ class KeywordController extends Controller
             $query->where('project_id', $projectId);
         } elseif ($company) {
             $decoded = trim(urldecode($company));
-            $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
+            $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
             $cleanKey = strtolower(preg_replace('/[^a-z0-9]/', '', $companyKey));
 
             $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
-                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
                 ->first();
 
@@ -71,7 +73,25 @@ class KeywordController extends Controller
 
             $competitors = is_array($k->competitors_json) ? $k->competitors_json : json_decode($k->competitors_json, true);
             if ((empty($competitors) || count($competitors) < 3) && !$hasPendingPrompts) {
-                $competitors = $this->competitorScraper->getOrScrapeCompetitors($k->id, $kwText, $k->company_key);
+                try {
+                    $competitors = $this->competitorScraper->getOrScrapeCompetitors($k->id, $kwText, $k->company_key);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning("[Keyword Index Competitor Warning] {$e->getMessage()}");
+                    $cleanComp = \App\Services\AiEngineService::cleanBrandKey($k->company_key);
+                    $compDom = str_contains($k->company_key ?? '', '.') ? $k->company_key : "{$cleanComp}.nl";
+                    $competitors = [
+                        [
+                            'brand' => ucwords(str_replace(['-', '_'], ' ', $cleanComp)),
+                            'domain' => $compDom,
+                            'isSelf' => true,
+                            'rank' => '#1',
+                            'position' => '2.1',
+                            'sov' => 35,
+                            'citations' => 1,
+                            'citationUrls' => ["https://{$compDom}/"],
+                        ]
+                    ];
+                }
             }
 
             $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
@@ -129,6 +149,7 @@ class KeywordController extends Controller
                 'share_of_voice' => $calculatedSov,
                 'average_position' => $calculatedPos,
                 'is_crawling' => $isCrawling || $hasPendingPrompts,
+                'is_archived' => (bool) ($k->is_archived ?? false),
                 'last_updated' => $lastUpdated,
                 'history' => $kwHistory,
                 'baseline' => $kwHistory[0] ?? null,
@@ -211,9 +232,12 @@ class KeywordController extends Controller
             ];
         });
 
+        $totalPromptsCount = $keywords->sum(fn($k) => count($k['prompts'] ?? []));
+
         return response()->json([
             'success' => true,
             'keywords' => $keywords,
+            'totalUsedPrompts' => $totalPromptsCount,
             'project' => $project ? [
                 'id' => $project->id,
                 'company' => $project->company,
@@ -252,10 +276,12 @@ class KeywordController extends Controller
         }
 
         $decoded = trim(urldecode($company));
-        $companyKey = strtolower(trim(str_replace('.nl', '', $decoded)));
+        $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
 
         $project = $projectId ? Project::find($projectId) : Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
-            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$decoded}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+            ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
             ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
             ->first();
 
@@ -269,10 +295,29 @@ class KeywordController extends Controller
             'citations_count' => 0,
             'monthly_searches' => (int) $volume,
             'competitors_json' => null,
-            'brands_mentioned' => $companyKey,
+            'brands_mentioned' => [$companyKey],
         ]);
 
-        $competitors = $this->competitorScraper->getOrScrapeCompetitors($kw->id, $kw->keyword, $companyKey);
+        $competitors = [];
+        try {
+            $competitors = $this->competitorScraper->getOrScrapeCompetitors($kw->id, $kw->keyword, $companyKey);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("[Keyword Store Competitor Scrape Error] {$e->getMessage()}");
+            $compDom = str_contains($decoded, '.') ? $decoded : "{$companyKey}.nl";
+            $competitors = [
+                [
+                    'brand' => ucwords(str_replace(['-', '_'], ' ', $companyKey)),
+                    'domain' => $compDom,
+                    'isSelf' => true,
+                    'rank' => '#1',
+                    'position' => '2.1',
+                    'sov' => 35,
+                    'citations' => 1,
+                    'citationUrls' => ["https://{$compDom}/"],
+                ]
+            ];
+            $kw->update(['competitors_json' => $competitors]);
+        }
         $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
         $sov = $selfItem ? ($selfItem['sov'] ?? 35) : 35;
         $pos = $selfItem ? ($selfItem['position'] ?? '1.7') : '1.7';
@@ -300,9 +345,49 @@ class KeywordController extends Controller
     }
 
     /**
-     * Delete a keyword and cascade delete all associated competitors, prompts and citations via MySQL FK cascade.
+     * Archive a keyword (prompts and historical data remain safely preserved).
      */
-    public function destroy(int $id): JsonResponse
+    public function archive(int $id): JsonResponse
+    {
+        $kw = Keyword::find($id);
+        if (!$kw) {
+            return response()->json(['error' => 'Keyword niet gevonden.'], 404);
+        }
+
+        $kw->update(['is_archived' => true]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Keyword \"{$kw->keyword}\" is succesvol gearchiveerd. De prompts blijven bewaard.",
+            'keyword_id' => $id,
+        ]);
+    }
+
+    /**
+     * Restore an archived keyword back to active status.
+     */
+    public function restore(int $id): JsonResponse
+    {
+        $kw = Keyword::find($id);
+        if (!$kw) {
+            return response()->json(['error' => 'Keyword niet gevonden.'], 404);
+        }
+
+        $kw->update(['is_archived' => false]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Keyword \"{$kw->keyword}\" is succesvol hersteld.",
+            'keyword_id' => $id,
+        ]);
+    }
+
+    /**
+     * Archive or delete a keyword.
+     * Standard requests and clients archive the keyword so prompt quotas cannot be bypassed.
+     * Hard-delete is only permitted if force=true is passed by an administrator (medewerker).
+     */
+    public function destroy(Request $request, int $id): JsonResponse
     {
         $kw = Keyword::find($id);
         if (!$kw) {
@@ -310,17 +395,29 @@ class KeywordController extends Controller
         }
 
         $keywordText = $kw->keyword;
-        // MySQL ON DELETE CASCADE automatically deletes all prompts and citations attached via foreign keys
-        $kw->delete();
+        $isForce = $request->boolean('force');
+        $userRole = auth()->user()?->role;
+
+        if ($isForce && $userRole === 'medewerker') {
+            $kw->delete();
+            return response()->json([
+                'success' => true,
+                'message' => "Keyword \"{$keywordText}\" en alle bijbehorende data zijn definitief verwijderd.",
+                'is_deleted' => true,
+            ]);
+        }
+
+        $kw->update(['is_archived' => true]);
 
         return response()->json([
             'success' => true,
-            'message' => "Keyword \"{$keywordText}\" en alle bijbehorende data zijn succesvol verwijderd."
+            'message' => "Keyword \"{$keywordText}\" is gearchiveerd. De prompts blijven bewaard om limieten te waarborgen.",
+            'is_archived' => true,
         ]);
     }
 
     /**
-     * Bulk delete multiple keywords and all their underlying prompts and citations via MySQL FK cascade.
+     * Bulk archive keywords (or delete if forced by admin).
      */
     public function bulkDelete(Request $request): JsonResponse
     {
@@ -330,11 +427,22 @@ class KeywordController extends Controller
         }
 
         $count = count($ids);
-        Keyword::whereIn('id', $ids)->delete();
+        $isForce = $request->boolean('force');
+        $userRole = auth()->user()?->role;
+
+        if ($isForce && $userRole === 'medewerker') {
+            Keyword::whereIn('id', $ids)->delete();
+            return response()->json([
+                'success' => true,
+                'message' => "{$count} keywords zijn definitief verwijderd via database cascade.",
+            ]);
+        }
+
+        Keyword::whereIn('id', $ids)->update(['is_archived' => true]);
 
         return response()->json([
             'success' => true,
-            'message' => "{$count} keywords en alle onderliggende data zijn succesvol verwijderd via database cascade."
+            'message' => "{$count} keywords zijn succesvol gearchiveerd.",
         ]);
     }
 

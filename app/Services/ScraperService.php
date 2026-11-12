@@ -40,11 +40,14 @@ class ScraperService
     {
         $promptText = !empty($prompt) ? $prompt : 'Wat is het beste online marketing bureau in Arnhem?';
         $companyName = !empty($company) ? $company : 'Saleswizard';
-        $companyKey = strtolower(trim(str_replace('.nl', '', $companyName)));
+        $companyKey = AiEngineService::cleanBrandKey($companyName);
 
         if (!$projectId) {
             $proj = Project::whereRaw('LOWER(company) = ?', [strtolower($companyName)])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyName}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
                 ->first();
             if ($proj) {
@@ -375,66 +378,78 @@ class ScraperService
             'chatgpt' => [
                 'name' => 'OpenAI ChatGPT',
                 'method' => $openAIRes['method'] ?? 'OpenAI API',
-                'mentioned' => $openAIRes['mentioned'] ?? true,
-                'position' => $openAIRes['position'] ?? 1,
-                'score' => $openAIRes['score'] ?? 92,
-                'sentiment' => $openAIRes['sentiment'] ?? '+96',
+                'mentioned' => !empty($openAIRes['mentioned']) && empty($openAIRes['fallbackUsed']),
+                'position' => $openAIRes['position'] ?? null,
+                'score' => $openAIRes['score'] ?? 0,
+                'sentiment' => $openAIRes['sentiment'] ?? 'N/A',
                 'summary' => $openAIRes['text'] ?? '',
+                'isSimulated' => !empty($openAIRes['isSimulated']) || !empty($openAIRes['fallbackUsed']),
+                'fallbackUsed' => !empty($openAIRes['fallbackUsed']),
                 'brands' => $chatgptStats['brandsCount'],
                 'sources' => $chatgptStats['sourcesCount'],
             ],
             'aioverviews' => [
                 'name' => 'Google AI Overviews',
                 'method' => $aiOverviewsRes['method'] ?? 'Google SGE',
-                'mentioned' => $aiOverviewsRes['mentioned'] ?? true,
-                'position' => $aiOverviewsRes['position'] ?? 1,
-                'score' => $aiOverviewsRes['score'] ?? 89,
-                'sentiment' => $aiOverviewsRes['sentiment'] ?? '+92',
+                'mentioned' => !empty($aiOverviewsRes['mentioned']) && empty($aiOverviewsRes['fallbackUsed']),
+                'position' => $aiOverviewsRes['position'] ?? null,
+                'score' => $aiOverviewsRes['score'] ?? 0,
+                'sentiment' => $aiOverviewsRes['sentiment'] ?? 'N/A',
                 'summary' => $aiOverviewsRes['text'] ?? '',
+                'isSimulated' => !empty($aiOverviewsRes['isSimulated']) || !empty($aiOverviewsRes['fallbackUsed']),
+                'fallbackUsed' => !empty($aiOverviewsRes['fallbackUsed']),
                 'brands' => $aioStats['brandsCount'],
                 'sources' => count($aiOverviewsRes['citations'] ?? []) ?: count($extractedCitations),
             ],
             'aimode' => [
                 'name' => 'Google AI Mode',
                 'method' => $aiModeRes['method'] ?? 'Google AI Mode',
-                'mentioned' => $aiModeRes['mentioned'] ?? true,
-                'position' => $aiModeRes['position'] ?? 1,
-                'score' => $aiModeRes['score'] ?? 91,
-                'sentiment' => $aiModeRes['sentiment'] ?? '+94',
+                'mentioned' => !empty($aiModeRes['mentioned']) && empty($aiModeRes['fallbackUsed']),
+                'position' => $aiModeRes['position'] ?? null,
+                'score' => $aiModeRes['score'] ?? 0,
+                'sentiment' => $aiModeRes['sentiment'] ?? 'N/A',
                 'summary' => $aiModeRes['text'] ?? '',
+                'isSimulated' => !empty($aiModeRes['isSimulated']) || !empty($aiModeRes['fallbackUsed']),
+                'fallbackUsed' => !empty($aiModeRes['fallbackUsed']),
                 'brands' => $aimodeStats['brandsCount'],
                 'sources' => count($aiModeRes['citations'] ?? []) ?: 2,
             ],
             'gemini' => [
                 'name' => 'Google Gemini',
                 'method' => $geminiRes['method'] ?? 'Gemini API',
-                'mentioned' => $geminiRes['mentioned'] ?? true,
-                'position' => $geminiRes['position'] ?? 1,
-                'score' => $geminiRes['score'] ?? 90,
-                'sentiment' => $geminiRes['sentiment'] ?? '+94',
+                'mentioned' => !empty($geminiRes['mentioned']) && empty($geminiRes['fallbackUsed']),
+                'position' => $geminiRes['position'] ?? null,
+                'score' => $geminiRes['score'] ?? 0,
+                'sentiment' => $geminiRes['sentiment'] ?? 'N/A',
                 'summary' => $geminiRes['text'] ?? '',
+                'isSimulated' => !empty($geminiRes['isSimulated']) || !empty($geminiRes['fallbackUsed']),
+                'fallbackUsed' => !empty($geminiRes['fallbackUsed']),
                 'brands' => $geminiStats['brandsCount'],
                 'sources' => $geminiStats['sourcesCount'],
             ],
             'perplexity' => [
                 'name' => 'Perplexity AI',
                 'method' => $perplexityRes['method'] ?? 'Perplexity API',
-                'mentioned' => $perplexityRes['mentioned'] ?? true,
-                'position' => $perplexityRes['position'] ?? 2,
-                'score' => $perplexityRes['score'] ?? 86,
-                'sentiment' => $perplexityRes['sentiment'] ?? '+92',
+                'mentioned' => !empty($perplexityRes['mentioned']) && empty($perplexityRes['fallbackUsed']),
+                'position' => $perplexityRes['position'] ?? null,
+                'score' => $perplexityRes['score'] ?? 0,
+                'sentiment' => $perplexityRes['sentiment'] ?? 'N/A',
                 'summary' => $perplexityRes['text'] ?? '',
+                'isSimulated' => !empty($perplexityRes['isSimulated']) || !empty($perplexityRes['fallbackUsed']),
+                'fallbackUsed' => !empty($perplexityRes['fallbackUsed']),
                 'brands' => $perplexityStats['brandsCount'],
                 'sources' => max(3, $perplexityStats['sourcesCount']),
             ],
             'claude' => [
                 'name' => 'Anthropic Claude',
                 'method' => $anthropicRes['method'] ?? 'Anthropic API',
-                'mentioned' => $anthropicRes['mentioned'] ?? true,
-                'position' => $anthropicRes['position'] ?? 3,
-                'score' => $anthropicRes['score'] ?? 84,
-                'sentiment' => $anthropicRes['sentiment'] ?? '+90',
+                'mentioned' => !empty($anthropicRes['mentioned']) && empty($anthropicRes['fallbackUsed']),
+                'position' => $anthropicRes['position'] ?? null,
+                'score' => $anthropicRes['score'] ?? 0,
+                'sentiment' => $anthropicRes['sentiment'] ?? 'N/A',
                 'summary' => $anthropicRes['text'] ?? '',
+                'isSimulated' => !empty($anthropicRes['isSimulated']) || !empty($anthropicRes['fallbackUsed']),
+                'fallbackUsed' => !empty($anthropicRes['fallbackUsed']),
                 'brands' => $claudeStats['brandsCount'],
                 'sources' => $claudeStats['sourcesCount'],
             ],
@@ -491,21 +506,31 @@ class ScraperService
             ];
         }, $uniqueBrands, array_keys($uniqueBrands));
 
-        $totalMentionedCount = count(array_filter($modelMentions, fn($m) => $m['mentioned']));
+        // Only consider genuine live models that did NOT fall back to simulation
+        $liveMentions = array_filter($modelMentions, function ($m) {
+            $isSim = !empty($m['isSimulated']) || !empty($m['fallbackUsed']) || str_contains(strtolower($m['method'] ?? ''), 'simulator');
+            return !empty($m['mentioned']) && !$isSim;
+        });
+        $liveModels = array_filter($modelMentions, function ($m) {
+            return empty($m['isSimulated']) && empty($m['fallbackUsed']) && !str_contains(strtolower($m['method'] ?? ''), 'simulator');
+        });
+
+        $totalMentionedCount = count($liveMentions);
+        $totalLiveModelsCount = count($liveModels);
         $totalModelsCount = count($modelMentions);
         $totalBrandsCount = max(count($parsedBrands), 5);
         $totalSourcesCount = count($extractedCitations);
-        $overallScore = (int) round(($totalMentionedCount / $totalModelsCount) * 100);
+        $overallScore = $totalLiveModelsCount > 0 ? (int) round(($totalMentionedCount / $totalLiveModelsCount) * 100) : 0;
 
         $mentionedPositions = [];
-        foreach ($modelMentions as $mItem) {
-            if (!empty($mItem['mentioned']) && !empty($mItem['position'])) {
+        foreach ($liveMentions as $mItem) {
+            if (!empty($mItem['position'])) {
                 $mentionedPositions[] = (float) $mItem['position'];
             }
         }
         $calculatedPosition = !empty($mentionedPositions)
             ? round(array_sum($mentionedPositions) / count($mentionedPositions), 1)
-            : ($modelMentions['chatgpt']['position'] ?? ($modelMentions['gemini']['position'] ?? 1));
+            : null;
 
         // Build / preserve Prompt History (Nulmeting + subsequent scans)
         $promptHistory = [];

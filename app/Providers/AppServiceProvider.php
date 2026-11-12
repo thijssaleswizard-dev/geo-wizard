@@ -21,5 +21,15 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Vite::prefetch(concurrency: 3);
+
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('keywords') && !\Illuminate\Support\Facades\Schema::hasColumn('keywords', 'is_archived')) {
+                \Illuminate\Support\Facades\Schema::table('keywords', function (\Illuminate\Database\Schema\Blueprint $table) {
+                    $table->boolean('is_archived')->default(false)->index();
+                });
+            }
+        } catch (\Throwable $e) {
+            // Safe fallback if database is not migrated yet or offline
+        }
     }
 }
