@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, User, Lock, ArrowRight, Loader2, Building, Mail, Sparkles, Check } from 'lucide-react';
+import { User, Lock, ArrowRight, Loader2, Building, Mail, Sparkles, Check } from 'lucide-react';
 
 export default function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -519,27 +519,6 @@ export default function Login({ onLogin }) {
           )}
         </div>
 
-        {/* Demo Credentials Info Box (Only on login) */}
-        {!isRegister && (
-          <div style={{
-            backgroundColor: 'rgba(167, 139, 250, 0.08)',
-            border: '1px solid rgba(167, 139, 250, 0.2)',
-            borderRadius: 'var(--border-radius-sm)',
-            padding: '14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#a78bfa', fontSize: '12px', fontWeight: 700 }}>
-              <ShieldCheck size={15} />
-              Test Accounts (Database Authenticated)
-            </div>
-            <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.7)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <div><strong>Klant:</strong> <code>klant@saleswizard.nl</code> / <code>klant123</code></div>
-              <div><strong>Medewerker:</strong> <code>medewerker@saleswizard.nl</code> / <code>sales123</code></div>
-            </div>
-          </div>
-        )}
 
       </div>
 
