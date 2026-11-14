@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\LlmCostLog;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class AiEngineService
@@ -28,7 +29,78 @@ class AiEngineService
 
     public static function getApiHistory(): array
     {
+        try {
+            $logs = LlmCostLog::with('project')
+                ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                ->orderBy('id', 'desc')
+                ->limit(50)
+                ->get();
+
+            if ($logs->isNotEmpty()) {
+                return $logs->map(function (LlmCostLog $log) {
+                    $company = $log->project?->company ?? ($log->metadata['company'] ?? null);
+                    $prefix = $company ? "[{$company}] " : '';
+
+                    if ($log->status === 'ERROR') {
+                        $err = $log->metadata['error'] ?? 'Onbekende API fout.';
+                        $msg = "{$prefix}FOUT: {$err}";
+                    } elseif ($log->status === 'FALLBACK') {
+                        $err = $log->metadata['error'] ?? 'Fallback simulator actief (geen API kosten).';
+                        $msg = "{$prefix}{$err}";
+                    } else {
+                        $msg = "{$prefix}Succesvol uitgevoerd ({$log->model} · {$log->operation})";
+                    }
+
+                    return [
+                        'id' => $log->id,
+                        'timestamp' => $log->created_at ? $log->created_at->toISOString() : now()->toISOString(),
+                        'engine' => $log->engine,
+                        'status' => $log->status,
+                        'message' => $msg,
+                        'latency' => $log->latency_ms !== null ? "{$log->latency_ms}ms" : 'N/A',
+                        'cost' => '€' . number_format((float) $log->cost_eur, 4, ',', '.'),
+                        'tokens' => number_format((int) $log->total_tokens),
+                    ];
+                })->values()->all();
+            }
+        } catch (\Exception $e) {
+            // Fallback to in-memory history if database is unavailable
+        }
+
         return self::$apiCallHistory;
+    }
+
+    /**
+     * Record circuit-breaker blocks or missing-key fallbacks without overwriting an error just logged.
+     */
+    protected static function resolveFallbackReason(
+        string $engine,
+        string $model,
+        string $operation,
+        string $logName,
+        string $promptSnippet,
+        string $companyName,
+        ?string $apiKey,
+        ?string $lastError,
+        ?int $projectId,
+        ?int $promptId
+    ): string {
+        $circuitError = $apiKey ? Cache::get("ai_circuit_breaker_{$engine}") : null;
+        $activeError = !$apiKey
+            ? 'Geen API-sleutel geconfigureerd in .env'
+            : ($circuitError ?: ($lastError ?: 'API fout, fallback simulator actief'));
+
+        if ($apiKey && $circuitError && !$lastError) {
+            LlmCostService::recordUsage($engine, $model, $operation, 0, 0, 'ERROR', null, $projectId, $promptId, false, ['error' => $circuitError, 'company' => $companyName]);
+            self::logApiCall($engine, 'ERROR', $circuitError, null);
+            GeoLog::aiCall($logName, $model, $promptSnippet, 'BLOCKED', null, "API aanroep overgeslagen wegens actieve blokkade: {$circuitError}");
+        } elseif (!$apiKey) {
+            LlmCostService::recordUsage($engine, $model, $operation, 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName, 'error' => $activeError]);
+            self::logApiCall($engine, 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
+        }
+
+        GeoLog::aiCall($logName, $model, $promptSnippet, 'FALLBACK', null, $activeError);
+        return $activeError;
     }
 
     public static function getApiKey(string $engine): ?string
@@ -189,8 +261,25 @@ class AiEngineService
 
             // 2. Check latest DB log for persistent state across FPM requests
             $latestDbLog = null;
+            $lastErrorLog = null;
             try {
-                $latestDbLog = LlmCostLog::where('engine', $eng['key'])->orderBy('id', 'desc')->first();
+                $latestDbLog = LlmCostLog::where('engine', $eng['key'])
+                    ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                    ->whereIn('status', ['SUCCESS', 'ERROR'])
+                    ->orderBy('id', 'desc')
+                    ->first();
+
+                if (!$latestDbLog) {
+                    $latestDbLog = LlmCostLog::where('engine', $eng['key'])
+                        ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                        ->orderBy('id', 'desc')
+                        ->first();
+                }
+
+                $lastErrorLog = LlmCostLog::where('engine', $eng['key'])
+                    ->where('status', 'ERROR')
+                    ->orderBy('id', 'desc')
+                    ->first();
             } catch (\Exception $e) {
             }
 
@@ -209,15 +298,15 @@ class AiEngineService
                 $status = 'ERROR';
                 $lastError = $circuitBreakerMsg;
             } elseif ($lastLog) {
-                $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : ($lastLog['status'] === 'FALLBACK' ? 'FALLBACK' : 'DEGRADED');
+                $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : ($lastLog['status'] === 'FALLBACK' ? 'FALLBACK' : 'ERROR');
                 $lastError = $lastLog['status'] === 'ERROR' ? $lastLog['message'] : null;
             } elseif ($latestDbLog) {
                 if ($latestDbLog->status === 'ERROR') {
                     $status = 'ERROR';
                     $lastError = $latestDbLog->metadata['error'] ?? 'API fout opgetreden';
                 } elseif ($latestDbLog->status === 'FALLBACK') {
-                    $status = 'FALLBACK';
-                    $lastError = 'Fallback simulator actief';
+                    $status = $lastErrorLog ? 'ERROR' : 'FALLBACK';
+                    $lastError = $lastErrorLog?->metadata['error'] ?? 'Fallback simulator actief';
                 } else {
                     $status = 'ACTIVE';
                     $lastError = null;
@@ -330,22 +419,21 @@ class AiEngineService
                     ];
                 }
 
-                $errorMsg = $response->json('error.message') ?? $response->body();
-                LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
-                self::logApiCall('openai', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                $lastError = $response->json('error.message') ?? $response->body();
+                LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('openai', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'ERROR', $duration, "Fout respons: {$lastError}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
-                LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
-                self::logApiCall('openai', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                $lastError = $e->getMessage();
+                LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('openai', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'ERROR', $duration, "Exception: {$lastError}");
             }
         }
 
         // Fallback simulation (zero cost)
-        LlmCostService::recordUsage('openai', 'gpt-4o', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
-        self::logApiCall('openai', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
-        GeoLog::aiCall('OpenAI ChatGPT', 'gpt-4o (SearchGPT Web)', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        $activeError = self::resolveFallbackReason('openai', 'gpt-4o', 'prompt_scan', 'OpenAI ChatGPT', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
             'method' => 'OpenAI API Simulator',
             'name' => 'ChatGPT 4o',
@@ -359,7 +447,7 @@ class AiEngineService
             'isSimulated' => true,
             'costEur' => 0.0,
             'tokens' => 0,
-            'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
+            'errorMsg' => $activeError,
         ];
     }
 
@@ -563,25 +651,24 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     ];
                 }
 
-                $errorMsg = $response->json('error.message') ?? $response->body();
-                if (str_contains(strtolower($errorMsg), 'spending cap') || str_contains(strtolower($errorMsg), 'quota')) {
-                    Cache::put('ai_circuit_breaker_gemini', $errorMsg, 3600);
+                $lastError = $response->json('error.message') ?? $response->body();
+                if (str_contains(strtolower($lastError), 'spending cap') || str_contains(strtolower($lastError), 'quota')) {
+                    Cache::put('ai_circuit_breaker_gemini', $lastError, 3600);
                 }
-                LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
-                self::logApiCall('gemini', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('gemini', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Fout respons: {$lastError}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
-                LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
-                self::logApiCall('gemini', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                $lastError = $e->getMessage();
+                LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('gemini', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'ERROR', $duration, "Exception: {$lastError}");
             }
         }
 
         // Fallback simulation for all 3 if API failed or no key
-        LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
-        self::logApiCall('gemini', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
-        GeoLog::aiCall('Google Suite', 'gemini-flash-latest', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        $activeError = self::resolveFallbackReason('gemini', 'gemini-flash-latest', 'google_suite_scan', 'Google Suite', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
             'gemini' => [
                 'method' => 'Gemini API Simulator',
@@ -596,7 +683,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 'isSimulated' => true,
                 'costEur' => 0.0,
                 'tokens' => 0,
-                'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
+                'errorMsg' => $activeError,
             ],
             'aimode' => [
                 'method' => 'Google AI Mode Simulator',
@@ -731,25 +818,24 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     ];
                 }
 
-                $errorMsg = $response->json('error.message') ?? $response->body();
-                if (str_contains(strtolower($errorMsg), 'paid credits') || str_contains(strtolower($errorMsg), 'quota')) {
-                    Cache::put('ai_circuit_breaker_perplexity', $errorMsg, 3600);
+                $lastError = $response->json('error.message') ?? $response->body();
+                if (str_contains(strtolower($lastError), 'paid credits') || str_contains(strtolower($lastError), 'quota')) {
+                    Cache::put('ai_circuit_breaker_perplexity', $lastError, 3600);
                 }
-                LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
-                self::logApiCall('perplexity', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('perplexity', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Fout respons: {$lastError}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
-                LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
-                self::logApiCall('perplexity', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                $lastError = $e->getMessage();
+                LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('perplexity', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'ERROR', $duration, "Exception: {$lastError}");
             }
         }
 
         // Fallback simulation (zero cost)
-        LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
-        self::logApiCall('perplexity', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
-        GeoLog::aiCall('Perplexity AI', 'sonar', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        $activeError = self::resolveFallbackReason('perplexity', 'sonar', 'prompt_scan', 'Perplexity AI', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
             'method' => 'Perplexity API Simulator',
             'name' => 'Perplexity AI',
@@ -763,7 +849,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             'isSimulated' => true,
             'costEur' => 0.0,
             'tokens' => 0,
-            'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
+            'errorMsg' => $activeError,
         ];
     }
 
@@ -834,22 +920,21 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                     ];
                 }
 
-                $errorMsg = $response->json('error.message') ?? $response->body();
-                LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $errorMsg]);
-                self::logApiCall('anthropic', 'ERROR', $errorMsg, $duration);
-                GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'ERROR', $duration, "Fout respons: {$errorMsg}");
+                $lastError = $response->json('error.message') ?? $response->body();
+                LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('anthropic', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'ERROR', $duration, "Fout respons: {$lastError}");
             } catch (\Exception $e) {
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
-                LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $e->getMessage()]);
-                self::logApiCall('anthropic', 'ERROR', $e->getMessage(), $duration);
-                GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'ERROR', $duration, "Exception: {$e->getMessage()}");
+                $lastError = $e->getMessage();
+                LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
+                self::logApiCall('anthropic', 'ERROR', $lastError, $duration);
+                GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'ERROR', $duration, "Exception: {$lastError}");
             }
         }
 
         // Fallback simulation (zero cost)
-        LlmCostService::recordUsage('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName]);
-        self::logApiCall('anthropic', 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
-        GeoLog::aiCall('Anthropic Claude', 'claude-sonnet-5-5', $promptSnippet, 'FALLBACK', null, empty($apiKey) ? 'Geen API-sleutel geconfigureerd in .env' : 'API fout, fallback simulator actief');
+        $activeError = self::resolveFallbackReason('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 'Anthropic Claude', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
             'method' => 'Anthropic API Simulator',
             'name' => 'Claude Sonnet 5.5',
@@ -863,7 +948,7 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             'isSimulated' => true,
             'costEur' => 0.0,
             'tokens' => 0,
-            'errorMsg' => empty($apiKey) ? 'Geen API-sleutel geconfigureerd.' : 'API verzoek mislukt, fallback gebruikt.',
+            'errorMsg' => $activeError,
         ];
     }
 

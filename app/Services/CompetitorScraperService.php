@@ -186,29 +186,6 @@ class CompetitorScraperService
             'hits' => $selfHits,
         ];
 
-        // Ensure at least 3 items in competitor list so cache check (>= 3) always passes cleanly
-        if (count($groundedData) < 3) {
-            $safeFallbacks = [
-                'telefoongids.nl' => ['brand' => 'De Telefoongids', 'domain' => 'telefoongids.nl', 'url' => "https://www.detelefoongids.nl/zoeken/" . urlencode($keywordText)],
-                'bedrijvenmonitor.nl' => ['brand' => 'Bedrijven Monitor', 'domain' => 'bedrijvenmonitor.nl', 'url' => "https://www.bedrijvenmonitor.nl/"],
-                'kvk.nl' => ['brand' => 'KVK Handelsregister', 'domain' => 'kvk.nl', 'url' => "https://www.kvk.nl/zoeken/handelsregister/?q=" . urlencode($cleanKw)],
-            ];
-            foreach ($safeFallbacks as $fDom => $fInfo) {
-                if (!isset($groundedData[$fDom]) && count($groundedData) < 4) {
-                    $groundedData[$fDom] = [
-                        'brand' => $fInfo['brand'],
-                        'domain' => $fDom,
-                        'isSelf' => false,
-                        'sov' => 0,
-                        'position' => '5.0',
-                        'citations' => 1,
-                        'citationUrls' => [$fInfo['url']],
-                        'hits' => 1,
-                    ];
-                }
-            }
-        }
-
         // 4. Dynamic Sorting: Rank strictly by actual search engine hits and citations
         $competitorsList = array_values($groundedData);
 
@@ -444,9 +421,11 @@ class CompetitorScraperService
                             }
                         }
                         if (!$dom) {
-                            // Derive clean domain from brand name (strip "& ...", "Hoveniersbedrijf", etc. if needed)
-                            $shortSlug = preg_replace('/[^a-z0-9]/', '', strtolower(explode('&', $firstCell)[0]));
-                            $dom = ($shortSlug ?: $normCell) . '.nl';
+                            // No cited website: verify the real domain (DNS + homepage check) instead of guessing.
+                            $dom = self::resolveBrandDomain($firstCell);
+                            if (!$dom) {
+                                continue;
+                            }
                             $citUrl = "https://{$dom}/";
                         }
 
@@ -740,6 +719,59 @@ class CompetitorScraperService
         }
 
         return $found;
+    }
+
+    /**
+     * Find the real .nl website of a company name mentioned by an AI engine.
+     * Tries a handful of plausible domains, requires DNS + a homepage that mentions the brand.
+     * Returns null when nothing verifiable is found (results cached for 30 days).
+     */
+    public static function resolveBrandDomain(string $brand): ?string
+    {
+        $clean = strtolower(trim(str_replace(['*', '_', '`'], '', $brand)));
+        $clean = preg_split('/\s*(?:&|\||\(|\s-\s|,)\s*/', $clean)[0] ?? $clean;
+        $clean = trim(preg_replace('/\b(b\.?v\.?|v\.?o\.?f\.?)\b/', '', $clean));
+        if (strlen($clean) < 3) {
+            return null;
+        }
+
+        return \Illuminate\Support\Facades\Cache::remember('brand_domain_' . md5($clean), now()->addDays(30), function () use ($clean) {
+            $words = array_values(array_filter(preg_split('/[^a-z0-9]+/', $clean)));
+            if (empty($words)) {
+                return '';
+            }
+            $generic = ['hoveniersbedrijf', 'hoveniers', 'hovenier', 'tuinen', 'tuin', 'groen', 'bedrijf', 'het', 'de', 'van', 'en'];
+            $core = array_values(array_filter($words, fn($w) => !in_array($w, $generic)));
+
+            $candidates = [implode('', $words), implode('-', $words)];
+            if (!empty($core) && $core !== $words) {
+                $candidates[] = implode('', $core);
+                $candidates[] = implode('-', $core);
+                $candidates[] = implode('', $core) . 'hoveniers';
+            }
+            $candidates = array_unique(array_filter($candidates, fn($c) => strlen($c) >= 3));
+
+            // Distinctive token that must appear on the homepage (longest non-generic word)
+            $tokens = $core ?: $words;
+            usort($tokens, fn($a, $b) => strlen($b) <=> strlen($a));
+            $token = $tokens[0];
+
+            foreach ($candidates as $slug) {
+                $dom = "{$slug}.nl";
+                if (!checkdnsrr($dom, 'A') && !checkdnsrr($dom, 'CNAME')) {
+                    continue;
+                }
+                try {
+                    $res = Http::timeout(5)->withHeaders(['User-Agent' => 'Mozilla/5.0'])->get("https://{$dom}/");
+                    if ($res->successful() && str_contains(strtolower($res->body()), $token)) {
+                        return $dom;
+                    }
+                } catch (\Exception $e) {
+                    // try next candidate
+                }
+            }
+            return '';
+        }) ?: null;
     }
 
     /**
