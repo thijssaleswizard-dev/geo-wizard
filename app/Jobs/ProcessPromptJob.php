@@ -69,36 +69,49 @@ class ProcessPromptJob implements ShouldQueue
             );
 
             $totalMentioned = $result['totalMentions'] ?? 0;
-            $totalModels = $result['totalModels'] ?? 1;
-
-            $chatgptMention = $result['modelMentions']['chatgpt'] ?? null;
-            $geminiMention = $result['modelMentions']['gemini'] ?? null;
+            $totalModels = $result['totalLiveModels'] ?? $result['totalModels'] ?? 0;
+            $failedModelsCount = $result['failedModelsCount'] ?? 0;
 
             $promptRecord->update([
-                'status' => 'completed',
+                'status' => $totalModels > 0 ? 'completed' : 'failed',
                 'brand_mentioned' => $totalMentioned > 0,
-                'position' => $chatgptMention['position'] ?? ($geminiMention['position'] ?? 1),
-                'response_summary' => "{$companyName} wordt door {$totalMentioned} van de {$totalModels} AI-modellen aanbevolen.",
-                'sentiment' => $chatgptMention['sentiment'] ?? '+90',
+                'position' => $totalMentioned > 0 ? ($result['position'] ?? null) : null,
+                'response_summary' => $totalModels > 0
+                    ? "{$companyName} wordt door {$totalMentioned} van de {$totalModels} live AI-modellen aanbevolen." . ($failedModelsCount > 0 ? " ({$failedModelsCount} niet gemeten)" : "")
+                    : "Geen live AI-modellen beschikbaar tijdens deze scan.",
+                'sentiment' => $totalMentioned > 0 ? ($result['sentiment'] ?? '+90') : 'N/A',
                 'logs' => $result['logs'] ?? [],
                 'results' => $result,
                 'updated_at' => now(),
             ]);
 
-            // Auto-recalculate overview metrics for the project
+            // Auto-recalculate overview metrics strictly from live (non-simulated) prompt results
             if ($project) {
                 try {
                     $citationsCount = \App\Models\Citation::where('project_id', $project->id)->count();
-                    $actualPromptsCount = $project->prompts()->count();
-                    $promptsCount = max(1, $actualPromptsCount);
-                    $mentionedCount = $project->prompts()->where('brand_mentioned', true)->count();
+                    $allPrompts = $project->prompts()->get();
+                    $actualPromptsCount = $allPrompts->count();
+                    $liveMeasuredPrompts = 0;
+                    $liveMentionedPrompts = 0;
 
-                    if ($actualPromptsCount === 0) {
+                    foreach ($allPrompts as $pItem) {
+                        $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                        $lm = \App\Services\AiEngineService::extractLivePromptMetrics(is_array($pRes) ? $pRes : null);
+                        if ($lm['hasLiveData']) {
+                            $liveMeasuredPrompts++;
+                            if ($lm['mentioned']) {
+                                $liveMentionedPrompts++;
+                            }
+                        }
+                    }
+
+                    if ($liveMeasuredPrompts === 0 || $liveMentionedPrompts === 0) {
                         $geoScore = 0;
                         $brandShare = 0;
                     } else {
-                        $geoScore = min(100, max(0, (int) round(($mentionedCount / $promptsCount) * 85 + min(15, $citationsCount * 2))));
-                        $brandShare = min(100, max(0, (int) round(($mentionedCount / $promptsCount) * 100)));
+                        $mentionRate = $liveMentionedPrompts / $liveMeasuredPrompts;
+                        $geoScore = min(100, max(0, (int) round($mentionRate * 85 + min(15, $citationsCount * 2))));
+                        $brandShare = min(100, max(0, (int) round($mentionRate * 100)));
                     }
                     $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
 
@@ -109,13 +122,13 @@ class ProcessPromptJob implements ShouldQueue
                             'geo_score' => $geoScore,
                             'brand_share' => $brandShare,
                             'citations_total' => $citationsCount,
-                            'sentiment_avg' => 94,
+                            'sentiment_avg' => $liveMentionedPrompts > 0 ? 94 : 0,
                         ]
                     );
 
                     $project->update([
                         'visibility_index' => $geoScore,
-                        'prompts_count' => $promptsCount,
+                        'prompts_count' => $actualPromptsCount,
                     ]);
                 } catch (\Exception $statErr) {
                     GeoLog::warning("⚠️ [ProcessPromptJob Stats Fout] Project #{$project->id}: {$statErr->getMessage()}");

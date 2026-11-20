@@ -95,12 +95,181 @@ class AiEngineService
             self::logApiCall($engine, 'ERROR', $circuitError, null);
             GeoLog::aiCall($logName, $model, $promptSnippet, 'BLOCKED', null, "API aanroep overgeslagen wegens actieve blokkade: {$circuitError}");
         } elseif (!$apiKey) {
-            LlmCostService::recordUsage($engine, $model, $operation, 0, 0, 'FALLBACK', null, $projectId, $promptId, false, ['company' => $companyName, 'error' => $activeError]);
-            self::logApiCall($engine, 'FALLBACK', 'Fallback simulator actief (geen API kosten).', null, 0.0, 0);
+            LlmCostService::recordUsage($engine, $model, $operation, 0, 0, 'ERROR', null, $projectId, $promptId, false, ['company' => $companyName, 'error' => $activeError]);
+            self::logApiCall($engine, 'ERROR', $activeError, null, 0.0, 0);
         }
 
-        GeoLog::aiCall($logName, $model, $promptSnippet, 'FALLBACK', null, $activeError);
+        GeoLog::aiCall($logName, $model, $promptSnippet, 'UNAVAILABLE', null, "Niet gemeten (uitgesloten van scores): {$activeError}");
         return $activeError;
+    }
+
+    /**
+     * Determine whether an API error indicates a billing / spending cap / credit / auth block
+     * (versus a transient per-minute 429 rate limit which should NOT disable the engine for an hour).
+     */
+    public static function isBillingCircuitBreakerError(string $errorMsg): bool
+    {
+        $lower = strtolower($errorMsg);
+        $transientHints = ['rate limit', 'rate_limit', 'per minute', 'too many requests', 'try again later', 'overloaded'];
+        foreach ($transientHints as $hint) {
+            if (str_contains($lower, $hint)) {
+                return false;
+            }
+        }
+
+        $billingHints = [
+            'spending cap',
+            'paid credits',
+            'credit balance',
+            'insufficient_quota',
+            'billing',
+            'payment required',
+            'exceeded its monthly',
+            'api key not valid',
+            'invalid_api_key',
+        ];
+        foreach ($billingHints as $hint) {
+            if (str_contains($lower, $hint)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve active AI scan driver: 'dataforseo' (web-client) or 'api' (direct developer APIs).
+     * When GEO_AI_DRIVER=auto (default), DataForSEO activates automatically once credentials are set.
+     */
+    public static function getActiveDriver(): string
+    {
+        $configured = strtolower(trim((string) config('geo.ai_driver', 'auto')));
+        if ($configured === 'dataforseo') {
+            return 'dataforseo';
+        }
+        if ($configured === 'api') {
+            return 'api';
+        }
+        return DataForSeoService::isConfigured() ? 'dataforseo' : 'api';
+    }
+
+    public static function isDataForSeoActive(): bool
+    {
+        return self::getActiveDriver() === 'dataforseo';
+    }
+
+    /**
+     * Clear all active API circuit breaker cache keys (e.g. after adding credits or raising spending cap).
+     */
+    public static function clearCircuitBreakers(): void
+    {
+        foreach (['openai', 'chatgpt', 'gemini', 'perplexity', 'anthropic', 'claude', 'copilot', 'meta', 'aio', 'aimode', 'aioverviews', 'dataforseo'] as $key) {
+            Cache::forget("ai_circuit_breaker_{$key}");
+        }
+        Cache::forget('dataforseo_account_summary');
+    }
+
+    /**
+     * Detect whether a stored or freshly returned modelMention entry is simulated, fallback, or failed.
+     * Any such entry is strictly excluded from Share of Voice, rank, position, and visibility metrics.
+     */
+    public static function isSimulatedOrFailedModel(array $m): bool
+    {
+        $method = strtolower((string) ($m['method'] ?? ''));
+        $summary = strtolower(trim((string) ($m['summary'] ?? '')));
+
+        return !empty($m['isSimulated'])
+            || !empty($m['fallbackUsed'])
+            || !empty($m['failed'])
+            || (array_key_exists('available', $m) && !$m['available'])
+            || str_contains($method, 'simulator')
+            || str_contains($method, 'niet gemeten')
+            || str_starts_with($summary, '[simulator]');
+    }
+
+    /**
+     * Recalculate clean live-only metrics from a prompt's stored results JSON.
+     * Guarantees legacy simulator results and failed API calls NEVER count in scores.
+     */
+    public static function extractLivePromptMetrics(?array $results, bool $fallbackMentioned = false, $fallbackPosition = null): array
+    {
+        if (empty($results) || empty($results['modelMentions']) || !is_array($results['modelMentions'])) {
+            return [
+                'modelMentions' => $results['modelMentions'] ?? null,
+                'liveModelsCount' => 0,
+                'failedModelsCount' => 0,
+                'totalMentions' => 0,
+                'totalModels' => 0,
+                'mentioned' => false,
+                'engines' => [],
+                'overallScore' => 0,
+                'position' => null,
+                'hasLiveData' => false,
+            ];
+        }
+
+        $sanitized = [];
+        $liveCount = 0;
+        $failedCount = 0;
+        $liveMentionedKeys = [];
+        $positions = [];
+
+        foreach ($results['modelMentions'] as $key => $m) {
+            if (!is_array($m)) {
+                continue;
+            }
+            if (self::isSimulatedOrFailedModel($m)) {
+                $failedCount++;
+                $sanitized[$key] = array_merge($m, [
+                    'mentioned' => false,
+                    'position' => null,
+                    'score' => 0,
+                    'sentiment' => 'N/A',
+                    'available' => false,
+                    'failed' => true,
+                    'isSimulated' => true,
+                    'fallbackUsed' => true,
+                    'brands' => 0,
+                    'sources' => 0,
+                    'method' => str_contains(strtolower((string) ($m['method'] ?? '')), 'simulator')
+                        ? 'Niet gemeten (oude simulator uitgesloten)'
+                        : ($m['method'] ?? 'Niet gemeten (API fout)'),
+                ]);
+            } else {
+                $liveCount++;
+                $isMentioned = !empty($m['mentioned']);
+                $sanitized[$key] = array_merge($m, [
+                    'available' => true,
+                    'failed' => false,
+                    'isSimulated' => false,
+                    'fallbackUsed' => false,
+                    'mentioned' => $isMentioned,
+                ]);
+                if ($isMentioned) {
+                    $liveMentionedKeys[] = $key;
+                    if (!empty($m['position']) && is_numeric($m['position'])) {
+                        $positions[] = (float) $m['position'];
+                    }
+                }
+            }
+        }
+
+        $totalMentions = count($liveMentionedKeys);
+        $overallScore = $liveCount > 0 ? (int) round(($totalMentions / $liveCount) * 100) : 0;
+        $avgPosition = !empty($positions) ? round(array_sum($positions) / count($positions), 1) : null;
+
+        return [
+            'modelMentions' => $sanitized,
+            'liveModelsCount' => $liveCount,
+            'failedModelsCount' => $failedCount,
+            'totalMentions' => $totalMentions,
+            'totalModels' => $liveCount,
+            'mentioned' => $totalMentions > 0,
+            'engines' => $liveMentionedKeys,
+            'overallScore' => $overallScore,
+            'position' => $avgPosition,
+            'hasLiveData' => $liveCount > 0,
+        ];
     }
 
     public static function getApiKey(string $engine): ?string
@@ -118,51 +287,61 @@ class AiEngineService
 
     public static function getEngineConfigs(): array
     {
+        $useDfs = self::isDataForSeoActive();
+        $dfsConfigured = DataForSeoService::isConfigured();
+        $dfsPplx = $useDfs && (bool) config('geo.dataforseo_include_perplexity', true);
+        $dfsClaude = $useDfs && (bool) config('geo.dataforseo_include_claude', true);
+
         return [
             'chatgpt' => [
                 'key' => 'chatgpt',
-                'apiKey' => self::getApiKey('openai'),
-                'envKey' => 'OPENAI_API_KEY',
-                'name' => 'OpenAI (gpt-4o-mini)',
+                'apiKey' => $useDfs ? ($dfsConfigured ? 'dataforseo' : null) : self::getApiKey('openai'),
+                'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : 'OPENAI_API_KEY',
+                'name' => $useDfs ? 'ChatGPT Web UI (DataForSEO)' : 'OpenAI (gpt-4o-mini)',
                 'shortName' => 'ChatGPT',
                 'alwaysAvailable' => true,
-                'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-'),
+                'viaDataForSeo' => $useDfs,
+                'check' => $useDfs ? fn($k) => $dfsConfigured : fn($k) => !empty($k) && str_starts_with($k, 'sk-'),
             ],
             'gemini' => [
                 'key' => 'gemini',
-                'apiKey' => self::getApiKey('gemini'),
-                'envKey' => 'GEMINI_API_KEY',
-                'name' => 'Google AI Studio (Gemini Flash)',
-                'shortName' => 'Google AI Studio',
+                'apiKey' => $useDfs ? ($dfsConfigured ? 'dataforseo' : null) : self::getApiKey('gemini'),
+                'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : 'GEMINI_API_KEY',
+                'name' => $useDfs ? 'Google Gemini Web UI (DataForSEO)' : 'Google AI Studio (Gemini Flash)',
+                'shortName' => $useDfs ? 'Gemini Web' : 'Google AI Studio',
                 'alwaysAvailable' => true,
-                'check' => fn($k) => !empty($k),
+                'viaDataForSeo' => $useDfs,
+                'check' => $useDfs ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
             ],
             'perplexity' => [
                 'key' => 'perplexity',
-                'apiKey' => self::getApiKey('perplexity'),
-                'envKey' => 'PERPLEXITY_API_KEY',
-                'name' => 'Perplexity API',
+                'apiKey' => $dfsPplx ? ($dfsConfigured ? 'dataforseo' : null) : self::getApiKey('perplexity'),
+                'envKey' => $dfsPplx ? 'DATAFORSEO_LOGIN' : 'PERPLEXITY_API_KEY',
+                'name' => $dfsPplx ? 'Perplexity Web (DataForSEO)' : 'Perplexity API',
                 'shortName' => 'Perplexity',
                 'alwaysAvailable' => true,
-                'check' => fn($k) => !empty($k),
+                'viaDataForSeo' => $dfsPplx,
+                'check' => $dfsPplx ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
             ],
             'claude' => [
                 'key' => 'claude',
-                'apiKey' => self::getApiKey('anthropic'),
-                'envKey' => 'ANTHROPIC_API_KEY',
-                'name' => 'Anthropic Claude 3.5',
+                'apiKey' => $dfsClaude ? ($dfsConfigured ? 'dataforseo' : null) : self::getApiKey('anthropic'),
+                'envKey' => $dfsClaude ? 'DATAFORSEO_LOGIN' : 'ANTHROPIC_API_KEY',
+                'name' => $dfsClaude ? 'Claude Web (DataForSEO)' : 'Anthropic Claude 3.5',
                 'shortName' => 'Claude',
                 'alwaysAvailable' => true,
-                'check' => fn($k) => !empty($k),
+                'viaDataForSeo' => $dfsClaude,
+                'check' => $dfsClaude ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
             ],
             'aio' => [
                 'key' => 'aio',
-                'apiKey' => null,
-                'envKey' => null,
-                'name' => 'Google AI Overviews',
+                'apiKey' => $useDfs ? ($dfsConfigured ? 'dataforseo' : null) : null,
+                'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : null,
+                'name' => $useDfs ? 'Google.nl AI Overviews (DataForSEO)' : 'Google AI Overviews',
                 'shortName' => 'AI Overviews',
                 'alwaysAvailable' => true,
-                'check' => fn($k) => true,
+                'viaDataForSeo' => $useDfs,
+                'check' => fn($k) => $useDfs ? $dfsConfigured : true,
             ],
             'copilot' => [
                 'key' => 'copilot',
@@ -171,6 +350,7 @@ class AiEngineService
                 'name' => 'Microsoft Copilot',
                 'shortName' => 'Copilot',
                 'alwaysAvailable' => false, // Conditioneel: alleen als COPILOT_API_KEY geconfigureerd is
+                'viaDataForSeo' => false,
                 'check' => fn($k) => !empty($k),
             ],
             'meta' => [
@@ -180,6 +360,7 @@ class AiEngineService
                 'name' => 'Meta AI',
                 'shortName' => 'Meta AI',
                 'alwaysAvailable' => false, // Conditioneel: alleen als META_API_KEY geconfigureerd is
+                'viaDataForSeo' => false,
                 'check' => fn($k) => !empty($k),
             ],
         ];
@@ -209,12 +390,27 @@ class AiEngineService
             return false;
         }
 
-        // If circuit breaker is active (quota exceeded, unpaid credits), engine is disabled
-        if (Cache::has("ai_circuit_breaker_{$normalized}")) {
+        $cfg = $configs[$normalized];
+
+        if (!empty($cfg['viaDataForSeo'])) {
+            if (Cache::has('ai_circuit_breaker_dataforseo')) {
+                return false;
+            }
+            return DataForSeoService::isConfigured();
+        }
+
+        $breakerKey = match ($normalized) {
+            'chatgpt' => 'openai',
+            'claude' => 'anthropic',
+            'aio', 'aimode', 'aioverviews' => 'gemini',
+            default => $normalized,
+        };
+
+        // If circuit breaker is active (spending cap, unpaid credits), engine is temporarily blocked
+        if (Cache::has("ai_circuit_breaker_{$normalized}") || Cache::has("ai_circuit_breaker_{$breakerKey}")) {
             return false;
         }
 
-        $cfg = $configs[$normalized];
         if (!empty($cfg['apiKey'])) {
             return ($cfg['check'])($cfg['apiKey']);
         }
@@ -234,17 +430,59 @@ class AiEngineService
 
     public static function getApiStatus(): array
     {
+        $useDfs = self::isDataForSeoActive();
+        $dfsConfigured = DataForSeoService::isConfigured();
+        $dfsPplx = $useDfs && (bool) config('geo.dataforseo_include_perplexity', true);
+        $dfsClaude = $useDfs && (bool) config('geo.dataforseo_include_claude', true);
+
         $engines = [
-            ['key' => 'openai', 'name' => 'OpenAI (gpt-4o / gpt-4o-mini)', 'envKey' => 'OPENAI_API_KEY', 'check' => fn($k) => !empty($k) && str_starts_with($k, 'sk-')],
-            ['key' => 'gemini', 'name' => 'Google AI Studio (Gemini Flash)', 'envKey' => 'GEMINI_API_KEY', 'check' => fn($k) => !empty($k)],
-            ['key' => 'perplexity', 'name' => 'Perplexity API (sonar)', 'envKey' => 'PERPLEXITY_API_KEY', 'check' => fn($k) => !empty($k)],
-            ['key' => 'anthropic', 'name' => 'Anthropic Claude Sonnet 5.5', 'envKey' => 'ANTHROPIC_API_KEY', 'check' => fn($k) => !empty($k)],
-            ['key' => 'copilot', 'name' => 'Microsoft Copilot', 'envKey' => 'COPILOT_API_KEY', 'check' => fn($k) => !empty($k)],
+            [
+                'key' => 'openai',
+                'name' => $useDfs ? 'ChatGPT Web (DataForSEO)' : 'OpenAI (gpt-4o / gpt-4o-mini)',
+                'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : 'OPENAI_API_KEY',
+                'viaDataForSeo' => $useDfs,
+                'check' => $useDfs ? fn($k) => $dfsConfigured : fn($k) => !empty($k) && str_starts_with($k, 'sk-'),
+            ],
+            [
+                'key' => 'gemini',
+                'name' => $useDfs ? 'Google Suite Web & SERP (DataForSEO)' : 'Google AI Studio (Gemini Flash)',
+                'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : 'GEMINI_API_KEY',
+                'viaDataForSeo' => $useDfs,
+                'check' => $useDfs ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
+            ],
+            [
+                'key' => 'perplexity',
+                'name' => $dfsPplx ? 'Perplexity Web (DataForSEO)' : 'Perplexity API (Agent API)',
+                'envKey' => $dfsPplx ? 'DATAFORSEO_LOGIN' : 'PERPLEXITY_API_KEY',
+                'viaDataForSeo' => $dfsPplx,
+                'check' => $dfsPplx ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
+            ],
+            [
+                'key' => 'anthropic',
+                'name' => $dfsClaude ? 'Claude Web (DataForSEO)' : 'Anthropic Claude Sonnet 5.5',
+                'envKey' => $dfsClaude ? 'DATAFORSEO_LOGIN' : 'ANTHROPIC_API_KEY',
+                'viaDataForSeo' => $dfsClaude,
+                'check' => $dfsClaude ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
+            ],
+            [
+                'key' => 'copilot',
+                'name' => 'Microsoft Copilot',
+                'envKey' => 'COPILOT_API_KEY',
+                'viaDataForSeo' => false,
+                'check' => fn($k) => !empty($k),
+            ],
         ];
 
         $costsByEngine = [];
+        $liveCostsByEngine = [];
         try {
             $costsByEngine = LlmCostLog::selectRaw('engine, SUM(cost_eur) as total_eur, SUM(total_tokens) as total_tokens, COUNT(*) as total_calls')
+                ->groupBy('engine')
+                ->get()
+                ->keyBy('engine');
+
+            $liveCostsByEngine = LlmCostLog::whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                ->selectRaw("engine, SUM(cost_eur) as live_eur, SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as ok_calls, SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END) as err_calls")
                 ->groupBy('engine')
                 ->get()
                 ->keyBy('engine');
@@ -252,31 +490,49 @@ class AiEngineService
             // graceful fallback if table not yet migrated
         }
 
-        return array_map(function ($eng) use ($costsByEngine) {
-            $key = self::getApiKey($eng['key']);
+        $dfsCircuitMsg = Cache::get('ai_circuit_breaker_dataforseo');
+
+        return array_map(function ($eng) use ($costsByEngine, $liveCostsByEngine, $dfsCircuitMsg) {
+            $isDfsEngine = !empty($eng['viaDataForSeo']);
+            $key = $isDfsEngine ? DataForSeoService::getLogin() : self::getApiKey($eng['key']);
             $isConfigured = ($eng['check'])($key);
 
             // 1. Check circuit breaker in Cache
-            $circuitBreakerMsg = Cache::get("ai_circuit_breaker_{$eng['key']}");
+            $circuitBreakerMsg = $isDfsEngine
+                ? $dfsCircuitMsg
+                : Cache::get("ai_circuit_breaker_{$eng['key']}");
 
             // 2. Check latest DB log for persistent state across FPM requests
+            // When powered by DataForSEO, only evaluate DataForSEO logs so historical direct-API billing errors don't falsely mark engines red!
             $latestDbLog = null;
             $lastErrorLog = null;
+            $recentFailRatio = 0.0;
             try {
-                $latestDbLog = LlmCostLog::where('engine', $eng['key'])
-                    ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                $baseLogQuery = LlmCostLog::where('engine', $eng['key'])
+                    ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing']);
+                if ($isDfsEngine) {
+                    $baseLogQuery->where('metadata->via', 'dataforseo_web_client');
+                }
+
+                $recentLogs = (clone $baseLogQuery)
                     ->whereIn('status', ['SUCCESS', 'ERROR'])
                     ->orderBy('id', 'desc')
-                    ->first();
+                    ->limit(5)
+                    ->get();
+
+                $latestDbLog = $recentLogs->first();
+                if ($recentLogs->isNotEmpty()) {
+                    $recentErrs = $recentLogs->where('status', 'ERROR')->count();
+                    $recentFailRatio = $recentErrs / $recentLogs->count();
+                }
 
                 if (!$latestDbLog) {
-                    $latestDbLog = LlmCostLog::where('engine', $eng['key'])
-                        ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                    $latestDbLog = (clone $baseLogQuery)
                         ->orderBy('id', 'desc')
                         ->first();
                 }
 
-                $lastErrorLog = LlmCostLog::where('engine', $eng['key'])
+                $lastErrorLog = (clone $baseLogQuery)
                     ->where('status', 'ERROR')
                     ->orderBy('id', 'desc')
                     ->first();
@@ -298,15 +554,18 @@ class AiEngineService
                 $status = 'ERROR';
                 $lastError = $circuitBreakerMsg;
             } elseif ($lastLog) {
-                $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : ($lastLog['status'] === 'FALLBACK' ? 'FALLBACK' : 'ERROR');
-                $lastError = $lastLog['status'] === 'ERROR' ? $lastLog['message'] : null;
+                $status = $lastLog['status'] === 'SUCCESS' ? 'ACTIVE' : 'ERROR';
+                $lastError = $lastLog['status'] !== 'SUCCESS' ? $lastLog['message'] : null;
             } elseif ($latestDbLog) {
                 if ($latestDbLog->status === 'ERROR') {
                     $status = 'ERROR';
                     $lastError = $latestDbLog->metadata['error'] ?? 'API fout opgetreden';
                 } elseif ($latestDbLog->status === 'FALLBACK') {
-                    $status = $lastErrorLog ? 'ERROR' : 'FALLBACK';
-                    $lastError = $lastErrorLog?->metadata['error'] ?? 'Fallback simulator actief';
+                    $status = 'ERROR';
+                    $lastError = $lastErrorLog?->metadata['error'] ?? 'Geen live API-respons ontvangen';
+                } elseif ($recentFailRatio >= 0.6 && $lastErrorLog) {
+                    $status = 'DEGRADED';
+                    $lastError = $lastErrorLog->metadata['error'] ?? 'Meerdere recente API fouten';
                 } else {
                     $status = 'ACTIVE';
                     $lastError = null;
@@ -317,24 +576,33 @@ class AiEngineService
             }
 
             $costStat = $costsByEngine[$eng['key']] ?? null;
+            $liveStat = $liveCostsByEngine[$eng['key']] ?? null;
 
             return [
                 'engine' => $eng['key'],
                 'name' => $eng['name'],
+                'driver' => $isDfsEngine ? 'dataforseo' : 'api',
                 'configured' => (bool) $isConfigured,
                 'status' => $status,
                 'lastError' => $lastError,
                 'lastUsed' => $lastLog ? $lastLog['timestamp'] : ($latestDbLog?->created_at?->toIso8601String() ?? null),
                 'totalCostEur' => $costStat ? round((float) $costStat->total_eur, 2) : 0.00,
+                'liveCostEur' => $liveStat ? round((float) $liveStat->live_eur, 2) : 0.00,
                 'totalTokens' => $costStat ? (int) $costStat->total_tokens : 0,
                 'totalCalls' => $costStat ? (int) $costStat->total_calls : 0,
+                'successCalls' => $liveStat ? (int) $liveStat->ok_calls : 0,
+                'failedCalls' => $liveStat ? (int) $liveStat->err_calls : 0,
             ];
         }, $engines);
     }
 
-    // 1. OpenAI API
+    // 1. OpenAI API (or DataForSEO ChatGPT Web UI when web-client driver is active)
     public function queryOpenAI(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
+        if (self::isDataForSeoActive()) {
+            return (new DataForSeoService($this))->queryChatGptWeb($prompt, $companyName, $projectId, $promptId);
+        }
+
         $apiKey = self::getApiKey('openai');
         $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
@@ -432,14 +700,16 @@ class AiEngineService
             }
         }
 
-        // Fallback simulation (zero cost)
+        // No fake simulator fallback: mark strictly as unavailable/failed so it never counts in scores
         $activeError = self::resolveFallbackReason('openai', 'gpt-4o', 'prompt_scan', 'OpenAI ChatGPT', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
-            'method' => 'OpenAI API Simulator',
+            'method' => 'Niet gemeten (API fout)',
             'name' => 'ChatGPT 4o',
-            'text' => "[Simulator] Geen live antwoord beschikbaar van OpenAI API.",
+            'text' => '',
             'citations' => [],
             'mentioned' => false,
+            'available' => false,
+            'failed' => true,
             'position' => null,
             'score' => 0,
             'sentiment' => 'N/A',
@@ -463,14 +733,16 @@ class AiEngineService
     public function queryGeminiRaw(string $prompt, ?int $projectId = null): array
     {
         $apiKey = self::getApiKey('gemini');
-        if ($apiKey) {
+        if ($apiKey && !Cache::has('ai_circuit_breaker_gemini')) {
             try {
+                $startTime = microtime(true);
                 $response = Http::timeout(20)
                     ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={$apiKey}", [
                         'contents' => [
                             ['parts' => [['text' => $prompt]]]
                         ]
                     ]);
+                $duration = (int) round((microtime(true) - $startTime) * 1000);
 
                 if ($response->successful()) {
                     $data = $response->json();
@@ -479,7 +751,46 @@ class AiEngineService
                     $usage = $data['usageMetadata'] ?? [];
                     $inTokens = $usage['promptTokenCount'] ?? (int) ceil(mb_strlen($prompt) / 4);
                     $outTokens = $usage['candidatesTokenCount'] ?? (int) ceil(mb_strlen($text) / 4);
-                    LlmCostService::recordUsage('gemini', 'gemini-flash-lite-latest', 'gemini_raw_query', $inTokens, $outTokens, 'SUCCESS', null, $projectId, null, false);
+                    LlmCostService::recordUsage('gemini', 'gemini-flash-lite-latest', 'gemini_raw_query', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, null, false);
+
+                    return [
+                        'success' => true,
+                        'text' => $text,
+                    ];
+                }
+
+                $errMsg = $response->json('error.message') ?? $response->body();
+                if (self::isBillingCircuitBreakerError($errMsg)) {
+                    Cache::put('ai_circuit_breaker_gemini', $errMsg, 300);
+                }
+                LlmCostService::recordUsage('gemini', 'gemini-flash-lite-latest', 'gemini_raw_query', 0, 0, 'ERROR', $duration, $projectId, null, false, ['error' => $errMsg]);
+            } catch (\Exception $e) {
+                LlmCostService::recordUsage('gemini', 'gemini-flash-lite-latest', 'gemini_raw_query', 0, 0, 'ERROR', null, $projectId, null, false, ['error' => $e->getMessage()]);
+                GeoLog::warning("⚠️ [Gemini Raw Fout] " . $e->getMessage());
+            }
+        }
+
+        // Clean fallback to cheap OpenAI gpt-4o-mini when Gemini direct API is unavailable or disconnected
+        $openaiKey = self::getApiKey('openai');
+        if ($openaiKey && str_starts_with($openaiKey, 'sk-')) {
+            try {
+                $startTime = microtime(true);
+                $response = Http::withToken($openaiKey)
+                    ->timeout(15)
+                    ->post('https://api.openai.com/v1/chat/completions', [
+                        'model' => 'gpt-4o-mini',
+                        'messages' => [['role' => 'user', 'content' => $prompt]],
+                        'max_tokens' => 400,
+                        'temperature' => 0.3,
+                    ]);
+                $duration = (int) round((microtime(true) - $startTime) * 1000);
+
+                if ($response->successful()) {
+                    $text = trim((string) ($response->json('choices.0.message.content') ?? ''));
+                    $usage = $response->json('usage') ?? [];
+                    $inTokens = $usage['prompt_tokens'] ?? (int) ceil(mb_strlen($prompt) / 4);
+                    $outTokens = $usage['completion_tokens'] ?? (int) ceil(mb_strlen($text) / 4);
+                    LlmCostService::recordUsage('openai', 'gpt-4o-mini', 'keyword_recommendation', $inTokens, $outTokens, 'SUCCESS', $duration, $projectId, null, false);
 
                     return [
                         'success' => true,
@@ -487,7 +798,7 @@ class AiEngineService
                     ];
                 }
             } catch (\Exception $e) {
-                GeoLog::warning("⚠️ [Gemini Raw Fout] " . $e->getMessage());
+                GeoLog::warning("⚠️ [OpenAI Raw Fallback Fout] " . $e->getMessage());
             }
         }
 
@@ -496,10 +807,20 @@ class AiEngineService
 
     /**
      * Consolidated Google AI Ecosystem query (Gemini, AI Mode, AI Overviews).
-     * Makes 1 single API call instead of 3, with zero search grounding fees when RAG is used.
+     * When DataForSEO Web-Client is active, queries real Gemini Web UI, Google.nl AI Overviews & Google.nl AI Mode concurrently.
      */
     public function queryGoogleEcosystem(string $prompt, string $companyName, array $webCitations = [], ?int $projectId = null, ?int $promptId = null): array
     {
+        if (self::isDataForSeoActive()) {
+            $dfs = new DataForSeoService($this);
+            $batch = $dfs->queryAllEnginesConcurrently($prompt, $companyName, $projectId, $promptId, false, false, false);
+            return [
+                'gemini' => $batch['gemini'],
+                'aimode' => $batch['aimode'],
+                'aioverviews' => $batch['aioverviews'],
+            ];
+        }
+
         $apiKey = self::getApiKey('gemini');
         $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
@@ -550,6 +871,12 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $response = Http::timeout(25)->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={$apiKey}", $payload);
+
+                // Retry once on transient HTTP 429 rate-limit (unless it's a hard spending cap)
+                if ($response->status() === 429 && !self::isBillingCircuitBreakerError($response->json('error.message') ?? $response->body())) {
+                    sleep(2);
+                    $response = Http::timeout(25)->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={$apiKey}", $payload);
+                }
 
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
 
@@ -652,8 +979,8 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $lastError = $response->json('error.message') ?? $response->body();
-                if (str_contains(strtolower($lastError), 'spending cap') || str_contains(strtolower($lastError), 'quota')) {
-                    Cache::put('ai_circuit_breaker_gemini', $lastError, 3600);
+                if (self::isBillingCircuitBreakerError($lastError)) {
+                    Cache::put('ai_circuit_breaker_gemini', $lastError, 300);
                 }
                 LlmCostService::recordUsage('gemini', 'gemini-flash-latest', 'google_suite_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
                 self::logApiCall('gemini', 'ERROR', $lastError, $duration);
@@ -667,52 +994,28 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             }
         }
 
-        // Fallback simulation for all 3 if API failed or no key
+        // No fake simulator fallback: mark all 3 strictly as unavailable/failed so they NEVER count in scores
         $activeError = self::resolveFallbackReason('gemini', 'gemini-flash-latest', 'google_suite_scan', 'Google Suite', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
+        $unavailableBase = [
+            'method' => 'Niet gemeten (API fout)',
+            'text' => '',
+            'citations' => [],
+            'mentioned' => false,
+            'available' => false,
+            'failed' => true,
+            'position' => null,
+            'score' => 0,
+            'sentiment' => 'N/A',
+            'fallbackUsed' => true,
+            'isSimulated' => true,
+            'costEur' => 0.0,
+            'tokens' => 0,
+            'errorMsg' => $activeError,
+        ];
         return [
-            'gemini' => [
-                'method' => 'Gemini API Simulator',
-                'name' => 'Gemini Flash',
-                'text' => "[Simulator] Geen live antwoord beschikbaar van Gemini API.",
-                'citations' => [],
-                'mentioned' => false,
-                'position' => null,
-                'score' => 0,
-                'sentiment' => 'N/A',
-                'fallbackUsed' => true,
-                'isSimulated' => true,
-                'costEur' => 0.0,
-                'tokens' => 0,
-                'errorMsg' => $activeError,
-            ],
-            'aimode' => [
-                'method' => 'Google AI Mode Simulator',
-                'name' => 'Google AI Mode',
-                'text' => "[Simulator] Geen live antwoord beschikbaar van Google AI Mode.",
-                'citations' => [],
-                'mentioned' => false,
-                'position' => null,
-                'score' => 0,
-                'sentiment' => 'N/A',
-                'fallbackUsed' => true,
-                'isSimulated' => true,
-                'costEur' => 0.0,
-                'tokens' => 0,
-            ],
-            'aioverviews' => [
-                'method' => 'Google AI Overviews Simulator',
-                'name' => 'Google AI Overviews',
-                'text' => "[Simulator] Geen live antwoord beschikbaar van Google AI Overviews.",
-                'citations' => [],
-                'mentioned' => false,
-                'position' => null,
-                'score' => 0,
-                'sentiment' => 'N/A',
-                'fallbackUsed' => true,
-                'isSimulated' => true,
-                'costEur' => 0.0,
-                'tokens' => 0,
-            ],
+            'gemini' => array_merge($unavailableBase, ['name' => 'Gemini Flash']),
+            'aimode' => array_merge($unavailableBase, ['name' => 'Google AI Mode']),
+            'aioverviews' => array_merge($unavailableBase, ['name' => 'Google AI Overviews']),
         ];
     }
 
@@ -734,9 +1037,13 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         return $this->queryGoogleEcosystem($prompt, $companyName, $webCitations, $projectId, $promptId)['aioverviews'];
     }
 
-    // 3. Perplexity API
+    // 3. Perplexity API (or DataForSEO Perplexity Web Search when web-client driver is active)
     public function queryPerplexity(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
+        if (self::isDataForSeoActive() && (bool) config('geo.dataforseo_include_perplexity', true)) {
+            return (new DataForSeoService($this))->queryPerplexity($prompt, $companyName, $projectId, $promptId);
+        }
+
         $apiKey = self::getApiKey('perplexity');
         $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
@@ -747,13 +1054,22 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         if ($apiKey && !Cache::has('ai_circuit_breaker_perplexity')) {
             try {
                 // Perplexity Agent API (v1/responses) with live web search
+                $pplxPayload = [
+                    'preset' => 'fast',
+                    'instructions' => "Je bent Perplexity AI met live web browsing voor Nederlandse lokale zoekopdrachten. Wanneer de gebruiker vraagt naar betrouwbare hoveniers, bureaus of bedrijven in een stad of regio, doorzoek je actuele recensies en bedrijfsvermeldingen. Rangschik de partijen op basis van betrouwbaarheid (reviewscore en aantal reviews), specialisaties en lokale aanwezigheid. Geef een overzichtelijke shortlist / tabel met sterren en reviews en licht de top bureaus toe.",
+                    'input' => $prompt,
+                ];
                 $response = Http::withToken($apiKey)
                     ->timeout(25)
-                    ->post('https://api.perplexity.ai/v1/responses', [
-                        'preset' => 'fast',
-                        'instructions' => "Je bent Perplexity AI met live web browsing voor Nederlandse lokale zoekopdrachten. Wanneer de gebruiker vraagt naar betrouwbare hoveniers, bureaus of bedrijven in een stad of regio, doorzoek je actuele recensies en bedrijfsvermeldingen. Rangschik de partijen op basis van betrouwbaarheid (reviewscore en aantal reviews), specialisaties en lokale aanwezigheid. Geef een overzichtelijke shortlist / tabel met sterren en reviews en licht de top bureaus toe.",
-                        'input' => $prompt,
-                    ]);
+                    ->post('https://api.perplexity.ai/v1/responses', $pplxPayload);
+
+                // Retry once on transient HTTP 429 rate-limit (unless it's a billing/credits error)
+                if ($response->status() === 429 && !self::isBillingCircuitBreakerError($response->json('error.message') ?? $response->body())) {
+                    sleep(2);
+                    $response = Http::withToken($apiKey)
+                        ->timeout(25)
+                        ->post('https://api.perplexity.ai/v1/responses', $pplxPayload);
+                }
 
                 $duration = (int) round((microtime(true) - $startTime) * 1000);
 
@@ -819,8 +1135,8 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
                 }
 
                 $lastError = $response->json('error.message') ?? $response->body();
-                if (str_contains(strtolower($lastError), 'paid credits') || str_contains(strtolower($lastError), 'quota')) {
-                    Cache::put('ai_circuit_breaker_perplexity', $lastError, 3600);
+                if (self::isBillingCircuitBreakerError($lastError)) {
+                    Cache::put('ai_circuit_breaker_perplexity', $lastError, 300);
                 }
                 LlmCostService::recordUsage('perplexity', 'sonar', 'prompt_scan', 0, 0, 'ERROR', $duration, $projectId, $promptId, false, ['error' => $lastError, 'company' => $companyName]);
                 self::logApiCall('perplexity', 'ERROR', $lastError, $duration);
@@ -834,14 +1150,16 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             }
         }
 
-        // Fallback simulation (zero cost)
+        // No fake simulator fallback: mark strictly as unavailable/failed so it never counts in scores
         $activeError = self::resolveFallbackReason('perplexity', 'sonar', 'prompt_scan', 'Perplexity AI', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
-            'method' => 'Perplexity API Simulator',
+            'method' => 'Niet gemeten (API fout)',
             'name' => 'Perplexity AI',
-            'text' => "[Simulator] Geen live antwoord beschikbaar van Perplexity API.",
+            'text' => '',
             'citations' => [],
             'mentioned' => false,
+            'available' => false,
+            'failed' => true,
             'position' => null,
             'score' => 0,
             'sentiment' => 'N/A',
@@ -853,9 +1171,13 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
         ];
     }
 
-    // 4. Anthropic Claude API
+    // 4. Anthropic Claude API (or DataForSEO Claude Web Search when web-client driver is active)
     public function queryAnthropic(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
     {
+        if (self::isDataForSeoActive() && (bool) config('geo.dataforseo_include_claude', true)) {
+            return (new DataForSeoService($this))->queryClaude($prompt, $companyName, $projectId, $promptId);
+        }
+
         $apiKey = self::getApiKey('anthropic');
         $companyKey = self::cleanBrandKey($companyName);
         $promptSnippet = mb_substr(trim(preg_replace('/\s+/', ' ', $prompt)), 0, 70) . '...';
@@ -933,14 +1255,16 @@ Antwoord ALTIJD in strikt valide JSON formaat met exact deze 3 sleutels (geen ma
             }
         }
 
-        // Fallback simulation (zero cost)
+        // No fake simulator fallback: mark strictly as unavailable/failed so it never counts in scores
         $activeError = self::resolveFallbackReason('anthropic', 'claude-sonnet-5-5', 'prompt_scan', 'Anthropic Claude', $promptSnippet, $companyName, $apiKey, $lastError ?? null, $projectId, $promptId);
         return [
-            'method' => 'Anthropic API Simulator',
+            'method' => 'Niet gemeten (API fout)',
             'name' => 'Claude Sonnet 5.5',
-            'text' => "[Simulator] Geen live antwoord beschikbaar van Anthropic Claude API.",
+            'text' => '',
             'citations' => [],
             'mentioned' => false,
+            'available' => false,
+            'failed' => true,
             'position' => null,
             'score' => 0,
             'sentiment' => 'N/A',

@@ -63,8 +63,9 @@ class ProcessKeywordCompetitorsJob implements ShouldQueue
 
             $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
             if ($selfItem) {
-                $rankStr = $selfItem['rank'] ?? '1';
-                $rankInt = (int) preg_replace('/[^0-9]/', '', (string) $rankStr) ?: 1;
+                $rankStr = $selfItem['rank'] ?? '-';
+                $rankDigits = preg_replace('/[^0-9]/', '', (string) $rankStr);
+                $rankInt = $rankDigits !== '' ? (int) $rankDigits : null;
                 Keyword::where('id', $this->keywordId)->update([
                     'rank' => $rankInt,
                     'updated_at' => now(),

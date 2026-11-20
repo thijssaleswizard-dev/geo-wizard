@@ -59,215 +59,271 @@ class ScraperService
             "🆔 Project ID: #" . ($projectId ?? 'Geen'),
             "🏢 Bedrijf: \"{$companyName}\" (Key: {$companyKey})",
             "❓ Vraag / Prompt: \"{$promptText}\"",
-            "⚙️ Status: Multi-LLM & Web Grounding gestart",
+            "⚙️ Modus: " . (AiEngineService::isDataForSeoActive() ? 'DataForSEO Web-Client (Parallel Live)' : 'Directe LLM API\'s & Web Grounding'),
         ]);
 
         $crawlLogs = [];
-        $crawlLogs[] = "[Hybrid Engine] Initiating multi-LLM & web scraping pipeline for \"{$companyName}\"...";
-        $crawlLogs[] = "[Query] Prompt: \"{$promptText}\"";
-
-        // 1. DuckDuckGo / Live Search Scraping
-        GeoLog::info("🌐 [FASE 1: WEB GROUNDING] Zoeken via live web index voor: \"{$promptText}\"");
-        $crawlLogs[] = "[Scraping Engine] Executing web search crawl for grounding sources...";
         $extractedCitations = [];
+        $useDataForSeo = AiEngineService::isDataForSeoActive();
 
-        try {
-            $searchUrl = "https://html.duckduckgo.com/html/?q=" . urlencode($promptText);
-            $response = Http::withHeaders([
-                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language' => 'nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7',
-            ])->timeout(8)->get($searchUrl);
+        if ($useDataForSeo) {
+            $crawlLogs[] = "[DataForSEO Web-Client] Start parallelle live scan (ChatGPT Web, Gemini Web, Google.nl AI Overviews, Google.nl AI Mode, Perplexity & Claude) voor \"{$companyName}\"...";
+            $crawlLogs[] = "[Query] Prompt: \"{$promptText}\"";
+            GeoLog::info("🌐 [DATAFORSEO WEB-CLIENT] Parallelle live Web-Client & Google.nl SERP scan gestart voor: \"{$promptText}\"");
 
-            if ($response->successful()) {
-                $html = $response->body();
-                $crawler = new Crawler($html);
+            $includePplx = (bool) config('geo.dataforseo_include_perplexity', true);
+            $includeClaude = (bool) config('geo.dataforseo_include_claude', true);
 
-                $crawler->filter('.result')->slice(0, 6)->each(function (Crawler $node) use (&$extractedCitations, $companyKey, $companyName, $promptText) {
-                    $titleEl = $node->filter('.result__title');
-                    $snippetEl = $node->filter('.result__snippet');
-                    $urlEl = $node->filter('.result__url');
-                    $linkEl = $node->filter('.result__title a');
+            $dfsService = app(DataForSeoService::class);
+            $batch = $dfsService->queryAllEnginesConcurrently(
+                $promptText,
+                $companyName,
+                $projectId,
+                $promptId,
+                $includePplx,
+                $includeClaude
+            );
 
-                    $title = $titleEl->count() > 0 ? trim($titleEl->text()) : '';
-                    $snippet = $snippetEl->count() > 0 ? trim($snippetEl->text()) : '';
-                    $rawUrl = $urlEl->count() > 0 ? trim($urlEl->text()) : ($linkEl->count() > 0 ? $linkEl->attr('href') : '');
+            $openAIRes = $batch['chatgpt'];
+            $geminiRes = $batch['gemini'];
+            $aiOverviewsRes = $batch['aioverviews'];
+            $aiModeRes = $batch['aimode'];
+            $perplexityRes = $includePplx ? $batch['perplexity'] : $this->aiEngine->queryPerplexity($promptText, $companyName, $projectId, $promptId);
+            $anthropicRes = $includeClaude ? $batch['claude'] : $this->aiEngine->queryAnthropic($promptText, $companyName, $projectId, $promptId);
 
-                    $cleanUrl = $rawUrl;
-                    if (str_contains($cleanUrl, 'uddg=')) {
-                        if (preg_match('/uddg=([^&]+)/', $cleanUrl, $matches)) {
-                            $cleanUrl = urldecode($matches[1]);
+            // Helper to merge rich & URL citations with accurate per-engine attribution
+            $addStructuredCitation = function (string $url, ?string $title, ?string $snippet, string $engineKey) use (&$extractedCitations, $companyKey, $promptText) {
+                $dom = $this->getDomain($url);
+                if (empty($dom) || strlen($dom) <= 3) {
+                    return;
+                }
+                foreach ($extractedCitations as &$existing) {
+                    if ($existing['url'] === $url || $existing['domain'] === $dom) {
+                        if (!in_array($engineKey, $existing['cited_by'], true)) {
+                            $existing['cited_by'][] = $engineKey;
+                        }
+                        if (!empty($title) && str_starts_with($existing['title'], 'Bron: ')) {
+                            $existing['title'] = $title;
+                        }
+                        if (!empty($snippet) && str_starts_with($existing['snippet'], 'Live geciteerd')) {
+                            $existing['snippet'] = $snippet;
+                        }
+                        return;
+                    }
+                }
+                unset($existing);
+
+                $sourceType = 'Website';
+                if (str_contains($dom, 'trustoo') || str_contains($dom, 'trustpilot') || str_contains($dom, 'ervaring')) {
+                    $sourceType = 'Review';
+                } elseif (str_contains($dom, 'werkspot') || str_contains($dom, 'bedrijven') || str_contains($dom, 'gids')) {
+                    $sourceType = 'Directory';
+                } elseif (str_contains($dom, 'linkedin') || str_contains($dom, 'facebook') || str_contains($dom, 'instagram')) {
+                    $sourceType = 'Social';
+                } elseif (str_contains($dom, 'reddit') || str_contains($dom, 'forum')) {
+                    $sourceType = 'Forum';
+                }
+
+                $mentionsBrand = str_contains(strtolower(($title ?? '') . ' ' . ($snippet ?? '') . ' ' . $dom), $companyKey);
+                $extractedCitations[] = [
+                    'company_key' => $companyKey,
+                    'title' => !empty($title) ? $title : "Bron: {$dom}",
+                    'url' => $url,
+                    'domain' => $dom,
+                    'snippet' => !empty($snippet) ? $snippet : "Live geciteerd door AI zoekmachines voor: {$promptText}",
+                    'type' => $sourceType,
+                    'sentiment' => $mentionsBrand ? '+96' : '+92',
+                    'cited_by' => [$engineKey],
+                    'crawl_date' => date('Y-m-d'),
+                ];
+            };
+
+            $engineResultMap = [
+                'chatgpt' => $openAIRes,
+                'gemini' => $geminiRes,
+                'aioverviews' => $aiOverviewsRes,
+                'aimode' => $aiModeRes,
+                'perplexity' => $perplexityRes,
+                'claude' => $anthropicRes,
+            ];
+
+            foreach ($engineResultMap as $engKey => $engRes) {
+                if (!empty($engRes['richCitations']) && is_array($engRes['richCitations'])) {
+                    foreach ($engRes['richCitations'] as $rc) {
+                        if (!empty($rc['url'])) {
+                            $addStructuredCitation($rc['url'], $rc['title'] ?? null, $rc['snippet'] ?? null, $engKey);
                         }
                     }
-
-                    if (!empty($cleanUrl) && !str_starts_with($cleanUrl, 'http')) {
-                        $cleanUrl = 'https://' . $cleanUrl;
+                }
+                foreach (($engRes['citations'] ?? []) as $url) {
+                    if (is_string($url) && !empty($url)) {
+                        $addStructuredCitation($url, null, null, $engKey);
                     }
-
-                    $domain = $this->getDomain($cleanUrl);
-
-                    if (!empty($domain) && !empty($title)) {
-                        $sourceType = 'Website';
-                        if (str_contains($domain, 'trustoo') || str_contains($domain, 'trustpilot') || str_contains($domain, 'ervaring')) {
-                            $sourceType = 'Review';
-                        } elseif (str_contains($domain, 'werkspot') || str_contains($domain, 'bedrijven')) {
-                            $sourceType = 'Directory';
-                        } elseif (str_contains($domain, 'linkedin') || str_contains($domain, 'facebook')) {
-                            $sourceType = 'Social';
-                        } elseif (str_contains($domain, 'reddit') || str_contains($domain, 'forum')) {
-                            $sourceType = 'Forum';
-                        }
-
-                        $mentionsBrand = str_contains(strtolower($title . $snippet . $domain), $companyKey);
-                        $extractedCitations[] = [
-                            'company_key' => $companyKey,
-                            'title' => $title ?: "{$companyName} Search Result",
-                            'url' => $cleanUrl,
-                            'domain' => $domain,
-                            'snippet' => $snippet ?: "Search result for {$promptText}",
-                            'type' => $sourceType,
-                            'sentiment' => $mentionsBrand ? '+96' : '+90',
-                            'cited_by' => ['chatgpt', 'gemini', 'perplexity'],
-                            'crawl_date' => date('Y-m-d'),
-                        ];
-                    }
-                });
+                }
             }
-        } catch (\Exception $err) {
-            $crawlLogs[] = "[Scraping Note] Web search note: {$err->getMessage()}. Using knowledge graph.";
-        }
 
-        // Perplexity fallback for search grounding
-        if (empty($extractedCitations) && (config('services.perplexity.key') ?: env('PERPLEXITY_API_KEY'))) {
-            GeoLog::info("🌐 [WEB GROUNDING] DDG geblokkeerd -> Perplexity AI sonar aanroepen voor live zoekindex...");
-            $crawlLogs[] = "[Hybrid Engine] DDG crawl blocked. Querying Perplexity AI for live search grounding...";
+            // Include real Google.nl organic top SERP results collected inside the AI Overviews request
+            foreach (($batch['organicCitations'] ?? []) as $orgCit) {
+                if (!empty($orgCit['url'])) {
+                    $addStructuredCitation($orgCit['url'], $orgCit['title'] ?? null, $orgCit['snippet'] ?? null, 'aioverviews');
+                }
+            }
+
+            $crawlLogs[] = "[DataForSEO Web-Client] Parallelle scan voltooid. " . count($extractedCitations) . " geverifieerde live webbronnen verzameld.";
+        } else {
+            $crawlLogs[] = "[Hybrid Engine] Initiating multi-LLM & web scraping pipeline for \"{$companyName}\"...";
+            $crawlLogs[] = "[Query] Prompt: \"{$promptText}\"";
+
+            // 1. DuckDuckGo / Live Search Scraping
+            GeoLog::info("🌐 [FASE 1: WEB GROUNDING] Zoeken via live web index voor: \"{$promptText}\"");
+            $crawlLogs[] = "[Scraping Engine] Executing web search crawl for grounding sources...";
+
             try {
-                $pplxRes = $this->aiEngine->queryPerplexity($promptText, $companyName);
-                if (!empty($pplxRes['citations'])) {
-                    foreach ($pplxRes['citations'] as $url) {
-                        $domain = $this->getDomain($url);
-                        $ignoredDomains = ['duckduckgo.com', 'google.com', 'wikipedia.org', 'facebook.com', 'instagram.com', 'linkedin.com', 'youtube.com'];
-                        if (!empty($domain) && strlen($domain) > 3 && !in_array($domain, $ignoredDomains)) {
+                $searchUrl = "https://html.duckduckgo.com/html/?q=" . urlencode($promptText);
+                $response = Http::withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language' => 'nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7',
+                ])->timeout(8)->get($searchUrl);
+
+                if ($response->successful()) {
+                    $html = $response->body();
+                    $crawler = new Crawler($html);
+
+                    $crawler->filter('.result')->slice(0, 6)->each(function (Crawler $node) use (&$extractedCitations, $companyKey, $companyName, $promptText) {
+                        $titleEl = $node->filter('.result__title');
+                        $snippetEl = $node->filter('.result__snippet');
+                        $urlEl = $node->filter('.result__url');
+                        $linkEl = $node->filter('.result__title a');
+
+                        $title = $titleEl->count() > 0 ? trim($titleEl->text()) : '';
+                        $snippet = $snippetEl->count() > 0 ? trim($snippetEl->text()) : '';
+                        $rawUrl = $urlEl->count() > 0 ? trim($urlEl->text()) : ($linkEl->count() > 0 ? $linkEl->attr('href') : '');
+
+                        $cleanUrl = $rawUrl;
+                        if (str_contains($cleanUrl, 'uddg=')) {
+                            if (preg_match('/uddg=([^&]+)/', $cleanUrl, $matches)) {
+                                $cleanUrl = urldecode($matches[1]);
+                            }
+                        }
+
+                        if (!empty($cleanUrl) && !str_starts_with($cleanUrl, 'http')) {
+                            $cleanUrl = 'https://' . $cleanUrl;
+                        }
+
+                        $domain = $this->getDomain($cleanUrl);
+
+                        if (!empty($domain) && !empty($title)) {
+                            $sourceType = 'Website';
+                            if (str_contains($domain, 'trustoo') || str_contains($domain, 'trustpilot') || str_contains($domain, 'ervaring')) {
+                                $sourceType = 'Review';
+                            } elseif (str_contains($domain, 'werkspot') || str_contains($domain, 'bedrijven')) {
+                                $sourceType = 'Directory';
+                            } elseif (str_contains($domain, 'linkedin') || str_contains($domain, 'facebook')) {
+                                $sourceType = 'Social';
+                            } elseif (str_contains($domain, 'reddit') || str_contains($domain, 'forum')) {
+                                $sourceType = 'Forum';
+                            }
+
+                            $mentionsBrand = str_contains(strtolower($title . $snippet . $domain), $companyKey);
                             $extractedCitations[] = [
                                 'company_key' => $companyKey,
-                                'title' => "Bron: {$domain}",
-                                'url' => $url,
+                                'title' => $title ?: "{$companyName} Search Result",
+                                'url' => $cleanUrl,
                                 'domain' => $domain,
-                                'snippet' => "Live zoekresultaat via Perplexity AI index voor: {$promptText}",
-                                'type' => 'Website',
-                                'sentiment' => '+90',
-                                'cited_by' => ['perplexity'],
+                                'snippet' => $snippet ?: "Search result for {$promptText}",
+                                'type' => $sourceType,
+                                'sentiment' => $mentionsBrand ? '+96' : '+90',
+                                'cited_by' => ['chatgpt', 'gemini', 'perplexity'],
                                 'crawl_date' => date('Y-m-d'),
                             ];
                         }
-                    }
-                    $crawlLogs[] = "[Hybrid Engine Success] Retrieved " . count($extractedCitations) . " live citations from Perplexity AI!";
+                    });
                 }
             } catch (\Exception $err) {
-                $crawlLogs[] = "[Hybrid Engine Error] Perplexity search fallback failed: {$err->getMessage()}";
+                $crawlLogs[] = "[Scraping Note] Web search note: {$err->getMessage()}. Using knowledge graph.";
             }
-        }
 
-        // Built-in fallback citations
-        if (empty($extractedCitations)) {
-            $today = date('Y-m-d');
-            $targetDomain = str_contains($companyName, '.') ? strtolower($companyName) : strtolower($companyName) . '.nl';
-            $filterActiveEngines = function (array $engines) {
-                return array_values(array_filter($engines, fn($eng) => AiEngineService::isEngineEnabled($eng)));
-            };
-
-            $extractedCitations = [
-                [
-                    'company_key' => $companyKey,
-                    'title' => "{$companyName} - Officiële Website",
-                    'url' => "https://www.{$targetDomain}/",
-                    'domain' => $targetDomain,
-                    'snippet' => "{$companyName} is direct geverifieerd in AI zoekresultaten.",
-                    'type' => 'Website',
-                    'sentiment' => '+96',
-                    'cited_by' => $filterActiveEngines(['chatgpt', 'gemini', 'perplexity', 'copilot']),
-                    'crawl_date' => $today,
-                ],
-                [
-                    'company_key' => $companyKey,
-                    'title' => "{$companyName} op Trustoo / Beoordelingen",
-                    'url' => "https://trustoo.nl/zoeken/?q=" . urlencode($companyName),
-                    'domain' => 'trustoo.nl',
-                    'snippet' => "Bekijk de profielen en beoordelingen voor {$companyName} op Trustoo.",
-                    'type' => 'Review',
-                    'sentiment' => '+92',
-                    'cited_by' => $filterActiveEngines(['chatgpt', 'perplexity']),
-                    'crawl_date' => $today,
-                ],
-                [
-                    'company_key' => $companyKey,
-                    'title' => "{$companyName} Bedrijfsprofiel op LinkedIn",
-                    'url' => "https://www.google.com/search?q=" . urlencode("{$companyName} linkedin"),
-                    'domain' => 'linkedin.com',
-                    'snippet' => "Zoek naar het LinkedIn profiel, case studies en publicaties van {$companyName}.",
-                    'type' => 'Social',
-                    'sentiment' => '+92',
-                    'cited_by' => $filterActiveEngines(['chatgpt', 'copilot', 'gemini']),
-                    'crawl_date' => $today,
-                ],
-            ];
-        }
-
-        GeoLog::info("🌐 [WEB GROUNDING KLAAR] " . count($extractedCitations) . " grounding bronnen beschikbaar.");
-        $crawlLogs[] = "[Scraping Engine] Extracted " . count($extractedCitations) . " grounding web sources.";
-
-        // Prepare RAG prompt
-        $selfDomain = str_contains($companyName, '.') ? strtolower($companyName) : "{$companyKey}.nl";
-        $isFallbackOnly = true;
-        foreach ($extractedCitations as $c) {
-            if ($c['domain'] !== 'trustoo.nl' && $c['domain'] !== $selfDomain && $c['domain'] !== 'linkedin.com' && $c['domain'] !== 'google.com') {
-                $isFallbackOnly = false;
-                break;
-            }
-        }
-
-        // Query AI engines with native live web search grounding (Mode B)
-        GeoLog::info("🧠 [FASE 2: AI ENGINE PIPELINE] Start live web-grounded LLM aanroepen (OpenAI SearchGPT, Google Suite RAG, Perplexity Sonar)...");
-        $crawlLogs[] = "[AI Engines] Querying OpenAI (gpt-4o + SearchGPT), Google AI Suite (Gemini/AIMode/AIO), Perplexity (Sonar) & Claude 3.5 Sonnet...";
-
-        $openAIRes = $this->aiEngine->queryOpenAI($promptText, $companyName, $projectId, $promptId);
-        $googleSuite = $this->aiEngine->queryGoogleEcosystem($promptText, $companyName, $extractedCitations, $projectId, $promptId);
-        $geminiRes = $googleSuite['gemini'];
-        $aiModeRes = $googleSuite['aimode'];
-        $aiOverviewsRes = $googleSuite['aioverviews'];
-        $perplexityRes = $this->aiEngine->queryPerplexity($promptText, $companyName, $projectId, $promptId);
-        $anthropicRes = $this->aiEngine->queryAnthropic($promptText, $companyName, $projectId, $promptId);
-
-        // Collect all native live citations from OpenAI, Gemini, AI Mode, AI Overviews & Perplexity
-        $allEngineCitations = array_merge(
-            $openAIRes['citations'] ?? [],
-            $geminiRes['citations'] ?? [],
-            $aiModeRes['citations'] ?? [],
-            $aiOverviewsRes['citations'] ?? [],
-            $perplexityRes['citations'] ?? []
-        );
-
-        foreach (array_unique($allEngineCitations) as $url) {
-            $dom = $this->getDomain($url);
-            if (!empty($dom) && strlen($dom) > 3) {
-                $alreadyExists = false;
-                foreach ($extractedCitations as $existing) {
-                    if ($existing['url'] === $url || $existing['domain'] === $dom) {
-                        $alreadyExists = true;
-                        break;
+            // Perplexity fallback for search grounding (reused below so Perplexity is NEVER called twice per prompt)
+            $preFetchedPerplexity = null;
+            if (empty($extractedCitations) && (config('services.perplexity.key') ?: env('PERPLEXITY_API_KEY'))) {
+                GeoLog::info("🌐 [WEB GROUNDING] DDG geblokkeerd -> Perplexity AI eenmalig aanroepen voor live zoekindex & antwoord...");
+                $crawlLogs[] = "[Hybrid Engine] DDG crawl blocked. Querying Perplexity AI once for live search grounding & answer...";
+                try {
+                    $preFetchedPerplexity = $this->aiEngine->queryPerplexity($promptText, $companyName, $projectId, $promptId);
+                    if (empty($preFetchedPerplexity['failed']) && !empty($preFetchedPerplexity['citations'])) {
+                        foreach ($preFetchedPerplexity['citations'] as $url) {
+                            $domain = $this->getDomain($url);
+                            $ignoredDomains = ['duckduckgo.com', 'google.com', 'wikipedia.org', 'facebook.com', 'instagram.com', 'linkedin.com', 'youtube.com'];
+                            if (!empty($domain) && strlen($domain) > 3 && !in_array($domain, $ignoredDomains)) {
+                                $extractedCitations[] = [
+                                    'company_key' => $companyKey,
+                                    'title' => "Bron: {$domain}",
+                                    'url' => $url,
+                                    'domain' => $domain,
+                                    'snippet' => "Live zoekresultaat via Perplexity AI index voor: {$promptText}",
+                                    'type' => 'Website',
+                                    'sentiment' => '+90',
+                                    'cited_by' => ['perplexity'],
+                                    'crawl_date' => date('Y-m-d'),
+                                ];
+                            }
+                        }
+                        $crawlLogs[] = "[Hybrid Engine Success] Retrieved " . count($extractedCitations) . " live citations from Perplexity AI!";
                     }
+                } catch (\Exception $err) {
+                    $crawlLogs[] = "[Hybrid Engine Error] Perplexity search grounding failed: {$err->getMessage()}";
                 }
-                if (!$alreadyExists) {
-                    $extractedCitations[] = [
-                        'company_key' => $companyKey,
-                        'title' => "Bron: {$dom}",
-                        'url' => $url,
-                        'domain' => $dom,
-                        'snippet' => "Live geciteerd door AI zoekmachines voor: {$promptText}",
-                        'type' => 'Website',
-                        'sentiment' => '+95',
-                        'cited_by' => ['chatgpt', 'gemini', 'aimode', 'aioverviews', 'perplexity'],
-                        'crawl_date' => date('Y-m-d'),
-                    ];
+            }
+
+            // No fake/built-in fallback citations! Only real verified web & AI citations are stored.
+            GeoLog::info("🌐 [WEB GROUNDING KLAAR] " . count($extractedCitations) . " echte grounding bronnen beschikbaar.");
+            $crawlLogs[] = "[Scraping Engine] Extracted " . count($extractedCitations) . " live grounding web sources.";
+
+            // Query AI engines with native live web search grounding (Mode B)
+            GeoLog::info("🧠 [FASE 2: AI ENGINE PIPELINE] Start live web-grounded LLM aanroepen (OpenAI SearchGPT, Google Suite RAG, Perplexity, Claude)...");
+            $crawlLogs[] = "[AI Engines] Querying OpenAI (gpt-4o + SearchGPT), Google AI Suite (Gemini/AIMode/AIO), Perplexity & Claude...";
+
+            $openAIRes = $this->aiEngine->queryOpenAI($promptText, $companyName, $projectId, $promptId);
+            $googleSuite = $this->aiEngine->queryGoogleEcosystem($promptText, $companyName, $extractedCitations, $projectId, $promptId);
+            $geminiRes = $googleSuite['gemini'];
+            $aiModeRes = $googleSuite['aimode'];
+            $aiOverviewsRes = $googleSuite['aioverviews'];
+            $perplexityRes = $preFetchedPerplexity ?? $this->aiEngine->queryPerplexity($promptText, $companyName, $projectId, $promptId);
+            $anthropicRes = $this->aiEngine->queryAnthropic($promptText, $companyName, $projectId, $promptId);
+
+            // Collect all native live citations from OpenAI, Gemini, AI Mode, AI Overviews, Perplexity & Claude
+            $allEngineCitations = array_merge(
+                $openAIRes['citations'] ?? [],
+                $geminiRes['citations'] ?? [],
+                $aiModeRes['citations'] ?? [],
+                $aiOverviewsRes['citations'] ?? [],
+                $perplexityRes['citations'] ?? [],
+                $anthropicRes['citations'] ?? []
+            );
+
+            foreach (array_unique($allEngineCitations) as $url) {
+                $dom = $this->getDomain($url);
+                if (!empty($dom) && strlen($dom) > 3) {
+                    $alreadyExists = false;
+                    foreach ($extractedCitations as $existing) {
+                        if ($existing['url'] === $url || $existing['domain'] === $dom) {
+                            $alreadyExists = true;
+                            break;
+                        }
+                    }
+                    if (!$alreadyExists) {
+                        $extractedCitations[] = [
+                            'company_key' => $companyKey,
+                            'title' => "Bron: {$dom}",
+                            'url' => $url,
+                            'domain' => $dom,
+                            'snippet' => "Live geciteerd door AI zoekmachines voor: {$promptText}",
+                            'type' => 'Website',
+                            'sentiment' => '+95',
+                            'cited_by' => ['chatgpt', 'gemini', 'aimode', 'aioverviews', 'perplexity'],
+                            'crawl_date' => date('Y-m-d'),
+                        ];
+                    }
                 }
             }
         }
@@ -359,137 +415,91 @@ class ScraperService
             });
 
             return [
-                'brandsCount' => max(1, count($filtered)),
+                'brandsCount' => count($filtered),
                 'sourcesCount' => count($engineCitations),
                 'brandsList' => $filtered,
             ];
         };
 
-        $chatgptStats = $extractBrands($openAIRes['text'] ?? '', $extractedCitations, 'chatgpt');
-        $geminiStats = $extractBrands($geminiRes['text'] ?? '', $extractedCitations, 'gemini');
-        $aimodeStats = $extractBrands($aiModeRes['text'] ?? '', $extractedCitations, 'aimode');
-        $aioStats = $extractBrands($aiOverviewsRes['text'] ?? '', $extractedCitations, 'aioverviews');
-        $perplexityStats = $extractBrands($perplexityRes['text'] ?? '', $extractedCitations, 'perplexity');
-        $claudeStats = $extractBrands($anthropicRes['text'] ?? '', $extractedCitations, 'claude');
-        $copilotStats = $extractBrands('', $extractedCitations, 'copilot');
-        $metaStats = $extractBrands('', $extractedCitations, 'meta');
+        $isLiveRes = fn(array $r) => !AiEngineService::isSimulatedOrFailedModel($r);
+
+        $chatgptLive = $isLiveRes($openAIRes);
+        $geminiLive = $isLiveRes($geminiRes);
+        $aimodeLive = $isLiveRes($aiModeRes);
+        $aioLive = $isLiveRes($aiOverviewsRes);
+        $perplexityLive = $isLiveRes($perplexityRes);
+        $claudeLive = $isLiveRes($anthropicRes);
+
+        $chatgptStats = $chatgptLive ? $extractBrands($openAIRes['text'] ?? '', $extractedCitations, 'chatgpt') : ['brandsCount' => 0, 'sourcesCount' => 0, 'brandsList' => []];
+        $geminiStats = $geminiLive ? $extractBrands($geminiRes['text'] ?? '', $extractedCitations, 'gemini') : ['brandsCount' => 0, 'sourcesCount' => 0, 'brandsList' => []];
+        $aimodeStats = $aimodeLive ? $extractBrands($aiModeRes['text'] ?? '', $extractedCitations, 'aimode') : ['brandsCount' => 0, 'sourcesCount' => 0, 'brandsList' => []];
+        $aioStats = $aioLive ? $extractBrands($aiOverviewsRes['text'] ?? '', $extractedCitations, 'aioverviews') : ['brandsCount' => 0, 'sourcesCount' => 0, 'brandsList' => []];
+        $perplexityStats = $perplexityLive ? $extractBrands($perplexityRes['text'] ?? '', $extractedCitations, 'perplexity') : ['brandsCount' => 0, 'sourcesCount' => 0, 'brandsList' => []];
+        $claudeStats = $claudeLive ? $extractBrands($anthropicRes['text'] ?? '', $extractedCitations, 'claude') : ['brandsCount' => 0, 'sourcesCount' => 0, 'brandsList' => []];
+
+        $buildMentionEntry = function (string $displayName, array $res, bool $isLive, array $stats, int $sourcesFallback = 0): array {
+            if (!$isLive) {
+                return [
+                    'name' => $displayName,
+                    'method' => $res['method'] ?? 'Niet gemeten (API fout)',
+                    'mentioned' => false,
+                    'position' => null,
+                    'score' => 0,
+                    'sentiment' => 'N/A',
+                    'summary' => '',
+                    'errorMsg' => $res['errorMsg'] ?? 'API niet beschikbaar',
+                    'available' => false,
+                    'failed' => true,
+                    'isSimulated' => true,
+                    'fallbackUsed' => true,
+                    'brands' => 0,
+                    'sources' => 0,
+                ];
+            }
+
+            return [
+                'name' => $displayName,
+                'method' => $res['method'] ?? $displayName,
+                'mentioned' => !empty($res['mentioned']),
+                'position' => !empty($res['mentioned']) ? ($res['position'] ?? 1) : null,
+                'score' => $res['score'] ?? 0,
+                'sentiment' => !empty($res['mentioned']) ? ($res['sentiment'] ?? '+90') : 'N/A',
+                'summary' => $res['text'] ?? '',
+                'available' => true,
+                'failed' => false,
+                'isSimulated' => false,
+                'fallbackUsed' => false,
+                'brands' => $stats['brandsCount'],
+                'sources' => count($res['citations'] ?? []) ?: ($sourcesFallback > 0 ? $sourcesFallback : $stats['sourcesCount']),
+            ];
+        };
 
         $modelMentions = [
-            'chatgpt' => [
-                'name' => 'OpenAI ChatGPT',
-                'method' => $openAIRes['method'] ?? 'OpenAI API',
-                'mentioned' => !empty($openAIRes['mentioned']) && empty($openAIRes['fallbackUsed']),
-                'position' => $openAIRes['position'] ?? null,
-                'score' => $openAIRes['score'] ?? 0,
-                'sentiment' => $openAIRes['sentiment'] ?? 'N/A',
-                'summary' => $openAIRes['text'] ?? '',
-                'isSimulated' => !empty($openAIRes['isSimulated']) || !empty($openAIRes['fallbackUsed']),
-                'fallbackUsed' => !empty($openAIRes['fallbackUsed']),
-                'brands' => $chatgptStats['brandsCount'],
-                'sources' => $chatgptStats['sourcesCount'],
-            ],
-            'aioverviews' => [
-                'name' => 'Google AI Overviews',
-                'method' => $aiOverviewsRes['method'] ?? 'Google SGE',
-                'mentioned' => !empty($aiOverviewsRes['mentioned']) && empty($aiOverviewsRes['fallbackUsed']),
-                'position' => $aiOverviewsRes['position'] ?? null,
-                'score' => $aiOverviewsRes['score'] ?? 0,
-                'sentiment' => $aiOverviewsRes['sentiment'] ?? 'N/A',
-                'summary' => $aiOverviewsRes['text'] ?? '',
-                'isSimulated' => !empty($aiOverviewsRes['isSimulated']) || !empty($aiOverviewsRes['fallbackUsed']),
-                'fallbackUsed' => !empty($aiOverviewsRes['fallbackUsed']),
-                'brands' => $aioStats['brandsCount'],
-                'sources' => count($aiOverviewsRes['citations'] ?? []) ?: count($extractedCitations),
-            ],
-            'aimode' => [
-                'name' => 'Google AI Mode',
-                'method' => $aiModeRes['method'] ?? 'Google AI Mode',
-                'mentioned' => !empty($aiModeRes['mentioned']) && empty($aiModeRes['fallbackUsed']),
-                'position' => $aiModeRes['position'] ?? null,
-                'score' => $aiModeRes['score'] ?? 0,
-                'sentiment' => $aiModeRes['sentiment'] ?? 'N/A',
-                'summary' => $aiModeRes['text'] ?? '',
-                'isSimulated' => !empty($aiModeRes['isSimulated']) || !empty($aiModeRes['fallbackUsed']),
-                'fallbackUsed' => !empty($aiModeRes['fallbackUsed']),
-                'brands' => $aimodeStats['brandsCount'],
-                'sources' => count($aiModeRes['citations'] ?? []) ?: 2,
-            ],
-            'gemini' => [
-                'name' => 'Google Gemini',
-                'method' => $geminiRes['method'] ?? 'Gemini API',
-                'mentioned' => !empty($geminiRes['mentioned']) && empty($geminiRes['fallbackUsed']),
-                'position' => $geminiRes['position'] ?? null,
-                'score' => $geminiRes['score'] ?? 0,
-                'sentiment' => $geminiRes['sentiment'] ?? 'N/A',
-                'summary' => $geminiRes['text'] ?? '',
-                'isSimulated' => !empty($geminiRes['isSimulated']) || !empty($geminiRes['fallbackUsed']),
-                'fallbackUsed' => !empty($geminiRes['fallbackUsed']),
-                'brands' => $geminiStats['brandsCount'],
-                'sources' => $geminiStats['sourcesCount'],
-            ],
-            'perplexity' => [
-                'name' => 'Perplexity AI',
-                'method' => $perplexityRes['method'] ?? 'Perplexity API',
-                'mentioned' => !empty($perplexityRes['mentioned']) && empty($perplexityRes['fallbackUsed']),
-                'position' => $perplexityRes['position'] ?? null,
-                'score' => $perplexityRes['score'] ?? 0,
-                'sentiment' => $perplexityRes['sentiment'] ?? 'N/A',
-                'summary' => $perplexityRes['text'] ?? '',
-                'isSimulated' => !empty($perplexityRes['isSimulated']) || !empty($perplexityRes['fallbackUsed']),
-                'fallbackUsed' => !empty($perplexityRes['fallbackUsed']),
-                'brands' => $perplexityStats['brandsCount'],
-                'sources' => max(3, $perplexityStats['sourcesCount']),
-            ],
-            'claude' => [
-                'name' => 'Anthropic Claude',
-                'method' => $anthropicRes['method'] ?? 'Anthropic API',
-                'mentioned' => !empty($anthropicRes['mentioned']) && empty($anthropicRes['fallbackUsed']),
-                'position' => $anthropicRes['position'] ?? null,
-                'score' => $anthropicRes['score'] ?? 0,
-                'sentiment' => $anthropicRes['sentiment'] ?? 'N/A',
-                'summary' => $anthropicRes['text'] ?? '',
-                'isSimulated' => !empty($anthropicRes['isSimulated']) || !empty($anthropicRes['fallbackUsed']),
-                'fallbackUsed' => !empty($anthropicRes['fallbackUsed']),
-                'brands' => $claudeStats['brandsCount'],
-                'sources' => $claudeStats['sourcesCount'],
-            ],
+            'chatgpt' => $buildMentionEntry('OpenAI ChatGPT', $openAIRes, $chatgptLive, $chatgptStats),
+            'aioverviews' => $buildMentionEntry('Google AI Overviews', $aiOverviewsRes, $aioLive, $aioStats, count($extractedCitations)),
+            'aimode' => $buildMentionEntry('Google AI Mode', $aiModeRes, $aimodeLive, $aimodeStats),
+            'gemini' => $buildMentionEntry('Google Gemini', $geminiRes, $geminiLive, $geminiStats),
+            'perplexity' => $buildMentionEntry('Perplexity AI', $perplexityRes, $perplexityLive, $perplexityStats),
+            'claude' => $buildMentionEntry('Anthropic Claude', $anthropicRes, $claudeLive, $claudeStats),
         ];
 
-        if (AiEngineService::isEngineEnabled('copilot')) {
-            $modelMentions['copilot'] = [
-                'name' => 'Microsoft Copilot',
-                'method' => 'Bing Copilot Index',
-                'mentioned' => true,
-                'position' => 2,
-                'score' => 74,
-                'sentiment' => '+92',
-                'summary' => "Copilot vermeldt {$companyName} als betrouwbare partner op basis van Bing index data.",
-                'brands' => max(3, $copilotStats['brandsCount'] + 3),
-                'sources' => max(2, $copilotStats['sourcesCount'] + 2),
-            ];
-        }
+        // Only consider genuine live models that did NOT fail or simulate
+        $liveMentions = array_filter($modelMentions, fn($m) => !AiEngineService::isSimulatedOrFailedModel($m) && !empty($m['mentioned']));
+        $liveModels = array_filter($modelMentions, fn($m) => !AiEngineService::isSimulatedOrFailedModel($m));
 
-        if (AiEngineService::isEngineEnabled('meta')) {
-            $modelMentions['meta'] = [
-                'name' => 'Meta AI',
-                'method' => 'Llama 3 Web Index',
-                'mentioned' => false,
-                'position' => 4,
-                'score' => 55,
-                'sentiment' => '+85',
-                'summary' => 'Meta AI bevat nog geen directe vermelding.',
-                'brands' => max(3, $metaStats['brandsCount'] + 2),
-                'sources' => max(1, $metaStats['sourcesCount'] + 2),
-            ];
-        }
+        $totalMentionedCount = count($liveMentions);
+        $totalLiveModelsCount = count($liveModels);
+        $failedModelsCount = count($modelMentions) - $totalLiveModelsCount;
 
-        // Unique Brands list
+        // Unique Brands list strictly from live models (only include self if genuinely mentioned)
         $allBrands = array_merge(
             $chatgptStats['brandsList'],
             $geminiStats['brandsList'],
+            $aimodeStats['brandsList'],
+            $aioStats['brandsList'],
             $perplexityStats['brandsList'],
             $claudeStats['brandsList'],
-            [$companyName]
+            $totalMentionedCount > 0 ? [$companyName] : []
         );
         $uniqueBrands = array_values(array_unique($allBrands));
 
@@ -506,31 +516,26 @@ class ScraperService
             ];
         }, $uniqueBrands, array_keys($uniqueBrands));
 
-        // Only consider genuine live models that did NOT fall back to simulation
-        $liveMentions = array_filter($modelMentions, function ($m) {
-            $isSim = !empty($m['isSimulated']) || !empty($m['fallbackUsed']) || str_contains(strtolower($m['method'] ?? ''), 'simulator');
-            return !empty($m['mentioned']) && !$isSim;
-        });
-        $liveModels = array_filter($modelMentions, function ($m) {
-            return empty($m['isSimulated']) && empty($m['fallbackUsed']) && !str_contains(strtolower($m['method'] ?? ''), 'simulator');
-        });
-
-        $totalMentionedCount = count($liveMentions);
-        $totalLiveModelsCount = count($liveModels);
-        $totalModelsCount = count($modelMentions);
-        $totalBrandsCount = max(count($parsedBrands), 5);
+        // totalModels strictly reflects ONLY actually measured live models (never failed/simulated!)
+        $totalModelsCount = $totalLiveModelsCount;
+        $totalBrandsCount = count($parsedBrands);
         $totalSourcesCount = count($extractedCitations);
         $overallScore = $totalLiveModelsCount > 0 ? (int) round(($totalMentionedCount / $totalLiveModelsCount) * 100) : 0;
 
         $mentionedPositions = [];
+        $mentionedSentiments = [];
         foreach ($liveMentions as $mItem) {
-            if (!empty($mItem['position'])) {
+            if (!empty($mItem['position']) && is_numeric($mItem['position'])) {
                 $mentionedPositions[] = (float) $mItem['position'];
+            }
+            if (!empty($mItem['sentiment']) && $mItem['sentiment'] !== 'N/A') {
+                $mentionedSentiments[] = $mItem['sentiment'];
             }
         }
         $calculatedPosition = !empty($mentionedPositions)
             ? round(array_sum($mentionedPositions) / count($mentionedPositions), 1)
             : null;
+        $calculatedSentiment = !empty($mentionedSentiments) ? $mentionedSentiments[0] : 'N/A';
 
         // Build / preserve Prompt History (Nulmeting + subsequent scans)
         $promptHistory = [];
@@ -603,7 +608,7 @@ class ScraperService
         }
 
         GeoLog::box("PROMPT SCAN RESULTAAT", [
-            "🏆 Aanbevelingen: {$totalMentionedCount} van de {$totalModelsCount} AI modellen",
+            "🏆 Aanbevelingen: {$totalMentionedCount} van de {$totalModelsCount} live AI modellen" . ($failedModelsCount > 0 ? " ({$failedModelsCount} niet gemeten)" : ""),
             "📈 Overall Score: {$overallScore}%",
             "🔍 Gevonden merken: {$totalBrandsCount} | Citaties opgeslagen: {$totalSourcesCount}",
         ]);
@@ -614,8 +619,11 @@ class ScraperService
             'companyKey' => $companyKey,
             'prompt' => $promptText,
             'position' => $calculatedPosition,
+            'sentiment' => $calculatedSentiment,
             'totalMentions' => $totalMentionedCount,
             'totalModels' => $totalModelsCount,
+            'totalLiveModels' => $totalLiveModelsCount,
+            'failedModelsCount' => $failedModelsCount,
             'totalBrandsCount' => $totalBrandsCount,
             'totalSourcesCount' => $totalSourcesCount,
             'overallScore' => $overallScore,

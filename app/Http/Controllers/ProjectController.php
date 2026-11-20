@@ -49,16 +49,33 @@ class ProjectController extends Controller
                 'updated_at' => now(),
             ]);
 
-        $projects = $query->get();
+        $projects = $query->with(['prompts:id,project_id,results,status'])->get();
 
         $projectsWithCounts = $projects->map(function ($proj) {
             $kwCount = $proj->keywords_count;
             $prCount = $proj->prompts_count;
 
             // Check if there are still pending prompts for this specific project
-            $pendingPrompts = $proj->prompts()
+            $pendingPrompts = $proj->prompts
                 ->whereIn('status', ['pending', 'processing'])
                 ->count();
+
+            // Compute live-only visibility_index (strictly excluding simulated/failed models)
+            $liveMeasured = 0;
+            $liveMentioned = 0;
+            foreach ($proj->prompts as $pItem) {
+                $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                $lm = AiEngineService::extractLivePromptMetrics(is_array($pRes) ? $pRes : null);
+                if ($lm['hasLiveData']) {
+                    $liveMeasured++;
+                    if ($lm['mentioned']) {
+                        $liveMentioned++;
+                    }
+                }
+            }
+            $liveVisibility = ($liveMeasured > 0 && $liveMentioned > 0)
+                ? (int) round(($liveMentioned / $liveMeasured) * 100)
+                : 0;
 
             $status = $proj->setup_status;
             $progress = $proj->setup_progress;
@@ -82,7 +99,7 @@ class ProjectController extends Controller
                 'email' => $proj->email,
                 'subscription' => $proj->subscription,
                 'promptsLimit' => Project::getPromptLimit($proj->subscription),
-                'visibility_index' => $proj->visibility_index,
+                'visibility_index' => $liveVisibility,
                 'setup_status' => $status,
                 'setup_progress' => $progress,
                 'keywordsCount' => $kwCount,
@@ -409,6 +426,30 @@ class ProjectController extends Controller
 
         return response()->json([
             'success' => true,
+            'aiDriver' => AiEngineService::getActiveDriver(),
+            'dataforseo' => \App\Services\DataForSeoService::getAccountSummary(),
+            'status' => $status,
+            'history' => $history,
+            'enabledEngines' => $enabledEngines,
+            'costSummary' => $costData['summary'] ?? null,
+            'costByEngine' => $costData['byEngine'] ?? [],
+        ]);
+    }
+
+    public function apiMonitorReset(): JsonResponse
+    {
+        AiEngineService::clearCircuitBreakers();
+
+        $status = AiEngineService::getApiStatus();
+        $history = AiEngineService::getApiHistory();
+        $enabledEngines = AiEngineService::getEnabledEngines();
+        $costData = \App\Services\LlmCostService::getSummary();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Alle API circuit breakers zijn gereset. Engines worden bij de volgende scan weer live geprobeerd.',
+            'aiDriver' => AiEngineService::getActiveDriver(),
+            'dataforseo' => \App\Services\DataForSeoService::getAccountSummary(true),
             'status' => $status,
             'history' => $history,
             'enabledEngines' => $enabledEngines,

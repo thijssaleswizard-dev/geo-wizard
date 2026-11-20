@@ -59,10 +59,27 @@ class CompetitorScraperService
         
         $groundedData = [];
 
+        $kwProjectId = null;
+        $kwLiveModelChecks = 0;
+        $kwLiveBrandMentions = 0;
+        $kwLivePositions = [];
+
         // --- A0. Extract real local competitors already discovered by AI Prompt Scans (ChatGPT Web Search, etc.) ---
         try {
             $kwRecord = Keyword::with('prompts')->find($keywordId);
             if ($kwRecord) {
+                $kwProjectId = $kwRecord->project_id;
+                foreach ($kwRecord->prompts ?? [] as $pItem) {
+                    $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                    if (is_array($pRes) && !empty($pRes['modelMentions'])) {
+                        $liveMetrics = AiEngineService::extractLivePromptMetrics($pRes);
+                        $kwLiveModelChecks += $liveMetrics['liveModelsCount'];
+                        $kwLiveBrandMentions += $liveMetrics['totalMentions'];
+                        if ($liveMetrics['position'] !== null) {
+                            $kwLivePositions[] = (float) $liveMetrics['position'];
+                        }
+                    }
+                }
                 $promptCompetitors = $this->extractCompetitorsFromPrompts($kwRecord, $cleanCompany, $cleanDomain);
                 foreach ($promptCompetitors as $dom => $item) {
                     $groundedData[$dom] = $item;
@@ -93,13 +110,17 @@ class CompetitorScraperService
             Log::warning("[Prompt Competitor Extraction Note] {$e->getMessage()}");
         }
 
-        // --- A. Universal Real-Time Web Grounding Search via Live Web Index (only if Perplexity circuit is healthy) ---
-        if (!\Illuminate\Support\Facades\Cache::has('ai_circuit_breaker_perplexity')) {
+        // --- A. Universal Real-Time Web Grounding Search via Live Web Index (only if active circuit is healthy) ---
+        $canQueryPerplexity = AiEngineService::isDataForSeoActive() && (bool) config('geo.dataforseo_include_perplexity', true)
+            ? (DataForSeoService::isConfigured() && !\Illuminate\Support\Facades\Cache::has('ai_circuit_breaker_dataforseo'))
+            : !\Illuminate\Support\Facades\Cache::has('ai_circuit_breaker_perplexity');
+
+        if ($canQueryPerplexity) {
             try {
                 GeoLog::info("🌐 [LIVE WEB GROUNDING] Zoeken naar echte ranking concurrenten voor: \"{$cleanKw}\"");
                 $prompt = "Welke Nederlandse bedrijven, bureaus, praktijken, specialisten en aanbieders zijn actief en ranken in Nederland voor de zoekterm: \"{$cleanKw}\"? Geef de actuele websites, landingspagina's en live bronnen.";
-                $pplx = $this->aiEngine->queryPerplexity($prompt, $cleanCompany);
-                $citations = ($pplx['fallbackUsed'] ?? false) ? [] : ($pplx['citations'] ?? []);
+                $pplx = $this->aiEngine->queryPerplexity($prompt, $cleanCompany, $kwProjectId);
+                $citations = (!empty($pplx['failed']) || !empty($pplx['fallbackUsed'])) ? [] : ($pplx['citations'] ?? []);
 
                 foreach ($citations as $url) {
                     $host = parse_url($url, PHP_URL_HOST);
@@ -168,49 +189,98 @@ class CompetitorScraperService
             }
         }
 
-        // 3. Ensure target company (Self) is in the list
+        // 3. Ensure target company (Self) is in the list WITHOUT inventing fake hits/SoV when unmentioned
         $selfCitationUrls = [
             "https://{$cleanDomain}/",
-            "https://{$cleanDomain}/diensten/"
         ];
 
         $selfFound = isset($groundedData[$cleanDomain]);
-        $selfHits = $selfFound ? ($groundedData[$cleanDomain]['hits'] ?? 6) : 6;
+        $hasLivePrompts = $kwLiveModelChecks > 0;
+        $liveSelfSov = $hasLivePrompts ? (int) round(($kwLiveBrandMentions / $kwLiveModelChecks) * 100) : 0;
+        $liveSelfPos = !empty($kwLivePositions)
+            ? number_format(array_sum($kwLivePositions) / count($kwLivePositions), 1)
+            : '-';
 
-        $groundedData[$cleanDomain] = [
-            'brand' => $selfName,
-            'domain' => $cleanDomain,
-            'isSelf' => true,
-            'citations' => 2,
-            'citationUrls' => $selfCitationUrls,
-            'hits' => $selfHits,
-        ];
+        if ($hasLivePrompts) {
+            // Strictly reflect live AI prompt scan reality for self (never invent fake hits/rank when 0 mentions!)
+            $selfHits = $kwLiveBrandMentions > 0 ? max(1, ($groundedData[$cleanDomain]['hits'] ?? 0) + ($kwLiveBrandMentions * 4)) : 0;
+            $groundedData[$cleanDomain] = [
+                'brand' => $selfName,
+                'domain' => $cleanDomain,
+                'isSelf' => true,
+                'citations' => $kwLiveBrandMentions > 0 ? max(1, $groundedData[$cleanDomain]['citations'] ?? 1) : 0,
+                'citationUrls' => $kwLiveBrandMentions > 0 ? ($groundedData[$cleanDomain]['citationUrls'] ?? $selfCitationUrls) : [],
+                'hits' => $selfHits,
+            ];
+        } elseif ($selfFound) {
+            $groundedData[$cleanDomain]['brand'] = $selfName;
+            $groundedData[$cleanDomain]['isSelf'] = true;
+        } else {
+            $groundedData[$cleanDomain] = [
+                'brand' => $selfName,
+                'domain' => $cleanDomain,
+                'isSelf' => true,
+                'citations' => 0,
+                'citationUrls' => [],
+                'hits' => 0,
+            ];
+        }
 
         // 4. Dynamic Sorting: Rank strictly by actual search engine hits and citations
         $competitorsList = array_values($groundedData);
 
         usort($competitorsList, function ($a, $b) {
-            $scoreA = (($a['hits'] ?? 1) * 3) + (($a['citations'] ?? 1) * 2);
-            $scoreB = (($b['hits'] ?? 1) * 3) + (($b['citations'] ?? 1) * 2);
+            $scoreA = (($a['hits'] ?? 0) * 3) + (($a['citations'] ?? 0) * 2);
+            $scoreB = (($b['hits'] ?? 0) * 3) + (($b['citations'] ?? 0) * 2);
             if ($scoreA !== $scoreB) {
                 return $scoreB <=> $scoreA;
             }
             return strcmp($a['brand'] ?? '', $b['brand'] ?? '');
         });
 
-        // 5. Realistic SOV curve
+        // 5. Assign ranks & Share of Voice (strictly 0% and '-' for self when not mentioned in live AI models!)
         $sovCurve = [38, 29, 23, 18, 15, 13, 11, 9, 8, 7, 6, 5, 4, 4, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1];
         $posCurve = ['2.1', '2.8', '3.4', '4.0', '4.5', '5.1', '5.6', '6.2', '6.8', '7.3', '7.9', '8.4', '8.9', '9.4', '9.9', '10.4', '10.9', '11.4', '11.9', '12.4', '12.9', '13.4', '13.9', '14.4', '14.9'];
 
+        $rankedPositionCounter = 0;
         foreach ($competitorsList as $idx => &$comp) {
-            $comp['rank'] = "#" . ($idx + 1);
-            $comp['sov'] = $sovCurve[$idx] ?? max(1, 15 - $idx);
-            $comp['position'] = $posCurve[$idx] ?? number_format(3.0 + ($idx * 0.5), 1);
-            
-            if (empty($comp['citationUrls'])) {
-                $comp['citationUrls'] = ["https://{$comp['domain']}/"];
+            $isSelfComp = !empty($comp['isSelf']);
+            $hasRealHits = ($comp['hits'] ?? 0) > 0;
+
+            if ($isSelfComp && $hasLivePrompts) {
+                if ($kwLiveBrandMentions === 0) {
+                    $comp['rank'] = '-';
+                    $comp['sov'] = 0;
+                    $comp['position'] = '-';
+                    $comp['citations'] = 0;
+                    $comp['citationUrls'] = [];
+                } else {
+                    $rankedPositionCounter++;
+                    $comp['rank'] = '#' . $rankedPositionCounter;
+                    $comp['sov'] = $liveSelfSov;
+                    $comp['position'] = $liveSelfPos !== '-' ? $liveSelfPos : ($posCurve[$rankedPositionCounter - 1] ?? '3.0');
+                    if (empty($comp['citationUrls'])) {
+                        $comp['citationUrls'] = ["https://{$comp['domain']}/"];
+                    }
+                    $comp['citations'] = count($comp['citationUrls']);
+                }
+            } elseif ($isSelfComp && !$hasRealHits) {
+                $comp['rank'] = '-';
+                $comp['sov'] = 0;
+                $comp['position'] = '-';
+                $comp['citations'] = 0;
+                $comp['citationUrls'] = [];
+            } else {
+                $rankedPositionCounter++;
+                $comp['rank'] = '#' . $rankedPositionCounter;
+                $comp['sov'] = $sovCurve[$rankedPositionCounter - 1] ?? max(1, 15 - $rankedPositionCounter);
+                $comp['position'] = $posCurve[$rankedPositionCounter - 1] ?? number_format(3.0 + ($rankedPositionCounter * 0.5), 1);
+
+                if (empty($comp['citationUrls'])) {
+                    $comp['citationUrls'] = ["https://{$comp['domain']}/"];
+                }
+                $comp['citations'] = count($comp['citationUrls']);
             }
-            $comp['citations'] = count($comp['citationUrls']);
         }
         unset($comp);
 
@@ -271,16 +341,17 @@ class CompetitorScraperService
                 if ($targetIndex !== null && isset($finalRanked[$targetIndex])) {
                     $fComp = &$finalRanked[$targetIndex];
                     $isFirst = empty($existingHistory);
+                    $rankDigits = preg_replace('/[^0-9]/', '', (string) ($fComp['rank'] ?? ''));
                     $newSnapshot = [
                         'date' => now()->format('Y-m-d'),
                         'displayDate' => now()->format('d M Y'),
                         'time' => now()->format('H:i'),
                         'isBaseline' => $isFirst,
                         'label' => $isFirst ? 'Nulmeting' : now()->format('d M H:i'),
-                        'rank' => (int) preg_replace('/[^0-9]/', '', (string) ($fComp['rank'] ?? 1)) ?: 1,
-                        'position' => (float) ($fComp['position'] ?? 2.1),
-                        'sov' => (int) ($fComp['sov'] ?? 35),
-                        'citations' => (int) ($fComp['citations'] ?? 1),
+                        'rank' => $rankDigits !== '' ? (int) $rankDigits : null,
+                        'position' => is_numeric($fComp['position'] ?? null) ? (float) $fComp['position'] : null,
+                        'sov' => (int) ($fComp['sov'] ?? 0),
+                        'citations' => (int) ($fComp['citations'] ?? 0),
                     ];
                     $existingHistory[] = $newSnapshot;
                     if (count($existingHistory) > 15) {
@@ -301,7 +372,8 @@ class CompetitorScraperService
                 $kwModel->competitors_json = $finalRanked;
                 $kwModel->brands_mentioned = array_values(array_filter(array_map(fn($c) => preg_replace('/[^a-z0-9]/', '', strtolower($c['brand'] ?? '')), $finalRanked)));
                 if ($targetIndex !== null && isset($finalRanked[$targetIndex])) {
-                    $kwModel->rank = (int) preg_replace('/[^0-9]/', '', (string) ($finalRanked[$targetIndex]['rank'] ?? 1)) ?: 1;
+                    $rankDigits = preg_replace('/[^0-9]/', '', (string) ($finalRanked[$targetIndex]['rank'] ?? ''));
+                    $kwModel->rank = $rankDigits !== '' ? (int) $rankDigits : null;
                 }
                 $kwModel->save();
             }
@@ -353,9 +425,8 @@ class CompetitorScraperService
             }
 
             foreach ($res['modelMentions'] ?? [] as $engineKey => $mData) {
-                $method = strtolower($mData['method'] ?? '');
-                if (str_contains($method, 'simulator')) {
-                    continue; // Ignore simulated fallback text
+                if (!is_array($mData) || AiEngineService::isSimulatedOrFailedModel($mData)) {
+                    continue; // Strictly ignore simulated / failed fallback entries
                 }
                 $text = $mData['summary'] ?? '';
                 if (empty($text)) {

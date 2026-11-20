@@ -8,6 +8,7 @@ use App\Models\OverviewStat;
 use App\Models\Project;
 use App\Models\Prompt;
 use App\Models\Recommendation;
+use App\Services\AiEngineService;
 use App\Services\ScraperService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -37,19 +38,52 @@ class OverviewController extends Controller
         $stats = null;
         if ($project) {
             $stats = OverviewStat::where('project_id', $project->id)->first();
-        }
-        if (!$stats) {
+
+            // Dynamically reconcile stats against strictly LIVE (non-simulated) prompt results
+            $allPrompts = $project->prompts()->get();
+            $liveMeasured = 0;
+            $liveMentioned = 0;
+            foreach ($allPrompts as $pItem) {
+                $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                $lm = AiEngineService::extractLivePromptMetrics(is_array($pRes) ? $pRes : null);
+                if ($lm['hasLiveData']) {
+                    $liveMeasured++;
+                    if ($lm['mentioned']) {
+                        $liveMentioned++;
+                    }
+                }
+            }
+            $citationsCount = \App\Models\Citation::where('project_id', $project->id)->count();
+            if ($liveMeasured === 0 || $liveMentioned === 0) {
+                $geoScore = 0;
+                $brandShare = 0;
+            } else {
+                $mentionRate = $liveMentioned / $liveMeasured;
+                $geoScore = min(100, max(0, (int) round($mentionRate * 85 + min(15, $citationsCount * 2))));
+                $brandShare = min(100, max(0, (int) round($mentionRate * 100)));
+            }
+
+            $stats = OverviewStat::updateOrCreate(
+                ['project_id' => $project->id, 'company_key' => $companyKey],
+                [
+                    'project_id' => $project->id,
+                    'geo_score' => $geoScore,
+                    'brand_share' => $brandShare,
+                    'citations_total' => $citationsCount,
+                    'sentiment_avg' => $liveMentioned > 0 ? 94 : 0,
+                ]
+            );
+        } elseif (!$stats) {
             $stats = OverviewStat::where('company_key', $companyKey)->first();
         }
         if (!$stats) {
-            $hasPrompts = $project && $project->prompts()->count() > 0;
             $stats = OverviewStat::create([
-                'project_id' => $project ? $project->id : null,
+                'project_id' => null,
                 'company_key' => $companyKey,
-                'geo_score' => $hasPrompts ? 74 : 0,
-                'brand_share' => $hasPrompts ? 68 : 0,
-                'citations_total' => $hasPrompts ? 24 : 0,
-                'sentiment_avg' => $hasPrompts ? 94 : 0,
+                'geo_score' => 0,
+                'brand_share' => 0,
+                'citations_total' => 0,
+                'sentiment_avg' => 0,
             ]);
         }
 
@@ -164,16 +198,17 @@ class OverviewController extends Controller
 
             if ($promptId) {
                 $totalMentioned = $result['totalMentions'] ?? 0;
-                $totalModels = $result['totalModels'] ?? 1;
-                $chatgpt = $result['modelMentions']['chatgpt'] ?? null;
-                $gemini = $result['modelMentions']['gemini'] ?? null;
+                $totalModels = $result['totalLiveModels'] ?? $result['totalModels'] ?? 0;
+                $failedModelsCount = $result['failedModelsCount'] ?? 0;
 
                 Prompt::where('id', $promptId)->update([
-                    'status' => 'completed',
+                    'status' => $totalModels > 0 ? 'completed' : 'failed',
                     'brand_mentioned' => $totalMentioned > 0,
-                    'position' => $chatgpt['position'] ?? ($gemini['position'] ?? 1),
-                    'response_summary' => AiEngineService::cleanBrandKey($company) . " wordt door {$totalMentioned} van de {$totalModels} AI-modellen aanbevolen.",
-                    'sentiment' => $chatgpt['sentiment'] ?? '+90',
+                    'position' => $totalMentioned > 0 ? ($result['position'] ?? null) : null,
+                    'response_summary' => $totalModels > 0
+                        ? AiEngineService::cleanBrandKey($company) . " wordt door {$totalMentioned} van de {$totalModels} live AI-modellen aanbevolen." . ($failedModelsCount > 0 ? " ({$failedModelsCount} niet gemeten)" : "")
+                        : "Geen live AI-modellen beschikbaar tijdens deze scan.",
+                    'sentiment' => $totalMentioned > 0 ? ($result['sentiment'] ?? '+90') : 'N/A',
                     'logs' => $result['logs'] ?? [],
                     'results' => $result,
                     'updated_at' => now(),
@@ -204,18 +239,49 @@ class OverviewController extends Controller
                 $this->scraperService->runScraper($defaultPrompt, $company, $project?->id);
             } else {
                 foreach ($prompts as $p) {
-                    $this->scraperService->runScraper($p->prompt_text, $company, $p->project_id, $p->id);
+                    $res = $this->scraperService->runScraper($p->prompt_text, $company, $p->project_id, $p->id);
+                    $tm = $res['totalMentions'] ?? 0;
+                    $tMod = $res['totalLiveModels'] ?? $res['totalModels'] ?? 0;
+                    $p->update([
+                        'status' => $tMod > 0 ? 'completed' : 'failed',
+                        'brand_mentioned' => $tm > 0,
+                        'position' => $tm > 0 ? ($res['position'] ?? null) : null,
+                        'response_summary' => $tMod > 0
+                            ? "{$company} wordt door {$tm} van de {$tMod} live AI-modellen aanbevolen."
+                            : "Geen live AI-modellen beschikbaar tijdens deze scan.",
+                        'sentiment' => $tm > 0 ? ($res['sentiment'] ?? '+90') : 'N/A',
+                        'logs' => $res['logs'] ?? [],
+                        'results' => $res,
+                        'updated_at' => now(),
+                    ]);
                 }
             }
 
             $citationsCount = $project ? \App\Models\Citation::where('project_id', $project->id)->count() : \App\Models\Citation::where('company_key', $companyKey)->count();
-            $promptsCount = $project ? Prompt::where('project_id', $project->id)->count() : 1;
-            $mentionedCount = $project 
-                ? Prompt::where('project_id', $project->id)->where('brand_mentioned', true)->count()
-                : 0;
+            $freshPrompts = $project ? Prompt::where('project_id', $project->id)->get() : collect();
+            $promptsCount = $freshPrompts->count();
+            $liveMeasured = 0;
+            $liveMentioned = 0;
 
-            $geoScore = min(98, max(45, (int) round(($mentionedCount / max(1, $promptsCount)) * 85 + ($citationsCount * 2))));
-            $brandShare = min(95, max(35, (int) round(($mentionedCount / max(1, $promptsCount)) * 75)));
+            foreach ($freshPrompts as $pItem) {
+                $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                $lm = AiEngineService::extractLivePromptMetrics(is_array($pRes) ? $pRes : null);
+                if ($lm['hasLiveData']) {
+                    $liveMeasured++;
+                    if ($lm['mentioned']) {
+                        $liveMentioned++;
+                    }
+                }
+            }
+
+            if ($liveMeasured === 0 || $liveMentioned === 0) {
+                $geoScore = 0;
+                $brandShare = 0;
+            } else {
+                $mentionRate = $liveMentioned / $liveMeasured;
+                $geoScore = min(100, max(0, (int) round($mentionRate * 85 + min(15, $citationsCount * 2))));
+                $brandShare = min(100, max(0, (int) round($mentionRate * 100)));
+            }
 
             OverviewStat::updateOrCreate(
                 ['project_id' => $project?->id, 'company_key' => $companyKey],
@@ -224,7 +290,7 @@ class OverviewController extends Controller
                     'geo_score' => $geoScore,
                     'brand_share' => $brandShare,
                     'citations_total' => $citationsCount,
-                    'sentiment_avg' => 94,
+                    'sentiment_avg' => $liveMentioned > 0 ? 94 : 0,
                 ]
             );
 

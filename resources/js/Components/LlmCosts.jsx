@@ -440,7 +440,8 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
             {formatEur(summary.totalCostEur)}
           </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            ≈ {formatUsd(summary.totalCostUsd)}
+            Live API: <strong>{formatEur(summary.liveApiCostEur ?? summary.totalCostEur)}</strong>
+            {(summary.billedInvoicesCostEur || 0) > 0 && ` · Facturen: ${formatEur(summary.billedInvoicesCostEur)}`}
           </span>
         </div>
 
@@ -482,7 +483,7 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
             {summary.totalRequests}
           </div>
           <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            {summary.successfulRequests} geslaagd ({summary.totalRequests > 0 ? Math.round((summary.successfulRequests / summary.totalRequests) * 100) : 100}%)
+            {summary.successfulRequests} geslaagd · {summary.failedRequests || 0} mislukt ({summary.totalRequests > 0 ? Math.round((summary.successfulRequests / summary.totalRequests) * 100) : 100}%)
           </span>
         </div>
 
@@ -549,7 +550,8 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
                       {eng.name}
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-                      {Number(eng.totalTokens).toLocaleString('nl-NL')} tokens • {eng.requests} posten
+                      {Number(eng.totalTokens).toLocaleString('nl-NL')} tokens • {eng.successRequests ?? eng.requests} OK{eng.failedRequests > 0 ? ` • ${eng.failedRequests} fout` : ''}
+                      {(eng.billedInvoicesCostEur || 0) > 0 && ` • Live API: ${formatEur(eng.liveCostEur ?? 0)} / Facturen: ${formatEur(eng.billedInvoicesCostEur)}`}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -619,14 +621,18 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                  Live API Verbruik
+                  {summary.aiDriver === 'dataforseo' ? 'DataForSEO Web-Client (Live Scans)' : 'Live API Verbruik'}
                 </span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--brand-primary, #440099)' }}>
-                  Pay-as-you-go
+                <span style={{ fontSize: '12px', fontWeight: 800, color: summary.aiDriver === 'dataforseo' ? '#047857' : 'var(--brand-primary, #440099)' }}>
+                  {summary.aiDriver === 'dataforseo'
+                    ? (summary.dataforseo?.balanceEur != null ? `Saldo: ${formatEur(summary.dataforseo.balanceEur)}` : 'Pay-per-request')
+                    : 'Pay-as-you-go'}
                 </span>
               </div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)' }}>
-                Directe afrekening op tokenbasis voor OpenAI (gpt-4o), Perplexity (sonar) en Anthropic (claude-sonnet-5-5).
+                {summary.aiDriver === 'dataforseo'
+                  ? 'Werkelijke web-client kosten per aanroep (ChatGPT Web, Gemini Web, Google.nl AI Overviews & AI Mode, Perplexity en Claude) exact geregistreerd vanuit DataForSEO.'
+                  : 'Directe afrekening op tokenbasis voor OpenAI (gpt-4o), Perplexity (sonar) en Anthropic (claude-sonnet-5-5).'}
               </div>
             </div>
 

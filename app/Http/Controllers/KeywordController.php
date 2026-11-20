@@ -84,28 +84,142 @@ class KeywordController extends Controller
                             'brand' => ucwords(str_replace(['-', '_'], ' ', $cleanComp)),
                             'domain' => $compDom,
                             'isSelf' => true,
-                            'rank' => '#1',
-                            'position' => '2.1',
-                            'sov' => 35,
-                            'citations' => 1,
-                            'citationUrls' => ["https://{$compDom}/"],
+                            'rank' => '-',
+                            'position' => '-',
+                            'sov' => 0,
+                            'citations' => 0,
+                            'citationUrls' => [],
                         ]
                     ];
                 }
             }
 
-            $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
-            $calculatedSov = $selfItem ? ($selfItem['sov'] ?? 0) : 0;
-            $calculatedPos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
-            $rankStr = $selfItem ? ($selfItem['rank'] ?? ($k->rank ? "#{$k->rank}" : '#1')) : ($k->rank ? "#{$k->rank}" : '#1');
-            if (!str_starts_with((string) $rankStr, '#')) {
-                $rankStr = '#' . $rankStr;
+            // First sanitize and compute strictly LIVE (non-simulated, non-failed) metrics for all prompts of this keyword
+            $kwLiveModelChecks = 0;
+            $kwLiveMentions = 0;
+            $kwLivePositions = [];
+
+            $mappedPrompts = $prompts->map(function ($p) use (&$kwLiveModelChecks, &$kwLiveMentions, &$kwLivePositions) {
+                $resObj = !empty($p->results) ? (is_array($p->results) ? $p->results : json_decode($p->results, true)) : null;
+                $liveMetrics = \App\Services\AiEngineService::extractLivePromptMetrics($resObj);
+                $modelMentions = $liveMetrics['modelMentions'];
+                $citations = $resObj['citations'] ?? ($resObj['sources'] ?? null);
+
+                $totalMentions = $liveMetrics['totalMentions'];
+                $totalModels = $liveMetrics['totalModels'];
+                $isMentioned = $liveMetrics['mentioned'];
+                $overallScore = $liveMetrics['overallScore'];
+                $promptPosition = $liveMetrics['position'];
+                $engines = $liveMetrics['engines'];
+
+                if ($liveMetrics['hasLiveData']) {
+                    $kwLiveModelChecks += $liveMetrics['liveModelsCount'];
+                    $kwLiveMentions += $totalMentions;
+                    if ($promptPosition !== null) {
+                        $kwLivePositions[] = (float) $promptPosition;
+                    }
+                }
+
+                $status = $p->status ?: 'pending';
+                if (!empty($resObj)) {
+                    if ($totalModels === 0) {
+                        $status = 'failed';
+                    } else {
+                        $status = $isMentioned ? 'Cited' : 'Not Cited';
+                    }
+                }
+
+                // Prompt History (Nulmeting + subsequent scans)
+                $pHistory = ($resObj && !empty($resObj['history']) && is_array($resObj['history'])) ? $resObj['history'] : [];
+                if (empty($pHistory) && !empty($resObj) && $totalModels > 0) {
+                    $pCreated = $p->created_at ?: now();
+                    $pHistory[] = [
+                        'date' => $pCreated->format('Y-m-d'),
+                        'displayDate' => $pCreated->format('d M Y'),
+                        'time' => $pCreated->format('H:i'),
+                        'isBaseline' => true,
+                        'label' => 'Nulmeting',
+                        'mentioned' => $isMentioned,
+                        'position' => $isMentioned ? (float) ($promptPosition ?: 1) : null,
+                        'totalMentions' => (int) $totalMentions,
+                        'totalModels' => (int) $totalModels,
+                        'overallScore' => (int) $overallScore,
+                    ];
+                }
+
+                $summaryText = $totalModels > 0
+                    ? "Aanbevolen door {$totalMentions} van de {$totalModels} live AI-modellen" . ($liveMetrics['failedModelsCount'] > 0 ? " ({$liveMetrics['failedModelsCount']} niet gemeten)" : "") . "."
+                    : (!empty($resObj) ? 'Geen live AI-modellen beschikbaar tijdens deze scan.' : ($p->response_summary ?? ''));
+
+                return [
+                    'id' => $p->id,
+                    'project_id' => $p->project_id,
+                    'keyword_id' => $p->keyword_id,
+                    'text' => $p->prompt_text,
+                    'status' => $status,
+                    'mentioned' => $isMentioned,
+                    'position' => $promptPosition,
+                    'totalMentions' => $totalMentions,
+                    'totalModels' => $totalModels,
+                    'failedModelsCount' => $liveMetrics['failedModelsCount'],
+                    'overallScore' => $overallScore,
+                    'engines' => $engines,
+                    'brandsCount' => $totalModels > 0 ? ($resObj['totalBrandsCount'] ?? ($isMentioned ? 1 : 0)) : 0,
+                    'sourcesCount' => $totalModels > 0 ? ($resObj['totalSourcesCount'] ?? ($citations ? count($citations) : 0)) : 0,
+                    'modelMentions' => $modelMentions,
+                    'citations' => $citations,
+                    'responseSummary' => $summaryText,
+                    'history' => $pHistory,
+                    'baseline' => $pHistory[0] ?? null,
+                    'lastUpdated' => ($p->updated_at ?: ($p->created_at ?: now()))->format('d M Y H:i'),
+                ];
+            });
+
+            // Reconcile keyword Share of Voice, Position, and Rank strictly with live (non-simulated) AI mentions
+            $competitorsArr = is_array($competitors) ? $competitors : [];
+            $selfIdx = null;
+            foreach ($competitorsArr as $cIdx => $cItem) {
+                if (!empty($cItem['isSelf'])) {
+                    $selfIdx = $cIdx;
+                    break;
+                }
             }
-            $rankNum = (int) preg_replace('/[^0-9]/', '', (string) $rankStr) ?: 1;
+            $selfItem = $selfIdx !== null ? $competitorsArr[$selfIdx] : null;
+
+            if ($kwLiveModelChecks > 0) {
+                $calculatedSov = (int) round(($kwLiveMentions / $kwLiveModelChecks) * 100);
+                if ($kwLiveMentions === 0) {
+                    $calculatedPos = '-';
+                    $rankStr = '-';
+                } else {
+                    $calculatedPos = !empty($kwLivePositions)
+                        ? number_format(array_sum($kwLivePositions) / count($kwLivePositions), 1)
+                        : ($selfItem['position'] ?? '1.0');
+                    $rawRank = $selfItem['rank'] ?? ($k->rank ? "#{$k->rank}" : '#1');
+                    $rankStr = ($rawRank === '-' || empty($rawRank)) ? '#1' : (str_starts_with((string) $rawRank, '#') ? (string) $rawRank : '#' . $rawRank);
+                }
+
+                if ($selfIdx !== null) {
+                    $competitorsArr[$selfIdx]['sov'] = $calculatedSov;
+                    $competitorsArr[$selfIdx]['position'] = $calculatedPos;
+                    $competitorsArr[$selfIdx]['rank'] = $rankStr;
+                    if ($kwLiveMentions === 0) {
+                        $competitorsArr[$selfIdx]['citations'] = 0;
+                    }
+                    $selfItem = $competitorsArr[$selfIdx];
+                }
+            } else {
+                $calculatedSov = $selfItem ? (int) ($selfItem['sov'] ?? 0) : 0;
+                $calculatedPos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
+                $rawRank = $selfItem ? ($selfItem['rank'] ?? ($k->rank ? "#{$k->rank}" : '-')) : ($k->rank ? "#{$k->rank}" : '-');
+                $rankStr = ($rawRank === '-' || empty($rawRank)) ? '-' : (str_starts_with((string) $rawRank, '#') ? (string) $rawRank : '#' . $rawRank);
+            }
+            $rankDigits = preg_replace('/[^0-9]/', '', (string) $rankStr);
+            $rankNum = $rankDigits !== '' ? (int) $rankDigits : null;
 
             // Keyword Position & SoV History (Nulmeting + subsequent scans)
             $kwHistory = ($selfItem && !empty($selfItem['history']) && is_array($selfItem['history'])) ? $selfItem['history'] : [];
-            if (empty($kwHistory) && $calculatedPos !== '-') {
+            if (empty($kwHistory) && $calculatedPos !== '-' && $rankNum !== null) {
                 $createdDate = $k->created_at ?: now();
                 $kwHistory[] = [
                     'date' => $createdDate->format('Y-m-d'),
@@ -116,21 +230,8 @@ class KeywordController extends Controller
                     'rank' => $rankNum,
                     'position' => (float) $calculatedPos,
                     'sov' => (int) $calculatedSov,
-                    'citations' => (int) ($selfItem['citations'] ?? $k->citations_count ?? 1),
+                    'citations' => (int) ($selfItem['citations'] ?? $k->citations_count ?? 0),
                 ];
-                if ($k->updated_at && $k->created_at && $k->updated_at->gt($k->created_at->copy()->addMinutes(5))) {
-                    $kwHistory[] = [
-                        'date' => $k->updated_at->format('Y-m-d'),
-                        'displayDate' => $k->updated_at->format('d M Y'),
-                        'time' => $k->updated_at->format('H:i'),
-                        'isBaseline' => false,
-                        'label' => $k->updated_at->format('d M H:i'),
-                        'rank' => $rankNum,
-                        'position' => (float) $calculatedPos,
-                        'sov' => (int) $calculatedSov,
-                        'citations' => (int) ($selfItem['citations'] ?? $k->citations_count ?? 1),
-                    ];
-                }
             }
 
             $lastUpdated = ($k->updated_at ?: ($k->created_at ?: now()))->format('d M Y H:i');
@@ -143,7 +244,7 @@ class KeywordController extends Controller
                 'keyword_text' => $kwText,
                 'rank' => $rankStr,
                 'search_engine' => $k->search_engine,
-                'sentiment' => $k->sentiment ?: 'N/A',
+                'sentiment' => $kwLiveMentions > 0 ? ($k->sentiment ?: '+90') : 'N/A',
                 'citations_count' => $k->citations_count,
                 'monthly_searches' => $k->monthly_searches ?: 100,
                 'share_of_voice' => $calculatedSov,
@@ -153,82 +254,9 @@ class KeywordController extends Controller
                 'last_updated' => $lastUpdated,
                 'history' => $kwHistory,
                 'baseline' => $kwHistory[0] ?? null,
-                'competitors' => $hasPendingPrompts && empty($k->competitors_json) ? [] : ($competitors ?: []),
-                'brands_mentioned' => implode(',', array_map(fn($c) => explode('.', $c['domain'] ?? '')[0], $competitors ?: [])),
-                'prompts' => $prompts->map(function ($p) {
-                    $resObj = !empty($p->results) ? (is_array($p->results) ? $p->results : json_decode($p->results, true)) : null;
-                    $modelMentions = $resObj['modelMentions'] ?? null;
-                    $citations = $resObj['citations'] ?? ($resObj['sources'] ?? null);
-
-                    $engines = ['chatgpt', 'gemini', 'perplexity'];
-                    if ($modelMentions) {
-                        $engines = array_values(array_filter(array_keys($modelMentions), fn($m) => $modelMentions[$m]['mentioned'] ?? false));
-                    }
-
-                    $status = $p->status ?: 'pending';
-                    if (!empty($p->results)) {
-                        $status = $p->brand_mentioned ? 'Cited' : 'Not Cited';
-                    }
-
-                    $totalMentions = $resObj['totalMentions'] ?? ($p->brand_mentioned ? count($engines) : 0);
-                    $totalModels = $resObj['totalModels'] ?? ($modelMentions ? count($modelMentions) : 6);
-                    $overallScore = $resObj['overallScore'] ?? (int) round(($totalMentions / max(1, $totalModels)) * 100);
-                    $promptPosition = $resObj['position'] ?? $p->position;
-
-                    // Prompt History (Nulmeting + subsequent scans)
-                    $pHistory = ($resObj && !empty($resObj['history']) && is_array($resObj['history'])) ? $resObj['history'] : [];
-                    if (empty($pHistory) && !empty($resObj)) {
-                        $pCreated = $p->created_at ?: now();
-                        $pHistory[] = [
-                            'date' => $pCreated->format('Y-m-d'),
-                            'displayDate' => $pCreated->format('d M Y'),
-                            'time' => $pCreated->format('H:i'),
-                            'isBaseline' => true,
-                            'label' => 'Nulmeting',
-                            'mentioned' => (bool) $p->brand_mentioned,
-                            'position' => $p->brand_mentioned ? (float) ($promptPosition ?: 1) : null,
-                            'totalMentions' => (int) $totalMentions,
-                            'totalModels' => (int) $totalModels,
-                            'overallScore' => (int) $overallScore,
-                        ];
-                        if ($p->updated_at && $p->created_at && $p->updated_at->gt($p->created_at->copy()->addMinutes(5))) {
-                            $pHistory[] = [
-                                'date' => $p->updated_at->format('Y-m-d'),
-                                'displayDate' => $p->updated_at->format('d M Y'),
-                                'time' => $p->updated_at->format('H:i'),
-                                'isBaseline' => false,
-                                'label' => $p->updated_at->format('d M H:i'),
-                                'mentioned' => (bool) $p->brand_mentioned,
-                                'position' => $p->brand_mentioned ? (float) ($promptPosition ?: 1) : null,
-                                'totalMentions' => (int) $totalMentions,
-                                'totalModels' => (int) $totalModels,
-                                'overallScore' => (int) $overallScore,
-                            ];
-                        }
-                    }
-
-                    return [
-                        'id' => $p->id,
-                        'project_id' => $p->project_id,
-                        'keyword_id' => $p->keyword_id,
-                        'text' => $p->prompt_text,
-                        'status' => $status,
-                        'mentioned' => (bool) $p->brand_mentioned,
-                        'position' => $promptPosition,
-                        'totalMentions' => $totalMentions,
-                        'totalModels' => $totalModels,
-                        'overallScore' => $overallScore,
-                        'engines' => $engines,
-                        'brandsCount' => $resObj['totalBrandsCount'] ?? ($p->brand_mentioned ? 1 : 0),
-                        'sourcesCount' => $resObj['totalSourcesCount'] ?? ($citations ? count($citations) : 0),
-                        'modelMentions' => $modelMentions,
-                        'citations' => $citations,
-                        'responseSummary' => $p->response_summary ?? '',
-                        'history' => $pHistory,
-                        'baseline' => $pHistory[0] ?? null,
-                        'lastUpdated' => ($p->updated_at ?: ($p->created_at ?: now()))->format('d M Y H:i'),
-                    ];
-                }),
+                'competitors' => $hasPendingPrompts && empty($k->competitors_json) ? [] : $competitorsArr,
+                'brands_mentioned' => implode(',', array_map(fn($c) => explode('.', $c['domain'] ?? '')[0], $competitorsArr)),
+                'prompts' => $mappedPrompts,
             ];
         });
 
@@ -250,11 +278,23 @@ class KeywordController extends Controller
     public function recommend(Request $request): JsonResponse
     {
         $company = trim($request->input('company', 'Saleswizard'));
+        $projectId = $request->input('project_id');
         if (empty($company)) {
             return response()->json(['error' => 'Geef een geldige bedrijfsnaam of website URL op.'], 400);
         }
 
-        $keywords = $this->websiteCrawler->generateKeywords($company, $company);
+        if (!$projectId) {
+            $companyKey = \App\Services\AiEngineService::cleanBrandKey($company);
+            $proj = Project::whereRaw('LOWER(company) = ?', [strtolower($company)])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
+                ->first();
+            $projectId = $proj?->id;
+        }
+
+        $keywords = $this->websiteCrawler->generateKeywords($company, $company, $projectId ? (int) $projectId : null);
 
         return response()->json([
             'success' => true,
@@ -289,7 +329,7 @@ class KeywordController extends Controller
             'project_id' => $project ? $project->id : null,
             'company_key' => $companyKey,
             'keyword' => strtolower($keyword),
-            'rank' => 1,
+            'rank' => null,
             'search_engine' => 'ChatGPT',
             'sentiment' => 'N/A',
             'citations_count' => 0,
@@ -309,18 +349,19 @@ class KeywordController extends Controller
                     'brand' => ucwords(str_replace(['-', '_'], ' ', $companyKey)),
                     'domain' => $compDom,
                     'isSelf' => true,
-                    'rank' => '#1',
-                    'position' => '2.1',
-                    'sov' => 35,
-                    'citations' => 1,
-                    'citationUrls' => ["https://{$compDom}/"],
+                    'rank' => '-',
+                    'position' => '-',
+                    'sov' => 0,
+                    'citations' => 0,
+                    'citationUrls' => [],
                 ]
             ];
             $kw->update(['competitors_json' => $competitors]);
         }
         $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
-        $sov = $selfItem ? ($selfItem['sov'] ?? 35) : 35;
-        $pos = $selfItem ? ($selfItem['position'] ?? '1.7') : '1.7';
+        $sov = $selfItem ? (int) ($selfItem['sov'] ?? 0) : 0;
+        $pos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
+        $rankStr = $selfItem ? ($selfItem['rank'] ?? '-') : '-';
 
         return response()->json([
             'success' => true,
@@ -330,7 +371,7 @@ class KeywordController extends Controller
                 'company_key' => $kw->company_key,
                 'keyword' => $kw->keyword,
                 'keyword_text' => $kw->keyword,
-                'rank' => '#1',
+                'rank' => $rankStr,
                 'search_engine' => $kw->search_engine,
                 'sentiment' => $kw->sentiment,
                 'citations_count' => $kw->citations_count,
@@ -464,8 +505,9 @@ class KeywordController extends Controller
         $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
         $calculatedSov = $selfItem ? ($selfItem['sov'] ?? 0) : 0;
         $calculatedPos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
-        $rankStr = $selfItem ? ($selfItem['rank'] ?? '1') : '1';
-        $rankInt = (int) preg_replace('/[^0-9]/', '', $rankStr) ?: 1;
+        $rankStr = $selfItem ? ($selfItem['rank'] ?? '-') : '-';
+        $rankDigits = preg_replace('/[^0-9]/', '', (string) $rankStr);
+        $rankInt = $rankDigits !== '' ? (int) $rankDigits : null;
 
         $kw->update([
             'rank' => $rankInt,
@@ -489,7 +531,7 @@ class KeywordController extends Controller
                 'id' => $kw->id,
                 'share_of_voice' => $calculatedSov,
                 'average_position' => $calculatedPos,
-                'rank' => '#' . $rankInt,
+                'rank' => $rankInt !== null ? '#' . $rankInt : '-',
                 'competitors' => $competitors,
                 'history' => $selfItem['history'] ?? [],
                 'baseline' => ($selfItem['history'][0] ?? null),

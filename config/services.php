@@ -64,4 +64,14 @@ return [
         'webhook_url' => env('MOLLIE_WEBHOOK_URL'),
     ],
 
+    'dataforseo' => [
+        'login' => env('DATAFORSEO_LOGIN'),
+        'password' => env('DATAFORSEO_PASSWORD'),
+        'base_url' => env('DATAFORSEO_BASE_URL', 'https://api.dataforseo.com/v3'),
+        'location_code' => (int) env('DATAFORSEO_LOCATION_CODE', 2528),
+        'language_code' => env('DATAFORSEO_LANGUAGE_CODE', 'nl'),
+        'country_iso' => env('DATAFORSEO_COUNTRY_ISO', 'NL'),
+        'timeout' => (int) env('DATAFORSEO_TIMEOUT', 90),
+    ],
+
 ];

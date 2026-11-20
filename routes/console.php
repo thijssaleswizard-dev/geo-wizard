@@ -57,8 +57,9 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
                     $competitors = $competitorScraper->getOrScrapeCompetitors($kw->id, $kw->keyword, $kw->company_key, true);
                     $selfItem = collect($competitors)->firstWhere('isSelf', true) ?? ($competitors[0] ?? null);
                     if ($selfItem) {
-                        $rankStr = $selfItem['rank'] ?? '1';
-                        $rankInt = (int) preg_replace('/[^0-9]/', '', (string) $rankStr) ?: 1;
+                        $rankStr = $selfItem['rank'] ?? '-';
+                        $rankDigits = preg_replace('/[^0-9]/', '', (string) $rankStr);
+                        $rankInt = $rankDigits !== '' ? (int) $rankDigits : null;
                         $kw->update(['rank' => $rankInt, 'updated_at' => now()]);
                     }
                 } else {
@@ -73,16 +74,17 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
                         $res = $scraperService->runScraper($p->prompt_text, $project->company, $project->id, $p->id);
 
                         $totalMentioned = $res['totalMentions'] ?? 0;
-                        $totalModels = $res['totalModels'] ?? 1;
-                        $chatgpt = $res['modelMentions']['chatgpt'] ?? null;
-                        $gemini = $res['modelMentions']['gemini'] ?? null;
+                        $totalModels = $res['totalLiveModels'] ?? $res['totalModels'] ?? 0;
+                        $failedModelsCount = $res['failedModelsCount'] ?? 0;
 
                         $p->update([
-                            'status' => 'completed',
+                            'status' => $totalModels > 0 ? 'completed' : 'failed',
                             'brand_mentioned' => $totalMentioned > 0,
-                            'position' => $chatgpt['position'] ?? ($gemini['position'] ?? 1),
-                            'response_summary' => "{$project->company} wordt door {$totalMentioned} van de {$totalModels} AI-modellen aanbevolen.",
-                            'sentiment' => $chatgpt['sentiment'] ?? '+90',
+                            'position' => $totalMentioned > 0 ? ($res['position'] ?? null) : null,
+                            'response_summary' => $totalModels > 0
+                                ? "{$project->company} wordt door {$totalMentioned} van de {$totalModels} live AI-modellen aanbevolen." . ($failedModelsCount > 0 ? " ({$failedModelsCount} niet gemeten)" : "")
+                                : "Geen live AI-modellen beschikbaar tijdens deze scan.",
+                            'sentiment' => $totalMentioned > 0 ? ($res['sentiment'] ?? '+90') : 'N/A',
                             'logs' => $res['logs'] ?? [],
                             'results' => $res,
                             'updated_at' => now(),
@@ -98,18 +100,31 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
                 }
             }
 
-            // 2. Recalculate overview statistics and project metrics
+            // 2. Recalculate overview statistics and project metrics strictly from LIVE (non-simulated) mentions
             $citationsCount = Citation::where('project_id', $project->id)->count();
-            $actualPromptsCount = $project->prompts()->count();
-            $promptsCount = max(1, $actualPromptsCount);
-            $mentionedCount = $project->prompts()->where('brand_mentioned', true)->count();
+            $allPrompts = $project->prompts()->get();
+            $actualPromptsCount = $allPrompts->count();
+            $liveMeasuredPrompts = 0;
+            $liveMentionedPrompts = 0;
 
-            if ($actualPromptsCount === 0) {
+            foreach ($allPrompts as $pItem) {
+                $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                $lm = \App\Services\AiEngineService::extractLivePromptMetrics(is_array($pRes) ? $pRes : null);
+                if ($lm['hasLiveData']) {
+                    $liveMeasuredPrompts++;
+                    if ($lm['mentioned']) {
+                        $liveMentionedPrompts++;
+                    }
+                }
+            }
+
+            if ($liveMeasuredPrompts === 0 || $liveMentionedPrompts === 0) {
                 $geoScore = 0;
                 $brandShare = 0;
             } else {
-                $geoScore = min(100, max(0, (int) round(($mentionedCount / $promptsCount) * 85 + min(15, $citationsCount * 2))));
-                $brandShare = min(100, max(0, (int) round(($mentionedCount / $promptsCount) * 100)));
+                $mentionRate = $liveMentionedPrompts / $liveMeasuredPrompts;
+                $geoScore = min(100, max(0, (int) round($mentionRate * 85 + min(15, $citationsCount * 2))));
+                $brandShare = min(100, max(0, (int) round($mentionRate * 100)));
             }
 
             OverviewStat::updateOrCreate(
@@ -119,16 +134,16 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
                     'geo_score' => $geoScore,
                     'brand_share' => $brandShare,
                     'citations_total' => $citationsCount,
-                    'sentiment_avg' => 94,
+                    'sentiment_avg' => $liveMentionedPrompts > 0 ? 94 : 0,
                 ]
             );
 
             $project->update([
                 'visibility_index' => $geoScore,
-                'prompts_count' => $promptsCount,
+                'prompts_count' => $actualPromptsCount,
             ]);
 
-            $this->info("Completed {$project->company}: GEO Score={$geoScore}%, Citations={$citationsCount}, Prompts={$promptsCount}");
+            $this->info("Completed {$project->company}: GEO Score={$geoScore}%, Citations={$citationsCount}, Prompts={$actualPromptsCount}");
         } catch (\Exception $e) {
             $this->error("Failed for {$project->company}: {$e->getMessage()}");
         }

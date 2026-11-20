@@ -157,12 +157,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       id: p.id,
       text: p.prompt_text || p.text || '',
       status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
-      mentioned: Boolean(p.brand_mentioned || p.status === 'Cited'),
+      mentioned: Boolean(p.mentioned ?? p.brand_mentioned ?? (p.status === 'Cited')),
       position: p.position || '-',
       totalMentions: p.totalMentions ?? 0,
-      totalModels: p.totalModels ?? 4,
+      totalModels: p.totalModels ?? 0,
+      failedModelsCount: p.failedModelsCount ?? 0,
       overallScore: p.overallScore ?? 0,
-      engines: p.engines || ['chatgpt', 'gemini', 'perplexity'],
+      engines: Array.isArray(p.engines) ? p.engines : [],
       brandsCount: p.brandsCount || 0,
       sourcesCount: p.sourcesCount || 0,
       modelMentions: p.modelMentions || null,
@@ -326,8 +327,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       });
       const data = await response.json();
       if (data.success) {
-        const updatedStatus = data.totalMentions > 0 ? 'Cited' : 'Not Cited';
-        const newSummary = `${data.company} wordt door ${data.totalMentions} van de ${data.totalModels} AI-modellen aanbevolen.`;
+        const liveTotalModels = data.totalLiveModels ?? data.totalModels ?? 0;
+        const updatedStatus = liveTotalModels === 0 ? 'failed' : (data.totalMentions > 0 ? 'Cited' : 'Not Cited');
+        const newSummary = liveTotalModels > 0
+          ? `${data.company} wordt door ${data.totalMentions} van de ${liveTotalModels} live AI-modellen aanbevolen.`
+          : 'Geen live AI-modellen beschikbaar tijdens deze scan.';
 
         const updatePromptObj = (p) => {
           if (p.id === promptId) {
@@ -336,14 +340,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               ...p,
               status: updatedStatus,
               mentioned: data.totalMentions > 0,
-              position: data.position || p.position || '-',
-              totalMentions: data.totalMentions ?? p.totalMentions ?? 0,
-              totalModels: data.totalModels ?? p.totalModels ?? 4,
-              overallScore: data.overallScore ?? p.overallScore ?? 0,
-              brandsCount: data.totalBrandsCount || (data.citations ? data.citations.length + 3 : 5),
-              sourcesCount: data.totalSourcesCount || (data.citations ? data.citations.length : 0),
+              position: data.totalMentions > 0 ? (data.position || '-') : '-',
+              totalMentions: data.totalMentions ?? 0,
+              totalModels: liveTotalModels,
+              failedModelsCount: data.failedModelsCount ?? 0,
+              overallScore: data.overallScore ?? 0,
+              brandsCount: data.totalBrandsCount ?? 0,
+              sourcesCount: data.totalSourcesCount ?? (data.citations ? data.citations.length : 0),
               modelMentions: data.modelMentions || {},
-              engines: Object.keys(data.modelMentions || {}).filter(m => data.modelMentions[m].mentioned),
+              engines: Object.keys(data.modelMentions || {}).filter(m => {
+                const entry = data.modelMentions[m];
+                return entry && entry.mentioned && !entry.isSimulated && !entry.fallbackUsed && !entry.failed && entry.available !== false;
+              }),
               responseSummary: newSummary,
               citations: data.citations,
               history: updatedHistory,
@@ -2257,18 +2265,50 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 const sourcesCount = p.sourcesCount || (p.citations ? p.citations.length : 0);
                 const mData = p.modelMentions || {};
 
+                const isModelUnavailable = (entry) => {
+                  if (!entry) return true;
+                  const methodLower = String(entry.method || '').toLowerCase();
+                  const summaryLower = String(entry.summary || '').toLowerCase().trim();
+                  return Boolean(
+                    entry.isSimulated ||
+                    entry.fallbackUsed ||
+                    entry.failed ||
+                    entry.available === false ||
+                    methodLower.includes('simulator') ||
+                    methodLower.includes('niet gemeten') ||
+                    summaryLower.startsWith('[simulator]')
+                  );
+                };
+
+                const buildEngineRow = (id, name) => {
+                  const entry = mData[id];
+                  const unavailable = isModelUnavailable(entry);
+                  return {
+                    id,
+                    name,
+                    unavailable,
+                    mentioned: !unavailable && Boolean(entry?.mentioned),
+                    brands: unavailable ? 0 : (entry?.brands || 0),
+                    sources: unavailable ? 0 : (entry?.sources || 0),
+                    summary: unavailable ? '' : (entry?.summary || ''),
+                    errorMsg: entry?.errorMsg || (unavailable ? (entry?.method || 'Niet gemeten (API fout)') : null),
+                    method: entry?.method || null,
+                  };
+                };
+
                 const enginesList = [
-                  { id: 'chatgpt', name: 'OpenAI ChatGPT', mentioned: mData.chatgpt?.mentioned ?? isMentioned, brands: mData.chatgpt?.brands || (isMentioned ? 4 : 0), sources: mData.chatgpt?.sources || 1, summary: mData.chatgpt?.summary },
-                  { id: 'aioverviews', name: 'Google AI Overviews', mentioned: mData.aioverviews?.mentioned ?? true, brands: mData.aioverviews?.brands || (sourcesCount > 0 ? 3 : 0), sources: mData.aioverviews?.sources || sourcesCount, summary: mData.aioverviews?.summary },
-                  { id: 'aimode', name: 'Google AI Mode', mentioned: mData.aimode?.mentioned ?? false, brands: mData.aimode?.brands || 0, sources: mData.aimode?.sources || 0, summary: mData.aimode?.summary },
-                  { id: 'gemini', name: 'Google Gemini', mentioned: mData.gemini?.mentioned ?? isMentioned, brands: mData.gemini?.brands || (isMentioned ? 3 : 0), sources: mData.gemini?.sources || 0, summary: mData.gemini?.summary },
-                  { id: 'perplexity', name: 'Perplexity AI', mentioned: mData.perplexity?.mentioned ?? isMentioned, brands: mData.perplexity?.brands || (isMentioned ? 4 : 0), sources: mData.perplexity?.sources || Math.min(sourcesCount, 3), summary: mData.perplexity?.summary },
-                  { id: 'claude', name: 'Anthropic Claude', mentioned: mData.claude?.mentioned ?? false, brands: mData.claude?.brands || 0, sources: mData.claude?.sources || 0, summary: mData.claude?.summary },
-                  { id: 'copilot', name: 'Microsoft Copilot', mentioned: mData.copilot?.mentioned ?? isMentioned, brands: mData.copilot?.brands || (isMentioned ? 3 : 0), sources: mData.copilot?.sources || 1, summary: mData.copilot?.summary },
-                  { id: 'meta', name: 'Meta AI', mentioned: mData.meta?.mentioned ?? false, brands: mData.meta?.brands || 0, sources: mData.meta?.sources || 0, summary: mData.meta?.summary }
+                  buildEngineRow('chatgpt', 'OpenAI ChatGPT'),
+                  buildEngineRow('aioverviews', 'Google AI Overviews'),
+                  buildEngineRow('aimode', 'Google AI Mode'),
+                  buildEngineRow('gemini', 'Google Gemini'),
+                  buildEngineRow('perplexity', 'Perplexity AI'),
+                  buildEngineRow('claude', 'Anthropic Claude'),
+                  buildEngineRow('copilot', 'Microsoft Copilot'),
+                  buildEngineRow('meta', 'Meta AI')
                 ].filter(e => {
-                  if (enabledEngines && enabledEngines[e.id] === false) return false;
-                  if (p.modelMentions && !(e.id in p.modelMentions) && (!enabledEngines || !enabledEngines[e.id])) return false;
+                  if (enabledEngines && enabledEngines[e.id] === false && !(p.modelMentions && e.id in p.modelMentions)) return false;
+                  if (p.modelMentions && !(e.id in p.modelMentions)) return false;
+                  if (!p.modelMentions && (e.id === 'copilot' || e.id === 'meta')) return false;
                   return true;
                 });
 
@@ -2618,41 +2658,61 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                                   </div>
 
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    {eng.mentioned && (
-                                      <span style={{
-                                        fontSize: '11px',
-                                        fontWeight: 800,
-                                        color: '#16a34a',
-                                        backgroundColor: '#dcfce7',
-                                        padding: '2px 8px',
-                                        borderRadius: '12px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '2px'
-                                      }}>
-                                        ✓
+                                    {eng.unavailable ? (
+                                      <span
+                                        title={eng.errorMsg || 'Engine niet beschikbaar tijdens deze scan; telt niet mee in scores.'}
+                                        style={{
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          color: '#b45309',
+                                          backgroundColor: '#fef3c7',
+                                          border: '1px solid #fde68a',
+                                          padding: '2px 10px',
+                                          borderRadius: '12px',
+                                          cursor: 'help'
+                                        }}
+                                      >
+                                        Niet gemeten (telt niet mee)
                                       </span>
+                                    ) : (
+                                      <>
+                                        {eng.mentioned && (
+                                          <span style={{
+                                            fontSize: '11px',
+                                            fontWeight: 800,
+                                            color: '#16a34a',
+                                            backgroundColor: '#dcfce7',
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '2px'
+                                          }}>
+                                            ✓
+                                          </span>
+                                        )}
+                                        <span style={{
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          color: '#2563eb',
+                                          backgroundColor: '#eff6ff',
+                                          padding: '2px 8px',
+                                          borderRadius: '12px'
+                                        }}>
+                                          • {eng.brands} Brands
+                                        </span>
+                                        <span style={{
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          color: '#ea580c',
+                                          backgroundColor: '#fff7ed',
+                                          padding: '2px 8px',
+                                          borderRadius: '12px'
+                                        }}>
+                                          • {eng.sources} Sources
+                                        </span>
+                                      </>
                                     )}
-                                    <span style={{
-                                      fontSize: '11px',
-                                      fontWeight: 700,
-                                      color: '#2563eb',
-                                      backgroundColor: '#eff6ff',
-                                      padding: '2px 8px',
-                                      borderRadius: '12px'
-                                    }}>
-                                      • {eng.brands} Brands
-                                    </span>
-                                    <span style={{
-                                      fontSize: '11px',
-                                      fontWeight: 700,
-                                      color: '#ea580c',
-                                      backgroundColor: '#fff7ed',
-                                      padding: '2px 8px',
-                                      borderRadius: '12px'
-                                    }}>
-                                      • {eng.sources} Sources
-                                    </span>
                                   </div>
                                 </div>
 

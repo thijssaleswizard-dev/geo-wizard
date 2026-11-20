@@ -275,8 +275,15 @@ export default function PromptResearch({ activeWorkspace, enabledEngines }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
               {Object.keys(results.modelMentions).map(mKey => {
                 const item = results.modelMentions[mKey];
+                const isUnavailable = Boolean(
+                  item.failed ||
+                  item.isSimulated ||
+                  item.fallbackUsed ||
+                  item.available === false ||
+                  String(item.method || '').toLowerCase().includes('simulator')
+                );
                 return (
-                  <div key={mKey} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px' }}>
+                  <div key={mKey} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px', opacity: isUnavailable ? 0.72 : 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <div style={{ fontWeight: 700, fontSize: '14px' }}>{item.name}</div>
@@ -286,13 +293,21 @@ export default function PromptResearch({ activeWorkspace, enabledEngines }) {
                           </div>
                         )}
                       </div>
-                      <span className={item.mentioned ? 'badge badge-positive' : 'badge badge-negative'}>
-                        {item.mentioned ? `✓ Vermeld (#${item.position})` : '✗ Niet vermeld'}
-                      </span>
+                      {isUnavailable ? (
+                        <span className="badge badge-warning">
+                          ⚠ Niet gemeten
+                        </span>
+                      ) : (
+                        <span className={item.mentioned ? 'badge badge-positive' : 'badge badge-negative'}>
+                          {item.mentioned ? `✓ Vermeld (#${item.position})` : '✗ Niet vermeld'}
+                        </span>
+                      )}
                     </div>
 
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      {renderHighlightedText(item.summary, targetCompany)}
+                      {isUnavailable
+                        ? (item.errorMsg || 'API tijdelijk niet beschikbaar — resultaat telt niet mee in de zichtbaarheidsscore.')
+                        : renderHighlightedText(item.summary, targetCompany)}
                     </div>
                   </div>
                 );

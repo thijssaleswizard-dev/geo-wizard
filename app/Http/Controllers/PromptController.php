@@ -107,16 +107,21 @@ class PromptController extends Controller
                 $logs = json_decode($logs, true);
             }
 
+            $resObj = !empty($p->results) ? (is_array($p->results) ? $p->results : json_decode($p->results, true)) : null;
+            $liveMetrics = !empty($resObj) ? AiEngineService::extractLivePromptMetrics($resObj) : null;
+
             return [
                 'id' => $p->id,
                 'project_id' => $p->project_id,
                 'keyword_id' => $p->keyword_id,
                 'text' => $p->prompt_text,
                 'tag' => $p->category ?: 'Algemeen',
-                'engines' => $engines,
-                'mentioned' => (bool) $p->brand_mentioned,
-                'position' => $p->position,
-                'sentiment' => $p->sentiment ?: '+90',
+                'engines' => $liveMetrics ? $liveMetrics['engines'] : $engines,
+                'mentioned' => $liveMetrics ? $liveMetrics['mentioned'] : (bool) $p->brand_mentioned,
+                'position' => $liveMetrics ? $liveMetrics['position'] : $p->position,
+                'totalMentions' => $liveMetrics ? $liveMetrics['totalMentions'] : 0,
+                'totalModels' => $liveMetrics ? $liveMetrics['totalModels'] : 0,
+                'sentiment' => ($liveMetrics && !$liveMetrics['mentioned']) ? 'N/A' : ($p->sentiment ?: 'N/A'),
                 'status' => $p->status ?: 'completed',
                 'logs' => $logs ?: [],
                 'dateAdded' => $p->created_at ? $p->created_at->format('Y-m-d') : date('Y-m-d'),
@@ -213,7 +218,7 @@ STRIKTE REGELS:
                         $outTokens,
                         'SUCCESS',
                         $duration,
-                        null,
+                        $project?->id,
                         null,
                         false,
                         ['keyword' => $keyword, 'company' => $company]

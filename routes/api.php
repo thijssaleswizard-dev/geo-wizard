@@ -21,6 +21,7 @@ Route::post('/projects', [ProjectController::class, 'store']);
 Route::put('/projects/{id}', [ProjectController::class, 'update']);
 Route::delete('/projects/{company}', [ProjectController::class, 'destroy']);
 Route::get('/projects/api-monitor/status', [ProjectController::class, 'apiMonitorStatus']);
+Route::post('/projects/api-monitor/reset', [ProjectController::class, 'apiMonitorReset']);
 
 // Keywords Routes
 Route::get('/keywords', [KeywordController::class, 'index']);

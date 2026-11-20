@@ -49,7 +49,7 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
 
 export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPlan, onAddClient, onDeleteClient, onUpdateClient, onNavigateTab }) {
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Add Client Modal state
   const [showModal, setShowModal] = useState(false);
   const [company, setCompany] = useState('https://');
@@ -113,6 +113,8 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   const [apiHistory, setApiHistory] = useState([]);
   const [costSummary, setCostSummary] = useState(null);
   const [costByEngine, setCostByEngine] = useState([]);
+  const [aiDriver, setAiDriver] = useState('api');
+  const [dataForSeoInfo, setDataForSeoInfo] = useState(null);
   const [monitorLoading, setMonitorLoading] = useState(false);
 
   const fetchApiMonitorData = async () => {
@@ -125,9 +127,34 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
         setApiHistory(data.history);
         setCostSummary(data.costSummary || null);
         setCostByEngine(data.costByEngine || []);
+        setAiDriver(data.aiDriver || 'api');
+        setDataForSeoInfo(data.dataforseo || null);
       }
     } catch (err) {
       console.error('Error fetching API status monitor:', err);
+    } finally {
+      setMonitorLoading(false);
+    }
+  };
+
+  const resetApiCircuitBreakers = async () => {
+    setMonitorLoading(true);
+    try {
+      const response = await fetch('/api/projects/api-monitor/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+      });
+      const data = await response.json();
+      if (data.success) {
+        setApiStatus(data.status);
+        setApiHistory(data.history);
+        setCostSummary(data.costSummary || null);
+        setCostByEngine(data.costByEngine || []);
+        setAiDriver(data.aiDriver || 'api');
+        setDataForSeoInfo(data.dataforseo || null);
+      }
+    } catch (err) {
+      console.error('Error resetting API circuit breakers:', err);
     } finally {
       setMonitorLoading(false);
     }
@@ -257,27 +284,27 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   };
 
   const filteredClients = clients.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          c.company.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.company.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesSearch;
   });
 
   const handleAddClientSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (step === 1) {
       if (!company || !name || !email) {
         setError('Vul alstublieft Bedrijfsnaam, Klantnaam en E-mailadres in.');
         return;
       }
-      
+
       // Clean company name to domain if it is a url
       let cleanedCompany = company.trim();
       if (cleanedCompany.startsWith('http://') || cleanedCompany.startsWith('https://')) {
         cleanedCompany = cleanedCompany.replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0];
       }
       setCompany(cleanedCompany);
-      
+
       setStep(2);
       return;
     }
@@ -311,7 +338,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
       setLoading(false);
       setShowModal(false);
-      
+
       // Reset form
       setCompany('https://');
       setName('');
@@ -342,7 +369,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
       width: '100%'
     }}>
       <div style={{ width: '100%', maxWidth: '680px', display: 'flex', flexDirection: 'column', gap: '32px' }}>
-        
+
         {/* Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
@@ -439,10 +466,10 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
         {/* Project Cards List */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {filteredClients.map((client) => {
-            const domain = client.company.toLowerCase().includes('.') 
-              ? client.company.toLowerCase() 
+            const domain = client.company.toLowerCase().includes('.')
+              ? client.company.toLowerCase()
               : `${client.company.toLowerCase()}.nl`;
-            
+
             // Generate a premium colored icon based on company name
             const colors = [
               { bg: '#fee2e2', text: '#ef4444' }, // Red
@@ -668,13 +695,13 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                         />
                       </div>
                       {company && company.length > 8 && (
-                        <div style={{ 
-                          width: '40px', 
-                          height: '40px', 
-                          borderRadius: '8px', 
-                          backgroundColor: '#f3f4f6', 
-                          display: 'flex', 
-                          alignItems: 'center', 
+                        <div style={{
+                          width: '40px',
+                          height: '40px',
+                          borderRadius: '8px',
+                          backgroundColor: '#f3f4f6',
+                          display: 'flex',
+                          alignItems: 'center',
                           justifyContent: 'center',
                           border: '1px solid #e5e7eb',
                           flexShrink: 0
@@ -976,7 +1003,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             }}>
               <Trash2 size={24} />
             </div>
-            
+
             <div>
               <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
                 Project Verwijderen?
@@ -1278,13 +1305,35 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             </button>
 
             <div>
-              <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif", display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Activity size={20} className="animate-pulse" style={{ color: 'var(--brand-primary)' }} />
-                API Status & Engine Monitor
-              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', paddingRight: '28px' }}>
+                <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif", display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                  <Activity size={20} className="animate-pulse" style={{ color: 'var(--brand-primary)' }} />
+                  API Status & Engine Monitor
+                </h3>
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '4px 10px',
+                  borderRadius: '14px',
+                  backgroundColor: aiDriver === 'dataforseo' ? '#ecfdf5' : '#f3f4f6',
+                  color: aiDriver === 'dataforseo' ? '#047857' : '#4b5563',
+                  border: aiDriver === 'dataforseo' ? '1px solid #a7f3d0' : '1px solid #e5e7eb'
+                }}>
+                  {aiDriver === 'dataforseo'
+                    ? `Web-Client modus (DataForSEO)${dataForSeoInfo?.balanceEur != null ? ` · Saldo €${Number(dataForSeoInfo.balanceEur).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}`
+                    : 'Directe LLM API modus'}
+                </span>
+              </div>
               <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px' }}>
-                Bekijk de live verbindingsstatus en logboeken van de aangesloten LLM engines.
+                {aiDriver === 'dataforseo'
+                  ? 'Scans draaien live via de echte web-clients (ChatGPT Web, Gemini Web, Google.nl AI Overviews & AI Mode, Perplexity & Claude).'
+                  : 'Bekijk de live verbindingsstatus en logboeken van de aangesloten LLM engines.'}
               </p>
+              {aiDriver === 'dataforseo' && dataForSeoInfo?.error && (
+                <div style={{ marginTop: '8px', padding: '8px 12px', borderRadius: '8px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontSize: '12px', fontWeight: 600 }}>
+                  DataForSEO melding: {dataForSeoInfo.error}
+                </div>
+              )}
             </div>
 
             {/* Quick LLM Cost Summary Banner */}
@@ -1396,8 +1445,13 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     backgroundColor: '#fafafa'
                   }}>
                     <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
-                      {eng.engine === 'copilot' ? 'Copilot (MS)' : eng.name.split(' ')[0]}
+                      {eng.engine === 'copilot' ? 'Copilot (MS)' : eng.name.split(' (')[0]}
                     </span>
+                    {eng.driver === 'dataforseo' && (
+                      <span style={{ fontSize: '9px', color: '#047857', fontWeight: 600 }}>
+                        via DataForSEO Web-Client
+                      </span>
+                    )}
                     <span style={{
                       alignSelf: 'flex-start',
                       fontSize: '10px',
@@ -1409,9 +1463,19 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                     }}>
                       {label}
                     </span>
-                    {eng.totalCostEur !== undefined && (
+                    {eng.liveCostEur !== undefined && (
                       <span style={{ fontSize: '10px', color: '#111827', fontWeight: 600 }}>
-                        Kosten: <strong>€{Number(eng.totalCostEur).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                        Live API: <strong>€{Number(eng.liveCostEur).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                        {eng.totalCostEur > eng.liveCostEur + 0.01 && (
+                          <span style={{ color: '#6b7280', fontWeight: 500 }}>
+                            {' '}(totaal incl. facturen: €{Number(eng.totalCostEur).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {(eng.successCalls > 0 || eng.failedCalls > 0) && (
+                      <span style={{ fontSize: '9px', color: '#6b7280' }}>
+                        {eng.successCalls || 0} OK · {eng.failedCalls || 0} fout
                       </span>
                     )}
                     {eng.engine === 'copilot' && eng.status === 'NOT_CONFIGURED' && (
@@ -1431,25 +1495,45 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
             {/* Call History Logs */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                 <span style={{ fontSize: '13px', fontWeight: 700, color: '#374151', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Terminal size={14} />
                   Live API Logboeken (max. 50)
                 </span>
-                <button
-                  onClick={fetchApiMonitorData}
-                  disabled={monitorLoading}
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    color: 'var(--brand-primary)',
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {monitorLoading ? 'Verversen...' : 'Nu verversen'}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <button
+                    type="button"
+                    onClick={resetApiCircuitBreakers}
+                    disabled={monitorLoading}
+                    title="Wis eventuele tijdelijke blokkades (bijv. nadat Perplexity tegoed of Gemini limiet is bijgewerkt)"
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: '#b45309',
+                      backgroundColor: '#fef3c7',
+                      border: '1px solid #fde68a',
+                      borderRadius: '6px',
+                      padding: '3px 8px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Blokkades resetten
+                  </button>
+                  <button
+                    onClick={fetchApiMonitorData}
+                    disabled={monitorLoading}
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: 'var(--brand-primary)',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {monitorLoading ? 'Verversen...' : 'Nu verversen'}
+                  </button>
+                </div>
               </div>
 
               <div style={{

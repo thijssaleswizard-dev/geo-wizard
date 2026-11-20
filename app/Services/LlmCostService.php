@@ -40,6 +40,21 @@ class LlmCostService
                     'output_per_m' => 5.00,
                     'grounding_fee' => 0.035,
                 ],
+                'gemini-web-client' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.004,
+                ],
+                'google-ai-overviews' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.002,
+                ],
+                'google-ai-mode' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.002,
+                ],
             ],
             'default_model' => 'gemini-flash-latest',
         ],
@@ -61,6 +76,11 @@ class LlmCostService
                     'output_per_m' => 0.60,
                     'fixed_per_request' => 0.00,
                 ],
+                'chatgpt-web-client' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.004,
+                ],
             ],
             'default_model' => 'gpt-4o',
         ],
@@ -74,6 +94,11 @@ class LlmCostService
                     'input_per_m' => 1.00,
                     'output_per_m' => 1.00,
                     'fixed_per_request' => 0.005,
+                ],
+                'dataforseo-perplexity-sonar' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.002,
                 ],
             ],
             'default_model' => 'sonar',
@@ -103,6 +128,16 @@ class LlmCostService
                     'input_per_m' => 3.00,
                     'output_per_m' => 15.00,
                     'fixed_per_request' => 0.00,
+                ],
+                'dataforseo-claude-haiku-4-5' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.015,
+                ],
+                'dataforseo-claude-sonnet-4-5' => [
+                    'input_per_m' => 0.00,
+                    'output_per_m' => 0.00,
+                    'fixed_per_request' => 0.005,
                 ],
             ],
             'default_model' => 'claude-sonnet-5-5',
@@ -186,7 +221,7 @@ class LlmCostService
     }
 
     /**
-     * Record an LLM call with token counts and calculated cost.
+     * Record an LLM call with token counts and calculated cost (or an exact provider-reported USD cost).
      */
     public static function recordUsage(
         string $engine,
@@ -200,11 +235,18 @@ class LlmCostService
         ?int $promptId = null,
         bool $groundingUsed = false,
         array $metadata = [],
-        int $searchCalls = 0
+        int $searchCalls = 0,
+        ?float $overrideCostUsd = null
     ): LlmCostLog {
         // Failed (ERROR) and simulated (FALLBACK) calls are not billed by the providers.
         if ($status !== 'SUCCESS') {
             $costs = ['usd' => 0.00, 'eur' => 0.00];
+        } elseif ($overrideCostUsd !== null) {
+            $rawUsd = max(0.0, $overrideCostUsd);
+            $costs = [
+                'usd' => round($rawUsd, 6),
+                'eur' => round($rawUsd * self::USD_TO_EUR_RATE, 6),
+            ];
         } else {
             $costs = self::calculateCost($engine, $model, $inputTokens, $outputTokens, $groundingUsed, $searchCalls);
         }
@@ -287,30 +329,43 @@ class LlmCostService
         $totalTokens = (int) $allLogs->sum('total_tokens');
         $totalRequests = $allLogs->count();
         $successfulRequests = $allLogs->where('status', 'SUCCESS')->count();
-        $fallbackRequests = $allLogs->filter(fn($l) => $l->status === 'FALLBACK' || !empty($l->metadata['fallback_used']))->count();
-        if ($fallbackRequests === 0) {
-            // Count error responses where fallback simulation took over
-            $fallbackRequests = $allLogs->where('status', 'ERROR')->count();
-        }
+        $fallbackRequests = $allLogs->filter(fn($l) => $l->status === 'FALLBACK')->count();
         $failedRequests = $allLogs->where('status', 'ERROR')->count();
 
-        // Average over billable (successful) requests only, with 4 decimals (calls cost fractions of a cent)
-        $billableCount = $allLogs->where('status', 'SUCCESS')->where('operation', '!=', 'manual_invoice')->where('operation', '!=', 'google_ai_studio_billing')->count();
-        $billableCost = (float) $allLogs->where('status', 'SUCCESS')->where('operation', '!=', 'manual_invoice')->where('operation', '!=', 'google_ai_studio_billing')->sum('cost_eur');
+        // Separate live API call costs from manual/historical billing imports (e.g. September €250 Mastercard statement)
+        $billingOps = ['manual_invoice', 'google_ai_studio_billing'];
+        $liveApiLogs = $allLogs->filter(fn($l) => !in_array($l->operation, $billingOps));
+        $billingLogs = $allLogs->filter(fn($l) => in_array($l->operation, $billingOps));
+
+        $liveApiCostEur = round((float) $liveApiLogs->sum('cost_eur'), 2);
+        $billedInvoicesCostEur = round((float) $billingLogs->sum('cost_eur'), 2);
+
+        // Average over billable (successful) live API requests only, with 4 decimals (calls cost fractions of a cent)
+        $billableCount = $liveApiLogs->where('status', 'SUCCESS')->count();
+        $billableCost = (float) $liveApiLogs->where('status', 'SUCCESS')->sum('cost_eur');
         $avgCostPerRequestEur = $billableCount > 0 ? round($billableCost / $billableCount, 4) : 0.00;
 
         // Breakdown per Engine
         $byEngine = [];
         $enginesConfig = self::PRICING_RATES;
+        $apiStatuses = collect(AiEngineService::getApiStatus())->keyBy('engine');
 
         foreach ($enginesConfig as $engineKey => $cfg) {
             $engineLogs = $allLogs->where('engine', $engineKey);
+            $engLiveLogs = $engineLogs->filter(fn($l) => !in_array($l->operation, $billingOps));
+            $engBillingLogs = $engineLogs->filter(fn($l) => in_array($l->operation, $billingOps));
+
             $engCostEur = round((float) $engineLogs->sum('cost_eur'), 2);
+            $engLiveCostEur = round((float) $engLiveLogs->sum('cost_eur'), 2);
+            $engBilledCostEur = round((float) $engBillingLogs->sum('cost_eur'), 2);
             $engCostUsd = round((float) $engineLogs->sum('cost_usd'), 2);
             $engTokens = (int) $engineLogs->sum('total_tokens');
             $engInTokens = (int) $engineLogs->sum('input_tokens');
             $engOutTokens = (int) $engineLogs->sum('output_tokens');
             $engRequests = $engineLogs->count();
+            $engSuccess = $engLiveLogs->where('status', 'SUCCESS')->count();
+            $engFailed = $engLiveLogs->where('status', 'ERROR')->count();
+            $engApiStatus = $apiStatuses[$engineKey]['status'] ?? 'ACTIVE';
 
             $modelsUsed = $engineLogs->pluck('model')->unique()->values()->all();
             if (empty($modelsUsed)) {
@@ -335,15 +390,20 @@ class LlmCostService
                 'models' => $modelsUsed,
                 'primaryModel' => $primaryModelKey,
                 'requests' => $engRequests,
+                'successRequests' => $engSuccess,
+                'failedRequests' => $engFailed,
                 'inputTokens' => $engInTokens,
                 'outputTokens' => $engOutTokens,
                 'totalTokens' => $engTokens,
                 'costEur' => $engCostEur,
+                'liveCostEur' => $engLiveCostEur,
+                'billedInvoicesCostEur' => $engBilledCostEur,
                 'costUsd' => $engCostUsd,
                 'percentage' => $percentage,
-                'avgCostEur' => ($engSuccess = $engineLogs->where('status', 'SUCCESS')->count()) > 0 ? round((float) $engineLogs->where('status', 'SUCCESS')->sum('cost_eur') / $engSuccess, 4) : 0.00,
+                'avgCostEur' => $engSuccess > 0 ? round((float) $engLiveLogs->where('status', 'SUCCESS')->sum('cost_eur') / $engSuccess, 4) : 0.00,
                 'pricingLabel' => $pricingLabel,
-                'isActive' => AiEngineService::isEngineEnabled($engineKey),
+                'apiStatus' => $engApiStatus,
+                'isActive' => $engApiStatus === 'ACTIVE',
                 'isAiStudio' => ($engineKey === 'gemini'),
             ];
         }
@@ -408,12 +468,29 @@ class LlmCostService
         // Recent Logs formatted (first 50)
         $recentLogs = $allLogs->take(50)->map(function ($log) {
             $isAiStudio = ($log->engine === 'gemini');
+            $isDfs = (($log->metadata['via'] ?? null) === 'dataforseo_web_client');
             $invoiceRef = $log->metadata['invoice_reference'] ?? ($log->metadata['ref'] ?? null);
+
+            if ($isDfs) {
+                $engineLabel = match ($log->model) {
+                    'chatgpt-web-client' => 'ChatGPT Web (DataForSEO)',
+                    'gemini-web-client' => 'Gemini Web (DataForSEO)',
+                    'google-ai-overviews' => 'Google AI Overviews (DataForSEO)',
+                    'google-ai-mode' => 'Google AI Mode (DataForSEO)',
+                    default => match ($log->engine) {
+                        'perplexity' => 'Perplexity Web (DataForSEO)',
+                        'anthropic' => 'Claude Web (DataForSEO)',
+                        default => ucfirst($log->engine) . ' (DataForSEO)',
+                    },
+                };
+            } else {
+                $engineLabel = $isAiStudio ? 'Google AI Studio' : ucfirst($log->engine);
+            }
 
             return [
                 'id' => $log->id,
                 'engine' => $log->engine,
-                'engineLabel' => $isAiStudio ? 'Google AI Studio' : ucfirst($log->engine),
+                'engineLabel' => $engineLabel,
                 'model' => $log->model,
                 'operation' => $log->operation,
                 'projectName' => $log->project ? $log->project->company : 'Algemeen',
@@ -431,10 +508,15 @@ class LlmCostService
             ];
         })->values()->all();
 
+        $activeDriver = AiEngineService::getActiveDriver();
+        $dataForSeoAccount = DataForSeoService::isConfigured() ? DataForSeoService::getAccountSummary() : null;
+
         return [
             'summary' => [
                 'totalCostEur' => $totalCostEur,
                 'totalCostUsd' => $totalCostUsd,
+                'liveApiCostEur' => $liveApiCostEur,
+                'billedInvoicesCostEur' => $billedInvoicesCostEur,
                 'totalTokens' => $totalTokens,
                 'totalInputTokens' => $totalInputTokens,
                 'totalOutputTokens' => $totalOutputTokens,
@@ -446,6 +528,8 @@ class LlmCostService
                 'currency' => 'EUR',
                 'rateUsdToEur' => self::USD_TO_EUR_RATE,
                 'googleAiStudioConnected' => true,
+                'aiDriver' => $activeDriver,
+                'dataforseo' => $dataForSeoAccount,
                 'providerBilled' => self::getProviderBilledCosts(),
             ],
             'byEngine' => array_values($byEngine),

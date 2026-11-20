@@ -27,6 +27,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | AI Scan Driver ('auto' | 'dataforseo' | 'api')
+    |--------------------------------------------------------------------------
+    |
+    | 'auto'       : Uses DataForSEO Web-Client automatically when DATAFORSEO_LOGIN
+    |                and DATAFORSEO_PASSWORD are set; otherwise falls back to direct APIs.
+    | 'dataforseo' : Forces DataForSEO Web-Client (ChatGPT Web UI, Gemini Web UI,
+    |                real Google.nl AI Overviews, Google.nl AI Mode, Perplexity & Claude).
+    | 'api'        : Forces direct developer LLM APIs (OpenAI, Gemini, Perplexity, Anthropic).
+    |
+    */
+    'ai_driver' => env('GEO_AI_DRIVER', 'auto'),
+    'dataforseo_include_perplexity' => (bool) env('DATAFORSEO_INCLUDE_PERPLEXITY', true),
+    'dataforseo_include_claude' => (bool) env('DATAFORSEO_INCLUDE_CLAUDE', true),
+    'dataforseo_perplexity_model' => env('DATAFORSEO_PERPLEXITY_MODEL', 'sonar'),
+    'dataforseo_claude_model' => env('DATAFORSEO_CLAUDE_MODEL', 'claude-haiku-4-5'),
+    'dataforseo_claude_web_search' => (bool) env('DATAFORSEO_CLAUDE_WEB_SEARCH', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Provider pricing extras (USD)
     |--------------------------------------------------------------------------
     */
