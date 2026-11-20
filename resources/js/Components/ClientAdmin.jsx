@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal, Sparkles } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -613,6 +614,8 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
       </div>
 
+      {typeof document !== 'undefined' && createPortal(
+        <>
       {/* Add Client Modal */}
       {showModal && (
         <div style={{
@@ -1071,6 +1074,8 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
           <div className="card fade-in" style={{
             width: '100%',
             maxWidth: '520px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
             backgroundColor: '#ffffff',
             borderRadius: '16px',
             padding: '32px',
@@ -1589,6 +1594,9 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
           </div>
         </div>
+      )}
+        </>,
+        document.body
       )}
 
     </div>

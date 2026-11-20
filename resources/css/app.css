@@ -179,11 +179,11 @@ input:focus, textarea:focus, select:focus {
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; transform: none; }
 }
 
 .fade-in {
-  animation: fadeIn var(--transition-normal) forwards;
+  animation: fadeIn var(--transition-normal);
 }
 
 /* Styling utilities */
