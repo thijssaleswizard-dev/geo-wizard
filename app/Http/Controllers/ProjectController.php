@@ -268,9 +268,10 @@ class ProjectController extends Controller
         $email = strtolower(trim($request->input('email', '')));
         $subscription = $request->input('subscription');
         $password = $request->input('password');
+        $companyInput = trim($request->input('company', ''));
 
         if (empty($name) || empty($email)) {
-            return response()->json(['error' => 'Projectnaam en e-mailadres zijn verplicht.'], 400);
+            return response()->json(['error' => 'Contactpersoon en e-mailadres zijn verplicht.'], 400);
         }
 
         $project = Project::find($id);
@@ -278,15 +279,50 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Project niet gevonden.'], 404);
         }
 
+        $oldCompany = $project->company;
+        if (!empty($companyInput)) {
+            if (str_starts_with($companyInput, 'http://') || str_starts_with($companyInput, 'https://')) {
+                $companyInput = preg_replace('#^https?://(www\.)?#i', '', $companyInput);
+                $companyInput = explode('/', $companyInput)[0];
+            } elseif (str_starts_with(strtolower($companyInput), 'www.')) {
+                $companyInput = substr($companyInput, 4);
+            }
+            $company = trim($companyInput);
+        } else {
+            $company = $oldCompany;
+        }
+
+        if (empty($company)) {
+            return response()->json(['error' => 'Projectnaam / domein mag niet leeg zijn.'], 400);
+        }
+
+        if (strtolower($company) !== strtolower($oldCompany)) {
+            if (Project::whereRaw('LOWER(company) = ?', [strtolower($company)])->where('id', '!=', $project->id)->exists()) {
+                return response()->json(['error' => 'Deze projectnaam / dit domein bestaat al bij een ander project.'], 400);
+            }
+        }
+
         $oldEmail = $project->email;
         $newSubscription = $subscription ?: $project->subscription;
 
         $project->update([
+            'company' => $company,
             'name' => $name,
             'email' => $email,
             'subscription' => $newSubscription,
             'updated_at' => now(),
         ]);
+
+        if ($company !== $oldCompany) {
+            $newCompanyKey = AiEngineService::cleanBrandKey($company);
+            Keyword::where('project_id', $project->id)->update(['company_key' => $newCompanyKey]);
+            Citation::where('project_id', $project->id)->update(['company_key' => $newCompanyKey]);
+            \App\Models\Recommendation::where('project_id', $project->id)->update(['company_key' => $newCompanyKey]);
+            \App\Models\AgentAnalytic::where('project_id', $project->id)->update(['company_key' => $newCompanyKey]);
+            if (!\App\Models\OverviewStat::where('company_key', $newCompanyKey)->where('project_id', '!=', $project->id)->exists()) {
+                \App\Models\OverviewStat::where('project_id', $project->id)->update(['company_key' => $newCompanyKey]);
+            }
+        }
 
         if (!empty($password)) {
             $klantRole = Role::firstOrCreate(['name' => 'klant']);
@@ -297,7 +333,7 @@ class ProjectController extends Controller
                     'password' => Hash::make($password),
                     'role_id' => $klantRole->id,
                     'role' => 'klant',
-                    'company_name' => $project->company,
+                    'company_name' => $company,
                     'subscription' => $newSubscription,
                     'payment_status' => 'paid',
                 ]
@@ -307,6 +343,7 @@ class ProjectController extends Controller
             User::where('email', $oldEmail)->update([
                 'name' => $name,
                 'email' => $email,
+                'company_name' => $company,
                 'subscription' => $newSubscription,
             ]);
         }

@@ -94,6 +94,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
   // Edit Client Modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editClient, setEditClient] = useState(null);
+  const [editCompany, setEditCompany] = useState('');
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
@@ -188,6 +189,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
   const handleEditClientClick = (client) => {
     setEditClient(client);
+    setEditCompany(client.company || '');
     setEditName(client.name || '');
     setEditEmail(client.email || '');
     setEditPassword('');
@@ -201,8 +203,21 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
     e.preventDefault();
     if (!editClient) return;
 
+    let cleanedCompany = (editCompany || '').trim();
+    if (cleanedCompany.startsWith('http://') || cleanedCompany.startsWith('https://')) {
+      cleanedCompany = cleanedCompany.replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0];
+    } else if (cleanedCompany.toLowerCase().startsWith('www.')) {
+      cleanedCompany = cleanedCompany.slice(4);
+    }
+
+    if (!cleanedCompany) {
+      setError('Projectnaam / domein mag niet leeg zijn.');
+      return;
+    }
+
     setError('');
     setLoading(true);
+    const oldCompany = editClient.company;
 
     try {
       const response = await fetch(`/api/projects/${editClient.id}`, {
@@ -211,6 +226,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
+          company: cleanedCompany,
           name: editName,
           email: editEmail,
           subscription: editSubscription,
@@ -227,7 +243,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
       }
 
       if (onUpdateClient) {
-        onUpdateClient(data.client);
+        onUpdateClient(data.client, oldCompany);
       }
 
       setLoading(false);
@@ -441,7 +457,7 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
 
             return (
               <div
-                key={client.company}
+                key={client.id || client.company}
                 onClick={() => onSelectClient(client.company)}
                 style={{
                   display: 'flex',
@@ -1060,21 +1076,20 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
             <form onSubmit={handleEditClientSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
-                  Website / Company Domain
+                  Projectnaam / Website Domein
                 </label>
                 <input
                   type="text"
-                  value={editClient.company}
-                  disabled
+                  required
+                  value={editCompany}
+                  onChange={(e) => setEditCompany(e.target.value)}
+                  placeholder="Bijv. bedrijf.nl"
                   style={{
                     width: '100%',
                     padding: '12px 16px',
                     borderRadius: '30px',
-                    border: '1px solid #e5e7eb',
-                    backgroundColor: '#f3f4f6',
-                    color: '#9ca3af',
-                    fontSize: '13px',
-                    cursor: 'not-allowed'
+                    border: '1px solid #d1d5db',
+                    fontSize: '13px'
                   }}
                 />
               </div>

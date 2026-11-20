@@ -257,7 +257,7 @@ export default function Sidebar({
             )}
             {clients.map((client) => (
               <button
-                key={client.company}
+                key={client.id || client.company}
                 onClick={() => {
                   onWorkspaceChange(client.company);
                   setIsWorkspaceOpen(false);

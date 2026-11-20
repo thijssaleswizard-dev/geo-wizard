@@ -244,8 +244,20 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
     setClients(prev => [newClient, ...prev]);
   };
 
-  const handleUpdateClient = (updatedClient) => {
+  const handleUpdateClient = (updatedClient, oldCompany) => {
     setClients(prev => prev.map(c => c.id === updatedClient.id ? { ...c, ...updatedClient } : c));
+    if (oldCompany && updatedClient?.company && oldCompany !== updatedClient.company) {
+      if (activeWorkspace && activeWorkspace.toLowerCase() === oldCompany.toLowerCase()) {
+        setActiveWorkspace(updatedClient.company);
+      }
+      if (currentUser && currentUser.company && currentUser.company.toLowerCase() === oldCompany.toLowerCase()) {
+        setCurrentUser(prev => {
+          const next = { ...prev, company: updatedClient.company };
+          localStorage.setItem('geo_wizard_user', JSON.stringify(next));
+          return next;
+        });
+      }
+    }
   };
 
   const handleSelectClient = (company) => {
