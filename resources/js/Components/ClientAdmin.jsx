@@ -1371,10 +1371,18 @@ export default function ClientAdmin({ clients, onSelectClient, onUpdateClientPla
                   badgeBg = '#dcfce7';
                   badgeColor = '#22c55e';
                   label = 'Actief';
+                } else if (eng.status === 'ERROR') {
+                  badgeBg = '#fee2e2';
+                  badgeColor = '#dc2626';
+                  label = 'API Fout';
                 } else if (eng.status === 'DEGRADED') {
                   badgeBg = '#fef9c3';
                   badgeColor = '#ca8a04';
                   label = 'Degraded / Error';
+                } else if (eng.status === 'FALLBACK') {
+                  badgeBg = '#fef3c7';
+                  badgeColor = '#b45309';
+                  label = 'Fallback actief';
                 }
 
                 return (
