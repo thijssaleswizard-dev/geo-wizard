@@ -39,8 +39,13 @@ Artisan::command('geo:sync-all {--project= : Specific Project ID to sync} {--syn
         try {
             $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
 
-            // 1. Check each Keyword via lightweight SERP Canary check
-            $keywords = $project->keywords()->with('prompts')->get();
+            // 1. Check each active (non-archived) Keyword via lightweight SERP Canary check
+            $keywords = $project->keywords()
+                ->where(function ($q) {
+                    $q->where('is_archived', false)->orWhereNull('is_archived');
+                })
+                ->with('prompts')
+                ->get();
             $this->line("  Found {$keywords->count()} keywords for {$project->company}");
 
             foreach ($keywords as $kw) {

@@ -323,8 +323,8 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
     if (activeTab === 'llm_costs') {
       return <LlmCosts currentUser={currentUser} enabledEngines={enabledEngines} />;
     }
-    if (currentUser.role === 'medewerker' && !activeWorkspace) {
-      return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
+    if ( (currentUser.role === 'medewerker' || currentUser.role === 'admin') && !activeWorkspace) {
+      return <ClientAdmin currentUser={currentUser} clients={clients} onNavigateTab={setActiveTab} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
     }
     switch (activeTab) {
       case 'overview':
@@ -346,7 +346,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       case 'account_plan':
         return <AccountManagement currentUser={currentUser} activeClient={activeClient} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'client_admin':
-        return <ClientAdmin clients={clients} onNavigateTab={setActiveTab} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
+        return <ClientAdmin currentUser={currentUser} clients={clients} onNavigateTab={setActiveTab} enabledEngines={enabledEngines} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
       default:
         return (
           <div className="fade-in" style={{

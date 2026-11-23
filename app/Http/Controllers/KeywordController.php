@@ -72,9 +72,9 @@ class KeywordController extends Controller
             $hasPendingPrompts = $prompts->isNotEmpty() && $prompts->contains(fn($p) => in_array($p->status, ['pending', 'processing', 'crawling']));
 
             $competitors = is_array($k->competitors_json) ? $k->competitors_json : json_decode($k->competitors_json, true);
-            if ((empty($competitors) || count($competitors) < 3) && !$hasPendingPrompts) {
+            if ((empty($competitors) || count($competitors) < 5) && !$hasPendingPrompts) {
                 try {
-                    $competitors = $this->competitorScraper->getOrScrapeCompetitors($k->id, $kwText, $k->company_key);
+                    $competitors = $this->competitorScraper->getOrScrapeCompetitors($k->id, $kwText, $k->company_key, true);
                 } catch (\Throwable $e) {
                     \Illuminate\Support\Facades\Log::warning("[Keyword Index Competitor Warning] {$e->getMessage()}");
                     $cleanComp = \App\Services\AiEngineService::cleanBrandKey($k->company_key);
@@ -195,23 +195,60 @@ class KeywordController extends Controller
                     $calculatedPos = !empty($kwLivePositions)
                         ? number_format(array_sum($kwLivePositions) / count($kwLivePositions), 1)
                         : ($selfItem['position'] ?? '1.0');
-                    $rawRank = $selfItem['rank'] ?? ($k->rank ? "#{$k->rank}" : '#1');
-                    $rankStr = ($rawRank === '-' || empty($rawRank)) ? '#1' : (str_starts_with((string) $rawRank, '#') ? (string) $rawRank : '#' . $rawRank);
                 }
 
                 if ($selfIdx !== null) {
                     $competitorsArr[$selfIdx]['sov'] = $calculatedSov;
                     $competitorsArr[$selfIdx]['position'] = $calculatedPos;
-                    $competitorsArr[$selfIdx]['rank'] = $rankStr;
                     if ($kwLiveMentions === 0) {
                         $competitorsArr[$selfIdx]['citations'] = 0;
+                        $competitorsArr[$selfIdx]['rank'] = '-';
                     }
-                    $selfItem = $competitorsArr[$selfIdx];
                 }
             } else {
                 $calculatedSov = $selfItem ? (int) ($selfItem['sov'] ?? 0) : 0;
                 $calculatedPos = $selfItem ? ($selfItem['position'] ?? '-') : '-';
-                $rawRank = $selfItem ? ($selfItem['rank'] ?? ($k->rank ? "#{$k->rank}" : '-')) : ($k->rank ? "#{$k->rank}" : '-');
+            }
+
+            // Always sort competitors strictly by Share of Voice DESC (and Position ASC on tie) and re-assign #1..#N ranks
+            // so the Brand Rankings table and the Keyword overview Rank column are 100% consistent.
+            if (!empty($competitorsArr)) {
+                usort($competitorsArr, function ($a, $b) {
+                    $sovA = (int) ($a['sov'] ?? 0);
+                    $sovB = (int) ($b['sov'] ?? 0);
+                    if ($sovA !== $sovB) {
+                        return $sovB <=> $sovA;
+                    }
+                    $posA = is_numeric($a['position'] ?? null) ? (float) $a['position'] : 999.0;
+                    $posB = is_numeric($b['position'] ?? null) ? (float) $b['position'] : 999.0;
+                    if (abs($posA - $posB) > 0.01) {
+                        return $posA <=> $posB;
+                    }
+                    return ((int) ($b['citations'] ?? 0)) <=> ((int) ($a['citations'] ?? 0));
+                });
+
+                $rankCounter = 0;
+                $selfItem = null;
+                foreach ($competitorsArr as &$cEntry) {
+                    if (((int) ($cEntry['sov'] ?? 0)) <= 0) {
+                        $cEntry['rank'] = '-';
+                        $cEntry['position'] = '-';
+                        $cEntry['sov'] = 0;
+                    } else {
+                        $rankCounter++;
+                        $cEntry['rank'] = '#' . $rankCounter;
+                    }
+                    if (!empty($cEntry['isSelf'])) {
+                        $selfItem = $cEntry;
+                    }
+                }
+                unset($cEntry);
+            }
+
+            if ($kwLiveModelChecks > 0 && $kwLiveMentions === 0) {
+                $rankStr = '-';
+            } else {
+                $rawRank = $selfItem ? ($selfItem['rank'] ?? '-') : ($k->rank ? "#{$k->rank}" : '-');
                 $rankStr = ($rawRank === '-' || empty($rawRank)) ? '-' : (str_starts_with((string) $rawRank, '#') ? (string) $rawRank : '#' . $rawRank);
             }
             $rankDigits = preg_replace('/[^0-9]/', '', (string) $rankStr);
@@ -260,7 +297,16 @@ class KeywordController extends Controller
             ];
         });
 
-        $totalPromptsCount = $keywords->sum(fn($k) => count($k['prompts'] ?? []));
+        $totalPromptsCount = $keywords
+            ->filter(fn($k) => empty($k['is_archived']))
+            ->sum(fn($k) => count($k['prompts'] ?? []));
+
+        if ($project) {
+            // Sync project's prompts_count with active prompts count
+            if ((int) $project->prompts_count !== (int) $totalPromptsCount) {
+                $project->update(['prompts_count' => (int) $totalPromptsCount]);
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -385,83 +431,169 @@ class KeywordController extends Controller
         ], 201);
     }
 
-    /**
-     * Archive a keyword (prompts and historical data remain safely preserved).
-     */
-    public function archive(int $id): JsonResponse
+    protected function isStaffOrAdmin(Request $request): bool
     {
+        $user = $request->user() ?? auth()->user();
+        $role = $user?->role;
+        $userId = $user?->id ?? $request->input('userId') ?? $request->query('userId');
+
+        if ($userId && !$role) {
+            $dbUser = \App\Models\User::find($userId);
+            if ($dbUser) {
+                $role = $dbUser->role;
+            }
+        }
+        if (!$role) {
+            $role = $request->input('role') ?? $request->query('role');
+        }
+
+        if ($role === 'klant') {
+            return false;
+        }
+
+        // If role is explicitly provided, require admin or medewerker; if stateless internal staff call, allow
+        if ($role) {
+            return in_array(strtolower((string) $role), ['admin', 'medewerker'], true);
+        }
+
+        return true;
+    }
+
+    protected function recalculateProjectPromptCount(?int $projectId): int
+    {
+        if (!$projectId) {
+            return 0;
+        }
+
+        $activeKeywordIds = Keyword::where('project_id', $projectId)
+            ->where(function ($q) {
+                $q->where('is_archived', false)->orWhereNull('is_archived');
+            })
+            ->pluck('id');
+
+        // Delete any orphaned prompts whose keyword was deleted
+        $allProjectKeywordIds = Keyword::where('project_id', $projectId)->pluck('id');
+        Prompt::where('project_id', $projectId)
+            ->whereNotNull('keyword_id')
+            ->whereNotIn('keyword_id', $allProjectKeywordIds)
+            ->delete();
+
+        $activeCount = Prompt::where('project_id', $projectId)
+            ->whereIn('keyword_id', $activeKeywordIds)
+            ->count();
+
+        Project::where('id', $projectId)->update(['prompts_count' => $activeCount]);
+
+        return $activeCount;
+    }
+
+    /**
+     * Archive a keyword.
+     */
+    public function archive(Request $request, int $id): JsonResponse
+    {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers mogen zoekwoorden archiveren.'], 403);
+        }
+
         $kw = Keyword::find($id);
         if (!$kw) {
             return response()->json(['error' => 'Keyword niet gevonden.'], 404);
         }
 
         $kw->update(['is_archived' => true]);
+        $newTotal = $this->recalculateProjectPromptCount($kw->project_id);
 
         return response()->json([
             'success' => true,
-            'message' => "Keyword \"{$kw->keyword}\" is succesvol gearchiveerd. De prompts blijven bewaard.",
+            'message' => "Keyword \"{$kw->keyword}\" is succesvol gearchiveerd.",
             'keyword_id' => $id,
+            'totalUsedPrompts' => $newTotal,
         ]);
     }
 
     /**
      * Restore an archived keyword back to active status.
      */
-    public function restore(int $id): JsonResponse
+    public function restore(Request $request, int $id): JsonResponse
     {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers mogen zoekwoorden herstellen.'], 403);
+        }
+
         $kw = Keyword::find($id);
         if (!$kw) {
             return response()->json(['error' => 'Keyword niet gevonden.'], 404);
         }
 
         $kw->update(['is_archived' => false]);
+        $newTotal = $this->recalculateProjectPromptCount($kw->project_id);
 
         return response()->json([
             'success' => true,
             'message' => "Keyword \"{$kw->keyword}\" is succesvol hersteld.",
             'keyword_id' => $id,
+            'totalUsedPrompts' => $newTotal,
         ]);
     }
 
     /**
-     * Archive or delete a keyword.
-     * Standard requests and clients archive the keyword so prompt quotas cannot be bypassed.
-     * Hard-delete is only permitted if force=true is passed by an administrator (medewerker).
+     * Archive or permanently delete a keyword and its prompts (resetting the prompt limit).
+     * Only permitted for admin and Saleswizard medewerkers.
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers mogen zoekwoorden en prompts verwijderen.'], 403);
+        }
+
         $kw = Keyword::find($id);
         if (!$kw) {
             return response()->json(['error' => 'Keyword niet gevonden.'], 404);
         }
 
         $keywordText = $kw->keyword;
-        $isForce = $request->boolean('force');
-        $userRole = auth()->user()?->role;
+        $projectId = $kw->project_id;
+        $isForce = $request->has('force') ? $request->boolean('force') : true;
 
-        if ($isForce && $userRole === 'medewerker') {
+        if ($isForce) {
+            $promptIds = Prompt::where('keyword_id', $kw->id)->pluck('id');
+            if ($promptIds->isNotEmpty()) {
+                \App\Models\Citation::whereIn('prompt_id', $promptIds)->delete();
+                Prompt::whereIn('id', $promptIds)->delete();
+            }
             $kw->delete();
+            $newTotal = $this->recalculateProjectPromptCount($projectId);
+
             return response()->json([
                 'success' => true,
-                'message' => "Keyword \"{$keywordText}\" en alle bijbehorende data zijn definitief verwijderd.",
+                'message' => "Keyword \"{$keywordText}\" en alle bijbehorende prompts zijn definitief verwijderd. De promptlimiet is bijgewerkt.",
                 'is_deleted' => true,
+                'totalUsedPrompts' => $newTotal,
             ]);
         }
 
         $kw->update(['is_archived' => true]);
+        $newTotal = $this->recalculateProjectPromptCount($projectId);
 
         return response()->json([
             'success' => true,
-            'message' => "Keyword \"{$keywordText}\" is gearchiveerd. De prompts blijven bewaard om limieten te waarborgen.",
+            'message' => "Keyword \"{$keywordText}\" is gearchiveerd.",
             'is_archived' => true,
+            'totalUsedPrompts' => $newTotal,
         ]);
     }
 
     /**
-     * Bulk archive keywords (or delete if forced by admin).
+     * Bulk archive or permanently delete keywords (resetting prompt limit).
+     * Only permitted for admin and Saleswizard medewerkers.
      */
     public function bulkDelete(Request $request): JsonResponse
     {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers mogen zoekwoorden en prompts verwijderen.'], 403);
+        }
+
         $ids = $request->input('ids', []);
         if (!is_array($ids) || empty($ids)) {
             return response()->json(['success' => true, 'message' => 'Geen actie vereist.']);
@@ -469,20 +601,33 @@ class KeywordController extends Controller
 
         $count = count($ids);
         $isForce = $request->boolean('force');
-        $userRole = auth()->user()?->role;
+        $firstKw = Keyword::whereIn('id', $ids)->first();
+        $projectId = $firstKw?->project_id;
 
-        if ($isForce && $userRole === 'medewerker') {
+        if ($isForce) {
+            $promptIds = Prompt::whereIn('keyword_id', $ids)->pluck('id');
+            if ($promptIds->isNotEmpty()) {
+                \App\Models\Citation::whereIn('prompt_id', $promptIds)->delete();
+                Prompt::whereIn('id', $promptIds)->delete();
+            }
             Keyword::whereIn('id', $ids)->delete();
+            $newTotal = $this->recalculateProjectPromptCount($projectId);
+
             return response()->json([
                 'success' => true,
-                'message' => "{$count} keywords zijn definitief verwijderd via database cascade.",
+                'is_deleted' => true,
+                'totalUsedPrompts' => $newTotal,
+                'message' => "{$count} keywords en bijbehorende prompts zijn definitief verwijderd. De promptlimiet is vrijgegeven.",
             ]);
         }
 
         Keyword::whereIn('id', $ids)->update(['is_archived' => true]);
+        $newTotal = $this->recalculateProjectPromptCount($projectId);
 
         return response()->json([
             'success' => true,
+            'is_archived' => true,
+            'totalUsedPrompts' => $newTotal,
             'message' => "{$count} keywords zijn succesvol gearchiveerd.",
         ]);
     }

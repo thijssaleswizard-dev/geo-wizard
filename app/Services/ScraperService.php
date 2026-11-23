@@ -465,6 +465,7 @@ class ScraperService
                 'score' => $res['score'] ?? 0,
                 'sentiment' => !empty($res['mentioned']) ? ($res['sentiment'] ?? '+90') : 'N/A',
                 'summary' => $res['text'] ?? '',
+                'citations' => $res['richCitations'] ?? ($res['citations'] ?? []),
                 'available' => true,
                 'failed' => false,
                 'isSimulated' => false,

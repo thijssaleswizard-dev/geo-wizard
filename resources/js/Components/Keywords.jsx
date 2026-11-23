@@ -45,6 +45,7 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
     <img
       src={faviconUrl}
       alt={fallbackLabel || cleanDomain}
+      referrerPolicy="no-referrer"
       onError={() => setError(true)}
       style={{
         width: `${size}px`,
@@ -54,6 +55,432 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
         ...style
       }}
     />
+  );
+};
+
+const normalizeExternalUrl = (rawUrl) => {
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
+  let u = rawUrl.trim().replace(/^<|>$/g, '');
+  // Strip optional markdown title at the end: https://example.com "Title"
+  const spaceQuoteIdx = u.search(/\s+["']/);
+  if (spaceQuoteIdx > 0) {
+    u = u.slice(0, spaceQuoteIdx).trim();
+  }
+  if (u.startsWith('/url?q=') || u.includes('google.com/url?q=') || u.includes('google.nl/url?q=')) {
+    try {
+      const qPart = u.split('url?q=')[1]?.split('&')[0];
+      if (qPart) return decodeURIComponent(qPart);
+    } catch (e) {}
+  }
+  if (u.startsWith('//')) return `https:${u}`;
+  if (u.startsWith('/search?') || u.startsWith('/maps') || u.startsWith('/th?')) return `https://www.google.nl${u}`;
+  if (u.startsWith('www.')) return `https://${u}`;
+  return u;
+};
+
+const extractDomainFromUrl = (rawUrl) => {
+  try {
+    const norm = normalizeExternalUrl(rawUrl);
+    if (!norm) return '';
+    const parsed = new URL(norm);
+    return parsed.hostname.replace(/^www\./i, '').toLowerCase();
+  } catch (e) {
+    return String(rawUrl || '')
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .split('/')[0]
+      .split('?')[0]
+      .trim();
+  }
+};
+
+const isSpacerOrInvalidImage = (url) => {
+  if (!url) return true;
+  const u = url.trim();
+  if (u.includes('R0lGODlhAQAB')) return true; // 1x1 transparent tracking gif
+  if (u.startsWith('data:image/svg') || u === 'about:blank' || u === '#') return true;
+  return !(u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:image/'));
+};
+
+const RichImageItem = ({ src, alt, href }) => {
+  const [hidden, setHidden] = useState(false);
+  const cleanSrc = normalizeExternalUrl(src);
+  if (hidden || isSpacerOrInvalidImage(cleanSrc)) return null;
+
+  const imgEl = (
+    <img
+      src={cleanSrc}
+      alt={alt && alt !== 'image' ? alt : 'AI Resultaat afbeelding'}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => setHidden(true)}
+      onLoad={(e) => {
+        if (e.currentTarget.naturalWidth <= 2 && e.currentTarget.naturalHeight <= 2) {
+          setHidden(true);
+        }
+      }}
+      style={{
+        maxWidth: '220px',
+        maxHeight: '140px',
+        width: 'auto',
+        height: 'auto',
+        borderRadius: '8px',
+        border: '1px solid #e2e8f0',
+        objectFit: 'cover',
+        backgroundColor: '#ffffff',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+        display: 'block'
+      }}
+    />
+  );
+
+  const cleanHref = href ? normalizeExternalUrl(href) : '';
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: '4px', margin: '6px 8px 6px 0', verticalAlign: 'middle' }}>
+      {cleanHref && cleanHref.startsWith('http') ? (
+        <a href={cleanHref} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', display: 'inline-block' }}>
+          {imgEl}
+        </a>
+      ) : imgEl}
+      {alt && alt !== 'image' && alt !== 'Afbeelding' && alt.length <= 60 && (
+        <span style={{ fontSize: '10px', color: '#64748b', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {alt}
+        </span>
+      )}
+    </span>
+  );
+};
+
+const renderInlineRichTokens = (text, targetCompany, citationsList = [], keyPrefix = 'tok') => {
+  if (!text) return null;
+  let cleanedText = String(text);
+
+  // Combined tokenizer for:
+  // 1. Linked Markdown Image: [![alt](imgUrl)](linkUrl)
+  // 2. Markdown Image: ![alt](imgUrl)
+  // 3. Markdown Link: [label](url)
+  // 4. Citation reference: [1], [2]
+  // 5. Bold text: **bold**
+  // 6. Bare URL: https://... or http://...
+  const tokenRegex = /(\[!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)|!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)|\[([^\]]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)|\[(\d{1,2})\]|\*\*([^*]+)\*\*|(?:https?:\/\/|www\.)[^\s<)\]]+)/gi;
+
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+  let partIdx = 0;
+
+  const pushPlainWithBrandHighlight = (plainStr, pKey) => {
+    if (!plainStr) return;
+    const cleanTarget = (targetCompany || '').replace(/\.(nl|com|eu|de|be|org|net|io)$/i, '').trim();
+    if (!cleanTarget || cleanTarget.length < 2) {
+      nodes.push(<React.Fragment key={pKey}>{plainStr}</React.Fragment>);
+      return;
+    }
+    const escaped = cleanTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const brandRegex = new RegExp(`(${escaped}(?:\\.[a-z]{2,4})?)`, 'gi');
+    const splits = plainStr.split(brandRegex);
+    splits.forEach((s, sIdx) => {
+      if (!s) return;
+      if (s.match(brandRegex)) {
+        nodes.push(
+          <strong key={`${pKey}_b_${sIdx}`} style={{
+            backgroundColor: 'rgba(68, 0, 153, 0.10)',
+            color: '#440099',
+            padding: '1px 5px',
+            borderRadius: '4px',
+            fontWeight: 800
+          }}>
+            {s}
+          </strong>
+        );
+      } else {
+        nodes.push(<React.Fragment key={`${pKey}_t_${sIdx}`}>{s}</React.Fragment>);
+      }
+    });
+  };
+
+  while ((match = tokenRegex.exec(cleanedText)) !== null) {
+    if (match.index > lastIndex) {
+      pushPlainWithBrandHighlight(cleanedText.slice(lastIndex, match.index), `${keyPrefix}_plain_${partIdx++}`);
+    }
+
+    const fullMatch = match[0];
+
+    if (match[2] !== undefined && match[3] !== undefined && match[4] !== undefined) {
+      // 1. Linked Markdown Image [![alt](img)](href)
+      nodes.push(
+        <RichImageItem
+          key={`${keyPrefix}_limg_${partIdx++}`}
+          alt={match[2]}
+          src={match[3]}
+          href={match[4]}
+        />
+      );
+    } else if (match[5] !== undefined && match[6] !== undefined) {
+      // 2. Standalone Markdown Image ![alt](img)
+      nodes.push(
+        <RichImageItem
+          key={`${keyPrefix}_img_${partIdx++}`}
+          alt={match[5]}
+          src={match[6]}
+        />
+      );
+    } else if (match[7] !== undefined && match[8] !== undefined) {
+      // 3. Markdown Link [label](url)
+      const rawLabel = match[7].replace(/^\*\*|\*\*$/g, '').trim();
+      const resolvedUrl = normalizeExternalUrl(match[8]);
+      const dom = extractDomainFromUrl(resolvedUrl);
+      if (resolvedUrl && (resolvedUrl.startsWith('http://') || resolvedUrl.startsWith('https://'))) {
+        nodes.push(
+          <a
+            key={`${keyPrefix}_lnk_${partIdx++}`}
+            href={resolvedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              color: '#2563eb',
+              fontWeight: 600,
+              textDecoration: 'none',
+              backgroundColor: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              padding: '1px 7px',
+              borderRadius: '6px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '12px',
+              margin: '0 2px',
+              verticalAlign: 'baseline'
+            }}
+          >
+            {dom && <FaviconImage domain={dom} fallbackLabel={dom} size={13} />}
+            <span>{rawLabel || dom || resolvedUrl}</span>
+            <span style={{ fontSize: '10px', opacity: 0.75 }}>↗</span>
+          </a>
+        );
+      } else {
+        pushPlainWithBrandHighlight(rawLabel, `${keyPrefix}_lbl_${partIdx++}`);
+      }
+    } else if (match[9] !== undefined) {
+      // 4. Citation reference number [1]
+      const refNum = parseInt(match[9], 10);
+      const citObj = Array.isArray(citationsList) && citationsList[refNum - 1] ? citationsList[refNum - 1] : null;
+      const citUrl = citObj ? normalizeExternalUrl(typeof citObj === 'string' ? citObj : citObj.url) : '';
+      if (citUrl && citUrl.startsWith('http')) {
+        const citDom = extractDomainFromUrl(citUrl);
+        nodes.push(
+          <a
+            key={`${keyPrefix}_ref_${partIdx++}`}
+            href={citUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={citObj?.title || citUrl}
+            style={{
+              fontSize: '10px',
+              fontWeight: 800,
+              color: '#440099',
+              backgroundColor: '#f3e8ff',
+              border: '1px solid #d8b4fe',
+              borderRadius: '10px',
+              padding: '1px 6px',
+              margin: '0 2px',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '3px',
+              verticalAlign: 'super'
+            }}
+          >
+            {citDom && <FaviconImage domain={citDom} fallbackLabel={String(refNum)} size={11} />}
+            [{refNum}]
+          </a>
+        );
+      } else {
+        nodes.push(
+          <span key={`${keyPrefix}_refplain_${partIdx++}`} style={{ fontSize: '10px', color: '#64748b', fontWeight: 700, verticalAlign: 'super' }}>
+            [{refNum}]
+          </span>
+        );
+      }
+    } else if (match[10] !== undefined) {
+      // 5. Bold **text**
+      nodes.push(
+        <strong key={`${keyPrefix}_bold_${partIdx++}`} style={{ fontWeight: 700, color: '#0f172a' }}>
+          {renderInlineRichTokens(match[10], targetCompany, citationsList, `${keyPrefix}_bsub_${partIdx}`)}
+        </strong>
+      );
+    } else {
+      // 6. Bare URL
+      let rawBare = fullMatch;
+      let trailingPunct = '';
+      while (/[.,;:!?)]$/.test(rawBare)) {
+        trailingPunct = rawBare.slice(-1) + trailingPunct;
+        rawBare = rawBare.slice(0, -1);
+      }
+      const normBare = normalizeExternalUrl(rawBare);
+      const isImgUrl = /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(normBare) || normBare.includes('encrypted-tbn0.gstatic.com/images');
+      if (isImgUrl) {
+        nodes.push(<RichImageItem key={`${keyPrefix}_bimg_${partIdx++}`} src={normBare} alt="" />);
+      } else {
+        const dom = extractDomainFromUrl(normBare);
+        nodes.push(
+          <a
+            key={`${keyPrefix}_blnk_${partIdx++}`}
+            href={normBare}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              color: '#2563eb',
+              fontWeight: 600,
+              textDecoration: 'underline',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              margin: '0 2px'
+            }}
+          >
+            {dom && <FaviconImage domain={dom} fallbackLabel={dom} size={13} />}
+            <span>{dom || normBare}</span>
+            <span style={{ fontSize: '10px' }}>↗</span>
+          </a>
+        );
+      }
+      if (trailingPunct) {
+        nodes.push(<React.Fragment key={`${keyPrefix}_punct_${partIdx++}`}>{trailingPunct}</React.Fragment>);
+      }
+    }
+
+    lastIndex = tokenRegex.lastIndex;
+  }
+
+  if (lastIndex < cleanedText.length) {
+    pushPlainWithBrandHighlight(cleanedText.slice(lastIndex), `${keyPrefix}_end_${partIdx++}`);
+  }
+
+  return nodes;
+};
+
+const RichAiMarkdownView = ({ content, targetCompany, citations = [] }) => {
+  if (!content) return null;
+
+  const lines = String(content).replace(/\r\n/g, '\n').split('\n');
+  const blocks = [];
+  let idx = 0;
+
+  while (idx < lines.length) {
+    const line = lines[idx];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      idx++;
+      continue;
+    }
+
+    // 1. Markdown Table Block
+    if (trimmed.startsWith('|') && trimmed.split('|').length >= 3) {
+      const tableLines = [];
+      while (idx < lines.length && lines[idx].trim().startsWith('|')) {
+        tableLines.push(lines[idx].trim());
+        idx++;
+      }
+      const parsedRows = tableLines
+        .map(tl => tl.replace(/^\||\|$/g, '').split('|').map(c => c.trim()))
+        .filter(cells => !cells.every(c => /^[\s:-]*$/.test(c)));
+
+      if (parsedRows.length > 0) {
+        const headerRow = parsedRows[0];
+        const bodyRows = parsedRows.slice(1);
+        blocks.push(
+          <div key={`tbl_${idx}`} style={{ overflowX: 'auto', margin: '10px 0', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0' }}>
+                  {headerRow.map((hCell, hIdx) => (
+                    <th key={hIdx} style={{ padding: '8px 12px', fontWeight: 700, color: '#1e293b' }}>
+                      {renderInlineRichTokens(hCell, targetCompany, citations, `th_${idx}_${hIdx}`)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              {bodyRows.length > 0 && (
+                <tbody>
+                  {bodyRows.map((bRow, rIdx) => (
+                    <tr key={rIdx} style={{ borderBottom: rIdx < bodyRows.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                      {bRow.map((bCell, cIdx) => (
+                        <td key={cIdx} style={{ padding: '8px 12px', color: '#334155', verticalAlign: 'top' }}>
+                          {renderInlineRichTokens(bCell, targetCompany, citations, `td_${idx}_${rIdx}_${cIdx}`)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        );
+        continue;
+      }
+    }
+
+    // 2. Markdown Headings (#, ##, ###, ####)
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const fontSize = level === 1 ? '16px' : level === 2 ? '15px' : '14px';
+      blocks.push(
+        <div key={`h_${idx}`} style={{ fontSize, fontWeight: 800, color: '#0f172a', marginTop: '10px', marginBottom: '4px', fontFamily: "'Outfit', sans-serif" }}>
+          {renderInlineRichTokens(headingMatch[2], targetCompany, citations, `h_${idx}`)}
+        </div>
+      );
+      idx++;
+      continue;
+    }
+
+    // 3. Unordered / Ordered List Items
+    const listMatch = trimmed.match(/^(\d{1,2}[.)]|[-*•])\s+(.+)$/);
+    if (listMatch) {
+      const listItems = [];
+      while (idx < lines.length) {
+        const lTrim = lines[idx].trim();
+        const m = lTrim.match(/^(\d{1,2}[.)]|[-*•])\s+(.+)$/);
+        if (!m) break;
+        listItems.push({ marker: m[1], body: m[2], lineIdx: idx });
+        idx++;
+      }
+      blocks.push(
+        <div key={`list_${idx}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px', margin: '6px 0' }}>
+          {listItems.map((li, lIdx) => (
+            <div key={lIdx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', paddingLeft: '4px' }}>
+              <span style={{ fontWeight: 700, color: '#440099', minWidth: '18px', flexShrink: 0 }}>
+                {li.marker.length > 1 ? li.marker : '•'}
+              </span>
+              <div style={{ flex: 1, lineHeight: '1.6' }}>
+                {renderInlineRichTokens(li.body, targetCompany, citations, `li_${li.lineIdx}`)}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+      continue;
+    }
+
+    // 4. Standard Paragraph Line
+    blocks.push(
+      <div key={`p_${idx}`} style={{ marginBottom: '8px', lineHeight: '1.65' }}>
+        {renderInlineRichTokens(trimmed, targetCompany, citations, `p_${idx}`)}
+      </div>
+    );
+    idx++;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+      {blocks}
+    </div>
   );
 };
 
@@ -117,7 +544,8 @@ const EngineLogos = {
 };
 
 export default function Keywords({ currentUser, activeWorkspace, activeClient, enabledEngines, onUpdateAddonPrompts }) {
-  const isReadOnly = currentUser?.role === 'klant';
+  const isStaffOrAdmin = currentUser?.role === 'medewerker' || currentUser?.role === 'admin';
+  const isReadOnly = !isStaffOrAdmin;
   const [keywords, setKeywords] = useState([]);
   const [projectInfo, setProjectInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -125,8 +553,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const [detailTab, setDetailTab] = useState('rankings');
   const [editPromptModes, setEditPromptModes] = useState({});
   const [customPromptInputs, setCustomPromptInputs] = useState({});
+  const [generatingPromptsForKw, setGeneratingPromptsForKw] = useState({});
   const [recommending, setRecommending] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
+  const [generateAiPromptsOnAdd, setGenerateAiPromptsOnAdd] = useState(true);
+  const [customPromptsOnAdd, setCustomPromptsOnAdd] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isArchivedOpen, setIsArchivedOpen] = useState(false);
@@ -192,21 +623,64 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   };
 
   const handleBulkArchiveKeywords = async () => {
-    if (selectedKeywordIds.length === 0) return;
-    if (!window.confirm(`Weet u zeker dat u de ${selectedKeywordIds.length} geselecteerde zoekwoorden wilt archiveren? De bijbehorende prompts blijven veilig bewaard in het archief.`)) return;
+    if (!isStaffOrAdmin || selectedKeywordIds.length === 0) return;
+    if (!window.confirm(`Weet u zeker dat u de ${selectedKeywordIds.length} geselecteerde zoekwoorden wilt archiveren?`)) return;
 
     try {
       const response = await fetch('/api/keywords/bulk-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedKeywordIds })
+        body: JSON.stringify({
+          ids: selectedKeywordIds,
+          force: false,
+          userId: currentUser?.id,
+          role: currentUser?.role
+        })
       });
       const data = await response.json();
       if (data.success) {
-        setKeywords(prev => prev.map(k => selectedKeywordIds.includes(k.id) ? { ...k, is_archived: true } : k));
+        setKeywords(prev => {
+          const next = prev.map(k => selectedKeywordIds.includes(k.id) ? { ...k, is_archived: true } : k);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
         setSelectedKeywordIds([]);
       } else {
         alert(data.error || 'Fout bij archiveren van keywords.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Kan geen verbinding maken met de server.');
+    }
+  };
+
+  const handleBulkDeleteKeywords = async () => {
+    if (!isStaffOrAdmin || selectedKeywordIds.length === 0) return;
+    if (!window.confirm(`Weet u zeker dat u de ${selectedKeywordIds.length} geselecteerde zoekwoorden en alle bijbehorende prompts definitief wilt verwijderen? Hiermee wordt de promptlimiet direct vrijgegeven.`)) return;
+
+    try {
+      const response = await fetch('/api/keywords/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: selectedKeywordIds,
+          force: true,
+          userId: currentUser?.id,
+          role: currentUser?.role
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        setKeywords(prev => {
+          const next = prev.filter(k => !selectedKeywordIds.includes(k.id));
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
+        setSelectedKeywordIds([]);
+      } else {
+        alert(data.error || 'Fout bij verwijderen van keywords.');
       }
     } catch (err) {
       console.error(err);
@@ -453,6 +927,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               const formatted = (data.keywords || []).map(formatKeywordFromApi);
               setKeywords(formatted);
               setSelectedKeyword(prev => prev ? (formatted.find(f => f.id === prev.id) || prev) : null);
+              const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0);
+              setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
             }
           })
           .catch(err => console.error('Polling error:', err));
@@ -487,11 +963,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           const formatted = (data.keywords || []).map(formatKeywordFromApi);
           setKeywords(formatted);
 
-          let count = 0;
-          formatted.forEach(f => {
-            count += (f.prompts || []).length;
-          });
-          setTotalUsedPrompts(count);
+          const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
         }
       })
       .catch(err => console.error('Fetch keywords error:', err))
@@ -813,13 +1286,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
     const handleAddKeywords = async (e) => {
     e.preventDefault();
-    if (!keywordInput.trim()) return;
+    if (!isStaffOrAdmin || !keywordInput.trim()) return;
 
     const rawKeywords = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
-    const promptsToGenerateCount = rawKeywords.length * 3;
+    const customLines = customPromptsOnAdd
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    const aiPromptsCount = generateAiPromptsOnAdd ? rawKeywords.length * 3 : 0;
+    const promptsToGenerateCount = aiPromptsCount + customLines.length;
     const remainingPrompts = Math.max(0, activeLimit - totalUsedPrompts);
 
-    if (totalUsedPrompts + promptsToGenerateCount > activeLimit) {
+    if (promptsToGenerateCount > 0 && (totalUsedPrompts + promptsToGenerateCount > activeLimit)) {
       setLimitAlert({
         type: 'error',
         title: 'Onvoldoende prompts limiet over',
@@ -838,8 +1316,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     try {
       setIsAdding(false);
       setKeywordInput('');
+      setCustomPromptsOnAdd('');
 
-      for (const kwText of rawKeywords) {
+      let totalCreatedPromptsCount = 0;
+
+      for (let kwIdx = 0; kwIdx < rawKeywords.length; kwIdx++) {
+        const kwText = rawKeywords[kwIdx];
         const kwResponse = await fetch('/api/keywords', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -849,43 +1331,62 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
         if (kwData.success) {
           const insertedKw = kwData.keyword;
+          const promptsToSave = [];
 
-          // Generate 3 natural AI prompts
-          const genResponse = await fetch('/api/prompts/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ company: workspace, keyword: kwText })
+          if (generateAiPromptsOnAdd) {
+            // Generate 3 natural AI prompts
+            const genResponse = await fetch('/api/prompts/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ company: workspace, keyword: kwText })
+            });
+            const genData = await genResponse.json();
+            const aiPrompts = genData.success && genData.prompts ? genData.prompts : [
+              `Wat zijn de beste ${kwText} opties?`,
+              `Welke ${kwText} partij raden jullie aan?`,
+              `Top aanbevolen specialisten voor ${kwText}`
+            ];
+            aiPrompts.forEach(pText => promptsToSave.push({ text: pText, tag: 'AI Generated' }));
+          }
+
+          // Distribute or attach custom prompts
+          customLines.forEach((cLine, cIdx) => {
+            if (rawKeywords.length === 1 || (cIdx % rawKeywords.length) === kwIdx) {
+              promptsToSave.push({ text: cLine, tag: 'Custom' });
+            }
           });
-          const genData = await genResponse.json();
-          const prompts = genData.success && genData.prompts ? genData.prompts : [
-            `Wat zijn de beste ${kwText} opties?`,
-            `Welke ${kwText} partij raden jullie aan?`,
-            `Top aanbevolen specialisten voor ${kwText}`
-          ];
 
           const savedPrompts = [];
-          for (const pText of prompts) {
+          for (const pEntry of promptsToSave) {
             const pResponse = await fetch('/api/prompts', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ company: workspace, text: pText, tag: 'AI Generated', keyword_id: insertedKw.id })
+              body: JSON.stringify({
+                company: workspace,
+                text: pEntry.text,
+                tag: pEntry.tag,
+                keyword_id: insertedKw.id,
+                userId: currentUser?.id,
+                role: currentUser?.role
+              })
             });
             const pData = await pResponse.json();
             if (pData.success) {
               savedPrompts.push(pData.prompt);
+              totalCreatedPromptsCount++;
             }
           }
 
           const newKw = {
             id: insertedKw.id,
             text: kwText,
-            rank: '-',
-            sov: 0,
-            position: '-',
+            rank: insertedKw.rank || '-',
+            sov: insertedKw.share_of_voice ?? 0,
+            position: insertedKw.average_position || '-',
             volume: 100,
-            is_crawling: true,
+            is_crawling: savedPrompts.length > 0,
             brands: [workspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').toLowerCase()],
-            competitors: [],
+            competitors: insertedKw.competitors || [],
             prompts: savedPrompts.map(p => ({
               id: p.id,
               text: p.text,
@@ -900,45 +1401,113 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         }
       }
 
-      setTotalUsedPrompts(prev => prev + promptsToGenerateCount);
+      if (totalCreatedPromptsCount > 0) {
+        setTotalUsedPrompts(prev => prev + totalCreatedPromptsCount);
+      }
     } catch (err) {
       console.error('Failed to add keywords and prompts:', err);
     }
   };
 
   const handleArchiveKeyword = async (kw) => {
-    if (!window.confirm(`Weet u zeker dat u zoekwoord "${kw.text}" wilt archiveren? De bijbehorende prompts en data blijven veilig bewaard in uw archief.`)) {
+    if (!isStaffOrAdmin) return;
+    if (!window.confirm(`Weet u zeker dat u zoekwoord "${kw.text}" wilt archiveren?`)) {
       return;
     }
 
     try {
       const response = await fetch(`/api/keywords/${kw.id}/archive`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ userId: currentUser?.id, role: currentUser?.role })
       });
-      if (response.ok) {
-        setKeywords(prev => prev.map(k => k.id === kw.id ? { ...k, is_archived: true } : k));
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setKeywords(prev => {
+          const next = prev.map(k => k.id === kw.id ? { ...k, is_archived: true } : k);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
         if (selectedKeyword && selectedKeyword.id === kw.id) {
           setSelectedKeyword(null);
         }
       } else {
-        alert('Fout bij archiveren van keyword.');
+        alert(data.error || 'Fout bij archiveren van keyword.');
       }
     } catch (err) {
       console.error('Failed to archive keyword:', err);
     }
   };
 
+  const handleDeleteKeyword = async (kw) => {
+    if (!isStaffOrAdmin) return;
+    const pCount = (kw.prompts || []).length;
+    if (!window.confirm(`Weet u zeker dat u zoekwoord "${kw.text}" en de ${pCount} bijbehorende prompt(s) definitief wilt verwijderen? Hiermee wordt uw promptlimiet direct gereset/vrijgegeven.`)) {
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        force: 'true',
+        userId: String(currentUser?.id || ''),
+        role: String(currentUser?.role || 'medewerker')
+      });
+      const response = await fetch(`/api/keywords/${kw.id}?${params.toString()}`, {
+        method: 'DELETE',
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setKeywords(prev => {
+          const next = prev.filter(k => k.id !== kw.id);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
+        if (selectedKeyword && selectedKeyword.id === kw.id) {
+          setSelectedKeyword(null);
+        }
+      } else {
+        alert(data.error || 'Fout bij verwijderen van keyword.');
+      }
+    } catch (err) {
+      console.error('Failed to delete keyword:', err);
+    }
+  };
+
   const handleRestoreKeyword = async (kw) => {
+    if (!isStaffOrAdmin) return;
+    const kwPromptCount = (kw.prompts || []).length;
+    if (totalUsedPrompts + kwPromptCount > activeLimit) {
+      setLimitAlert({
+        type: 'error',
+        title: 'Onvoldoende prompts limiet om te herstellen',
+        promptsToGenerate: kwPromptCount,
+        keywordsCount: 1,
+        currentUsed: totalUsedPrompts,
+        maxLimit: activeLimit,
+        available: Math.max(0, activeLimit - totalUsedPrompts)
+      });
+      return;
+    }
+
     try {
       const response = await fetch(`/api/keywords/${kw.id}/restore`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ userId: currentUser?.id, role: currentUser?.role })
       });
-      if (response.ok) {
-        setKeywords(prev => prev.map(k => k.id === kw.id ? { ...k, is_archived: false } : k));
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setKeywords(prev => {
+          const next = prev.map(k => k.id === kw.id ? { ...k, is_archived: false } : k);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
       } else {
-        alert('Fout bij herstellen van keyword.');
+        alert(data.error || 'Fout bij herstellen van keyword.');
       }
     } catch (err) {
       console.error('Failed to restore keyword:', err);
@@ -992,31 +1561,39 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
 
     if (comps && comps.length > 0) {
-      return comps.map((c, idx) => ({
-        rank: `#${idx + 1}`,
-        brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
-        domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
-        isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').replace(/[^a-z0-9]/g, '')))),
-        sov: typeof c.sov === 'number' ? c.sov : 0,
-        position: c.position || '-',
-        citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
-        citationUrls: (c.citationUrls && c.citationUrls.length > 0) ? c.citationUrls : (c.domain ? [`https://${c.domain}/`] : [])
-      }));
+      let activeRank = 0;
+      return comps.map((c) => {
+        const sovVal = typeof c.sov === 'number' ? c.sov : 0;
+        if (sovVal > 0) activeRank++;
+        const resolvedRank = c.rank ? String(c.rank) : (sovVal > 0 ? `#${activeRank}` : '-');
+        return {
+          rank: resolvedRank,
+          brand: c.brand || c.name || (c.domain ? c.domain.split('.')[0].toUpperCase() : 'BEDRIJF'),
+          domain: c.domain || `${(c.name || 'bedrijf').toLowerCase().replace(/[^a-z0-9]/g, '')}.nl`,
+          isSelf: Boolean(c.isSelf || c.isTarget || (c.domain && c.domain.toLowerCase().replace(/[^a-z0-9]/g, '').includes((activeWorkspace || '').toLowerCase().replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '').replace(/[^a-z0-9]/g, '')))),
+          sov: sovVal,
+          position: sovVal > 0 ? (c.position || '-') : '-',
+          citations: typeof c.citations === 'number' ? c.citations : (typeof c.citationsCount === 'number' ? c.citationsCount : 0),
+          citationUrls: (c.citationUrls && c.citationUrls.length > 0) ? c.citationUrls : (c.domain ? [`https://${c.domain}/`] : [])
+        };
+      });
     }
 
     return [];
   };
 
   const handleAddCustomPrompt = async (kwId) => {
+    if (!isStaffOrAdmin) return;
     const input = getCustomPromptInput(kwId);
-    if (!input.trim()) return;
+    const lines = input.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (lines.length === 0) return;
 
     const remainingPrompts = Math.max(0, activeLimit - totalUsedPrompts);
-    if (totalUsedPrompts + 1 > activeLimit) {
+    if (totalUsedPrompts + lines.length > activeLimit) {
       setLimitAlert({
         type: 'error',
         title: 'Onvoldoende prompts limiet over',
-        promptsToGenerate: 1,
+        promptsToGenerate: lines.length,
         keywordsCount: 1,
         currentUsed: totalUsedPrompts,
         maxLimit: activeLimit,
@@ -1028,23 +1605,40 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
     const workspace = activeWorkspace || 'Saleswizard.nl';
     try {
-      const response = await fetch('/api/prompts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: workspace, text: input, tag: 'Custom', keyword_id: kwId })
-      });
-      const data = await response.json();
+      const newPromptObjs = [];
+      let latestTotal = null;
 
-      if (data.success) {
-        const newPromptObj = {
-          id: data.prompt.id,
-          text: data.prompt.prompt_text || input,
-          status: 'pending',
-          engines: ['chatgpt', 'gemini', 'perplexity'],
-          brandsCount: 0,
-          sourcesCount: 0
-        };
+      for (const pLine of lines) {
+        const response = await fetch('/api/prompts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company: workspace,
+            text: pLine,
+            tag: 'Custom',
+            keyword_id: kwId,
+            userId: currentUser?.id,
+            role: currentUser?.role
+          })
+        });
+        const data = await response.json();
 
+        if (data.success) {
+          if (typeof data.totalUsedPrompts === 'number') {
+            latestTotal = data.totalUsedPrompts;
+          }
+          newPromptObjs.push({
+            id: data.prompt.id,
+            text: data.prompt.prompt_text || data.prompt.text || pLine,
+            status: 'pending',
+            engines: ['chatgpt', 'gemini', 'perplexity'],
+            brandsCount: 0,
+            sourcesCount: 0
+          });
+        }
+      }
+
+      if (newPromptObjs.length > 0) {
         setKeywords(prev => prev.map(k => {
           if (k.id === kwId) {
             return {
@@ -1052,7 +1646,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               is_crawling: true,
               prompts: [
                 ...(k.prompts || []),
-                newPromptObj
+                ...newPromptObjs
               ]
             };
           }
@@ -1065,34 +1659,135 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             is_crawling: true,
             prompts: [
               ...(prev.prompts || []),
-              newPromptObj
+              ...newPromptObjs
             ]
           }));
         }
 
         setCustomPromptInput(kwId, '');
-        setTotalUsedPrompts(prev => prev + 1);
+        setTotalUsedPrompts(prev => latestTotal !== null ? latestTotal : (prev + newPromptObjs.length));
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  const handleDeletePrompt = async (kwId, promptId) => {
-    if (!window.confirm('Weet u zeker dat u deze prompt wilt verwijderen?')) return;
+  const handleGenerateAiPromptsForKeyword = async (kw) => {
+    if (!isStaffOrAdmin || !kw) return;
+    const remainingPrompts = Math.max(0, activeLimit - totalUsedPrompts);
+    if (totalUsedPrompts + 3 > activeLimit) {
+      setLimitAlert({
+        type: 'error',
+        title: 'Onvoldoende prompts limiet over',
+        promptsToGenerate: 3,
+        keywordsCount: 1,
+        currentUsed: totalUsedPrompts,
+        maxLimit: activeLimit,
+        available: remainingPrompts
+      });
+      return;
+    }
+    setLimitAlert(null);
+    setGeneratingPromptsForKw(prev => ({ ...prev, [kw.id]: true }));
+    const workspace = activeWorkspace || 'Saleswizard.nl';
 
     try {
-      const res = await fetch(`/api/prompts/${promptId}`, { method: 'DELETE' });
-      if (res.ok) {
+      const genResponse = await fetch('/api/prompts/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company: workspace, keyword: kw.text })
+      });
+      const genData = await genResponse.json();
+      const prompts = genData.success && genData.prompts ? genData.prompts : [
+        `Wat zijn de beste ${kw.text} opties?`,
+        `Welke ${kw.text} partij raden jullie aan?`,
+        `Top aanbevolen specialisten voor ${kw.text}`
+      ];
+
+      const newPromptObjs = [];
+      let latestTotal = null;
+      for (const pText of prompts) {
+        const pResponse = await fetch('/api/prompts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company: workspace,
+            text: pText,
+            tag: 'AI Generated',
+            keyword_id: kw.id,
+            userId: currentUser?.id,
+            role: currentUser?.role
+          })
+        });
+        const pData = await pResponse.json();
+        if (pData.success) {
+          if (typeof pData.totalUsedPrompts === 'number') {
+            latestTotal = pData.totalUsedPrompts;
+          }
+          newPromptObjs.push({
+            id: pData.prompt.id,
+            text: pData.prompt.text || pText,
+            status: 'pending',
+            engines: ['chatgpt', 'gemini', 'perplexity'],
+            brandsCount: 0,
+            sourcesCount: 0
+          });
+        }
+      }
+
+      if (newPromptObjs.length > 0) {
         setKeywords(prev => prev.map(k => {
-          if (k.id === kwId) {
+          if (k.id === kw.id) {
             return {
               ...k,
-              prompts: (k.prompts || []).filter(p => p.id !== promptId)
+              is_crawling: true,
+              prompts: [...(k.prompts || []), ...newPromptObjs]
             };
           }
           return k;
         }));
+        if (selectedKeyword && selectedKeyword.id === kw.id) {
+          setSelectedKeyword(prev => ({
+            ...prev,
+            is_crawling: true,
+            prompts: [...(prev.prompts || []), ...newPromptObjs]
+          }));
+        }
+        setTotalUsedPrompts(prev => latestTotal !== null ? latestTotal : (prev + newPromptObjs.length));
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setGeneratingPromptsForKw(prev => ({ ...prev, [kw.id]: false }));
+    }
+  };
+
+  const handleDeletePrompt = async (kwId, promptId) => {
+    if (!isStaffOrAdmin) return;
+    if (!window.confirm('Weet u zeker dat u deze prompt wilt verwijderen? Uw promptlimiet wordt direct met 1 verlaagd/vrijgegeven.')) return;
+
+    try {
+      const params = new URLSearchParams({
+        userId: String(currentUser?.id || ''),
+        role: String(currentUser?.role || 'medewerker')
+      });
+      const res = await fetch(`/api/prompts/${promptId}?${params.toString()}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setKeywords(prev => {
+          const next = prev.map(k => {
+            if (k.id === kwId) {
+              return {
+                ...k,
+                prompts: (k.prompts || []).filter(p => p.id !== promptId)
+              };
+            }
+            return k;
+          });
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
 
         if (selectedKeyword && selectedKeyword.id === kwId) {
           setSelectedKeyword(prev => ({
@@ -1100,8 +1795,46 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             prompts: (prev.prompts || []).filter(p => p.id !== promptId)
           }));
         }
+      } else {
+        alert(data.error || 'Fout bij verwijderen van prompt.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-        setTotalUsedPrompts(prev => Math.max(0, prev - 1));
+  const handleDeleteAllPromptsForKeyword = async (kw) => {
+    if (!isStaffOrAdmin || !kw || !(kw.prompts || []).length) return;
+    const promptIds = (kw.prompts || []).map(p => p.id).filter(Boolean);
+    if (promptIds.length === 0) return;
+
+    if (!window.confirm(`Weet u zeker dat u alle ${promptIds.length} prompts van zoekwoord "${kw.text}" wilt verwijderen? Hiermee wordt de promptlimiet direct vrijgegeven.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/prompts/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: promptIds,
+          userId: currentUser?.id,
+          role: currentUser?.role
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setKeywords(prev => {
+          const next = prev.map(k => k.id === kw.id ? { ...k, is_crawling: false, prompts: [] } : k);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+          return next;
+        });
+        if (selectedKeyword && selectedKeyword.id === kw.id) {
+          setSelectedKeyword(prev => ({ ...prev, is_crawling: false, prompts: [] }));
+        }
+      } else {
+        alert(data.error || 'Fout bij verwijderen van prompts.');
       }
     } catch (err) {
       console.error(err);
@@ -1564,7 +2297,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               const isKwScanning = kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
               const brandRankings = getBrandRankings(kw);
 
-              if (isKwScanning || brandRankings.length === 0) {
+              if (brandRankings.length === 0 || (isKwScanning && brandRankings.length <= 1)) {
                 return (
                   <div style={{
                     padding: '48px 24px',
@@ -2198,7 +2931,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         {/* TAB: PROMPTS */}
         {detailTab === 'prompts' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <div>
                 <h4 style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>Prompt explorer & Historie per prompt</h4>
                 <span style={{ fontSize: '12px', color: '#6b7280' }}>
@@ -2206,26 +2939,74 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 </span>
               </div>
               {!isReadOnly && (
-                <button
-                  type="button"
-                  onClick={() => toggleEditPromptMode(kw.id)}
-                  style={{
-                    padding: '6px 14px',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    backgroundColor: isEditMode ? '#f3f4f6' : 'transparent',
-                    color: '#111827',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {isEditMode ? <X size={14} /> : <Edit2 size={14} />}
-                  {isEditMode ? 'Klaar met bewerken' : 'Edit prompts'}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    disabled={!!generatingPromptsForKw[kw.id] || isLimitReached}
+                    onClick={() => handleGenerateAiPromptsForKeyword(kw)}
+                    title="Laat AI automatisch 3 zoekvragen bedenken voor dit zoekwoord"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      borderRadius: '6px',
+                      border: '1px solid #d8b4fe',
+                      backgroundColor: '#faf5ff',
+                      color: '#440099',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      cursor: (generatingPromptsForKw[kw.id] || isLimitReached) ? 'not-allowed' : 'pointer',
+                      opacity: (generatingPromptsForKw[kw.id] || isLimitReached) ? 0.6 : 1
+                    }}
+                  >
+                    {generatingPromptsForKw[kw.id] ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                    Genereer 3 AI Prompts
+                  </button>
+                  {(kw.prompts || []).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteAllPromptsForKeyword(kw)}
+                      title="Verwijder alle prompts van dit zoekwoord en geef de promptlimiet direct vrij"
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        borderRadius: '6px',
+                        border: '1px solid #fecaca',
+                        backgroundColor: '#fef2f2',
+                        color: '#dc2626',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Trash2 size={13} />
+                      Verwijder alle prompts (Reset limiet)
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => toggleEditPromptMode(kw.id)}
+                    style={{
+                      padding: '6px 14px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      borderRadius: '6px',
+                      border: '1px solid #d1d5db',
+                      backgroundColor: isEditMode ? '#f3f4f6' : 'transparent',
+                      color: '#111827',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {isEditMode ? <X size={14} /> : <Edit2 size={14} />}
+                    {isEditMode ? 'Klaar met bewerken' : 'Edit prompts'}
+                  </button>
+                </div>
               )}
             </div>
 
@@ -2283,6 +3064,14 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 const buildEngineRow = (id, name) => {
                   const entry = mData[id];
                   const unavailable = isModelUnavailable(entry);
+                  const engCitations = Array.isArray(entry?.citations) && entry.citations.length > 0
+                    ? entry.citations
+                    : (Array.isArray(p.citations) ? p.citations.filter(c => {
+                        if (!c || typeof c !== 'object') return true;
+                        if (Array.isArray(c.cited_by)) return c.cited_by.includes(id);
+                        if (c.sourceEngine) return c.sourceEngine === id;
+                        return true;
+                      }) : []);
                   return {
                     id,
                     name,
@@ -2291,6 +3080,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     brands: unavailable ? 0 : (entry?.brands || 0),
                     sources: unavailable ? 0 : (entry?.sources || 0),
                     summary: unavailable ? '' : (entry?.summary || ''),
+                    citations: unavailable ? [] : engCitations,
                     errorMsg: entry?.errorMsg || (unavailable ? (entry?.method || 'Niet gemeten (API fout)') : null),
                     method: entry?.method || null,
                   };
@@ -2466,40 +3256,51 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                         )}
 
                         {!isReadOnly && (
-                          isEditMode ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {!isEditMode && (
+                              <button
+                                type="button"
+                                disabled={isCrawling}
+                                onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
+                                style={{
+                                  padding: '5px 12px',
+                                  borderRadius: '6px',
+                                  backgroundColor: isCrawling ? '#93c5fd' : '#000000',
+                                  color: '#ffffff',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  cursor: isCrawling ? 'not-allowed' : 'pointer',
+                                  border: 'none',
+                                  opacity: isCrawling ? 0.8 : 1,
+                                  marginLeft: '4px'
+                                }}
+                              >
+                                {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
+                                {isCrawling ? 'Crawling...' : 'Crawl'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.id); }}
-                              title="Verwijder prompt"
-                              style={{ padding: '6px', borderRadius: '4px', color: '#ef4444', cursor: 'pointer', background: 'none', border: 'none' }}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={isCrawling}
-                              onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
+                              title="Verwijder prompt en geef promptlimiet vrij"
                               style={{
-                                padding: '5px 12px',
+                                padding: '6px',
                                 borderRadius: '6px',
-                                backgroundColor: isCrawling ? '#93c5fd' : '#000000',
-                                color: '#ffffff',
-                                fontSize: '11px',
-                                fontWeight: 700,
+                                color: '#ef4444',
+                                cursor: 'pointer',
+                                backgroundColor: isEditMode ? '#fef2f2' : 'transparent',
+                                border: isEditMode ? '1px solid #fecaca' : 'none',
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: '6px',
-                                cursor: isCrawling ? 'not-allowed' : 'pointer',
-                                border: 'none',
-                                opacity: isCrawling ? 0.8 : 1,
-                                marginLeft: '4px'
+                                justifyContent: 'center'
                               }}
                             >
-                              {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
-                              {isCrawling ? 'Crawling...' : 'Crawl'}
+                              <Trash2 size={15} />
                             </button>
-                          )
+                          </div>
                         )}
 
                         <div style={{ color: '#9ca3af', marginLeft: '2px', display: 'flex', alignItems: 'center' }}>
@@ -2718,16 +3519,91 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
                                 {isEngExpanded && eng.summary && (
                                   <div style={{
-                                    padding: '12px 20px 16px 52px',
+                                    padding: '14px 20px 18px 52px',
                                     backgroundColor: '#f8fafc',
                                     fontSize: '13px',
                                     lineHeight: '1.6',
                                     color: '#334155',
-                                    borderTop: '1px solid #f1f5f9'
+                                    borderTop: '1px solid #f1f5f9',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '12px'
                                   }}>
-                                    <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
-                                      {eng.summary}
-                                    </div>
+                                    <RichAiMarkdownView
+                                      content={eng.summary}
+                                      targetCompany={activeWorkspace || 'Saleswizard'}
+                                      citations={eng.citations && eng.citations.length > 0 ? eng.citations : (p.citations || [])}
+                                    />
+
+                                    {/* Clickable Cited Sources & Favicon Links for this Engine */}
+                                    {(() => {
+                                      const rawCits = (eng.citations && eng.citations.length > 0) ? eng.citations : (p.citations || []);
+                                      const normalizedCits = (Array.isArray(rawCits) ? rawCits : [])
+                                        .map(c => {
+                                          if (typeof c === 'string') {
+                                            const u = normalizeExternalUrl(c);
+                                            const d = extractDomainFromUrl(u);
+                                            return u ? { url: u, domain: d, title: d || u } : null;
+                                          }
+                                          if (c && typeof c === 'object' && c.url) {
+                                            const u = normalizeExternalUrl(c.url);
+                                            const d = c.domain || extractDomainFromUrl(u);
+                                            return { url: u, domain: d, title: c.title || d || u };
+                                          }
+                                          return null;
+                                        })
+                                        .filter(c => c && c.url && c.url.startsWith('http'));
+
+                                      if (normalizedCits.length === 0) return null;
+
+                                      return (
+                                        <div style={{
+                                          marginTop: '4px',
+                                          paddingTop: '10px',
+                                          borderTop: '1px dashed #e2e8f0',
+                                          display: 'flex',
+                                          flexDirection: 'column',
+                                          gap: '6px'
+                                        }}>
+                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                                            Geciteerde Bronnen & Links ({normalizedCits.length})
+                                          </span>
+                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                            {normalizedCits.slice(0, 12).map((cit, cIdx) => (
+                                              <a
+                                                key={cIdx}
+                                                href={cit.url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                onClick={(e) => e.stopPropagation()}
+                                                title={cit.url}
+                                                style={{
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '6px',
+                                                  padding: '4px 10px',
+                                                  borderRadius: '16px',
+                                                  backgroundColor: '#ffffff',
+                                                  border: '1px solid #cbd5e1',
+                                                  color: '#1e293b',
+                                                  fontSize: '11px',
+                                                  fontWeight: 600,
+                                                  textDecoration: 'none',
+                                                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                                                  maxWidth: '260px'
+                                                }}
+                                              >
+                                                <FaviconImage domain={cit.domain} fallbackLabel={cit.domain} size={14} />
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                  {cit.title && !cit.title.startsWith('Bron: ') ? cit.title : cit.domain}
+                                                </span>
+                                                <span style={{ color: '#2563eb', fontSize: '10px', flexShrink: 0 }}>↗</span>
+                                              </a>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 )}
                               </div>
@@ -2739,9 +3615,22 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   </div>
                 );
               })}
+              {(kw.prompts || []).length === 0 && (
+                <div style={{
+                  padding: '28px 20px',
+                  borderRadius: '10px',
+                  border: '1px dashed #d1d5db',
+                  backgroundColor: '#f9fafb',
+                  textAlign: 'center',
+                  color: '#6b7280',
+                  fontSize: '13px'
+                }}>
+                  Er zijn nog geen prompts ingesteld voor zoekwoord <strong>"{kw.text}"</strong>. Voeg hieronder zelf uw eigen prompt(s) toe of klik op "Genereer 3 AI Prompts".
+                </div>
+              )}
             </div>
 
-            {!isReadOnly && isEditMode && (
+            {!isReadOnly && (
               <div style={{
                 borderTop: '1px dashed #e5e7eb',
                 paddingTop: '16px',
@@ -2750,32 +3639,40 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 flexDirection: 'column',
                 gap: '8px'
               }}>
-                <span style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>
-                  Custom prompt toevoegen:
-                </span>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    type="text"
-                    placeholder="e.g. Wat kost een gemiddelde seo optimalisatie bij Saleswizard?"
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#374151' }}>
+                    Zelf eigen prompt(s) toevoegen (1 prompt per regel):
+                  </span>
+                  <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                    Prompts verbruik: {totalUsedPrompts} / {activeLimit}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                  <textarea
+                    rows={2}
+                    placeholder={"bijv. Wat kost een gemiddelde seo optimalisatie bij Saleswizard?\nWelk marketingbureau in Arnhem heeft de beste reviews?"}
                     value={getCustomPromptInput(kw.id)}
                     onChange={(e) => setCustomPromptInput(kw.id, e.target.value)}
+                    disabled={isLimitReached}
                     style={{ flex: 1, padding: '10px 14px', fontSize: '13px', borderRadius: '6px', border: '1px solid #d1d5db' }}
                   />
                   <button
                     type="button"
+                    disabled={isLimitReached || !getCustomPromptInput(kw.id).trim()}
                     onClick={() => handleAddCustomPrompt(kw.id)}
                     style={{
-                      backgroundColor: '#000000',
+                      backgroundColor: (isLimitReached || !getCustomPromptInput(kw.id).trim()) ? '#9ca3af' : '#000000',
                       color: '#ffffff',
                       fontWeight: 700,
                       fontSize: '12px',
                       padding: '10px 20px',
                       borderRadius: '6px',
-                      cursor: 'pointer',
-                      border: 'none'
+                      cursor: (isLimitReached || !getCustomPromptInput(kw.id).trim()) ? 'not-allowed' : 'pointer',
+                      border: 'none',
+                      whiteSpace: 'nowrap'
                     }}
                   >
-                    Voeg toe
+                    Prompt(s) toevoegen
                   </button>
                 </div>
               </div>
@@ -3035,7 +3932,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               value={keywordInput}
               onChange={(e) => setKeywordInput(e.target.value)}
               required
-              disabled={isLimitReached}
+              disabled={generateAiPromptsOnAdd && isLimitReached}
               style={{
                 width: '100%',
                 padding: '10px',
@@ -3044,13 +3941,70 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 fontSize: '13px'
               }}
             />
+
+            {/* Toggle AI Prompt generation & Custom prompts when adding keywords */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+              padding: '12px 14px',
+              borderRadius: '8px',
+              backgroundColor: '#ffffff',
+              border: '1px solid #e5e7eb',
+              marginTop: '4px'
+            }}>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', margin: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={generateAiPromptsOnAdd}
+                    onChange={(e) => setGenerateAiPromptsOnAdd(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#440099', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#111827' }}>
+                    Automatisch AI prompts genereren (3 per keyword)
+                  </span>
+                </div>
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  backgroundColor: generateAiPromptsOnAdd ? '#440099' : '#e2e8f0',
+                  color: generateAiPromptsOnAdd ? '#ffffff' : '#475569'
+                }}>
+                  {generateAiPromptsOnAdd ? 'AAN' : 'UIT'}
+                </span>
+              </label>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: '#4b5563' }}>
+                  Zelf eigen prompts opgeven (optioneel, 1 prompt per regel)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder={"Typ hier uw eigen zoekvragen (1 per regel) of laat leeg om ze later bij het keyword in te voeren..."}
+                  value={customPromptsOnAdd}
+                  onChange={(e) => setCustomPromptsOnAdd(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '12px'
+                  }}
+                />
+              </div>
+            </div>
+
             {(() => {
               const enteredKws = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
-              const countPrompts = enteredKws.length * 3;
+              const customLinesCount = customPromptsOnAdd.split(/\r?\n/).map(s => s.trim()).filter(Boolean).length;
+              const countPrompts = (generateAiPromptsOnAdd ? enteredKws.length * 3 : 0) + customLinesCount;
               const remaining = Math.max(0, activeLimit - totalUsedPrompts);
-              const willExceed = (totalUsedPrompts + countPrompts) > activeLimit;
+              const willExceed = countPrompts > 0 && ((totalUsedPrompts + countPrompts) > activeLimit);
 
-              if (enteredKws.length > 0) {
+              if (enteredKws.length > 0 || customLinesCount > 0) {
                 return (
                   <div style={{
                     display: 'flex',
@@ -3062,12 +4016,14 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     border: `1px solid ${willExceed ? '#fecaca' : '#bbf7d0'}`,
                     fontSize: '12px',
                     color: willExceed ? '#991b1b' : '#166534',
-                    fontWeight: 600
+                    fontWeight: 600,
+                    flexWrap: 'wrap',
+                    gap: '6px'
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                       {willExceed ? <AlertTriangle size={14} color="#dc2626" /> : <Sparkles size={14} color="#16a34a" />}
                       <span>
-                        {enteredKws.length} keyword(s) = <strong>{countPrompts} prompts</strong> te genereren (3 per keyword)
+                        {enteredKws.length} keyword(s) · <strong>{countPrompts} prompt(s)</strong> ({generateAiPromptsOnAdd ? `${enteredKws.length * 3} AI` : '0 AI'}{customLinesCount > 0 ? ` + ${customLinesCount} eigen` : ''})
                       </span>
                     </div>
                     <span>
@@ -3085,17 +4041,19 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 );
               }
 
-              if (isLimitReached) {
+              if (generateAiPromptsOnAdd && isLimitReached) {
                 return (
                   <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: 700 }}>
-                    Prompts limiet bereikt ({totalUsedPrompts}/{activeLimit}). Verhoog eerst uw limiet om keywords toe te voegen.
+                    Prompts limiet bereikt ({totalUsedPrompts}/{activeLimit}). Verwijder oude prompts/keywords of zet automatische AI-prompts uit.
                   </span>
                 );
               }
 
               return (
                 <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>
-                  Onze AI Prompts Generator maakt automatisch 3 zoekvragen per keyword om AI zoekmachines te scannen (verbruikt 3 prompts per keyword).
+                  {generateAiPromptsOnAdd
+                    ? 'AI Prompts Generator maakt automatisch 3 zoekvragen per keyword (verbruikt 3 prompts per keyword).'
+                    : 'Automatische AI-prompts staan uit. Keywords worden toegevoegd met alleen uw eigen opgegeven prompts.'}
                 </p>
               );
             })()}
@@ -3119,18 +4077,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             </button>
             <button
               type="submit"
-              disabled={isLimitReached}
+              disabled={generateAiPromptsOnAdd && isLimitReached}
               style={{
                 padding: '8px 16px',
                 borderRadius: '6px',
-                backgroundColor: isLimitReached ? '#e5e7eb' : 'var(--brand-primary)',
+                backgroundColor: (generateAiPromptsOnAdd && isLimitReached) ? '#e5e7eb' : 'var(--brand-primary)',
                 color: 'white',
                 fontWeight: 700,
                 fontSize: '13px',
-                cursor: isLimitReached ? 'not-allowed' : 'pointer'
+                cursor: (generateAiPromptsOnAdd && isLimitReached) ? 'not-allowed' : 'pointer'
               }}
             >
-              Genereer Prompts & Voeg Toe
+              {generateAiPromptsOnAdd ? 'Genereer Prompts & Voeg Toe' : 'Keywords Toevoegen'}
             </button>
           </div>
         </form>
@@ -3273,6 +4231,27 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             >
               <Archive size={12} />
               Archiveer Geselecteerde
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkDeleteKeywords}
+              title="Verwijder geselecteerde keywords en bijbehorende prompts definitief en geef de promptlimiet vrij"
+              style={{
+                padding: '6px 14px',
+                borderRadius: '20px',
+                border: 'none',
+                backgroundColor: '#ef4444',
+                color: 'white',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              <Trash2 size={12} />
+              Verwijder & Reset Limiet
             </button>
           </div>
         </div>
@@ -3457,6 +4436,16 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                       >
                         <Archive size={14} />
                       </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteKeyword(kw); }}
+                        title="Zoekwoord & prompts definitief verwijderen (reset promptlimiet)"
+                        style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   )}
                 </td>
@@ -3496,7 +4485,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               <Archive size={15} style={{ color: '#d97706' }} />
               <span>Gearchiveerde zoekwoorden ({archivedKeywords.length})</span>
               <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>
-                (prompts blijven bewaard en tellen mee in het prompts-verbruik)
+                (tellen niet mee in de actieve promptlimiet; kunnen hersteld of definitief verwijderd worden)
               </span>
             </div>
             {isArchivedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -3530,29 +4519,54 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                         <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
                         <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
                         <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                          <button
-                            type="button"
-                            onClick={() => handleRestoreKeyword(kw)}
-                            style={{
-                              fontSize: '12px',
-                              padding: '5px 12px',
-                              borderRadius: '6px',
-                              backgroundColor: '#ffffff',
-                              border: '1px solid #d1d5db',
-                              color: '#1f2937',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '5px'
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.borderColor = '#9ca3af'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
-                            title="Herstel dit zoekwoord naar de actieve lijst"
-                          >
-                            <RotateCcw size={13} />
-                            Dearchiveren
-                          </button>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreKeyword(kw)}
+                              style={{
+                                fontSize: '12px',
+                                padding: '5px 12px',
+                                borderRadius: '6px',
+                                backgroundColor: '#ffffff',
+                                border: '1px solid #d1d5db',
+                                color: '#1f2937',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.borderColor = '#9ca3af'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
+                              title="Herstel dit zoekwoord naar de actieve lijst"
+                            >
+                              <RotateCcw size={13} />
+                              Dearchiveren
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteKeyword(kw)}
+                              style={{
+                                fontSize: '12px',
+                                padding: '5px 12px',
+                                borderRadius: '6px',
+                                backgroundColor: '#fef2f2',
+                                border: '1px solid #fecaca',
+                                color: '#dc2626',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
+                              title="Verwijder dit zoekwoord en bijbehorende prompts definitief"
+                            >
+                              <Trash2 size={13} />
+                              Verwijderen
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

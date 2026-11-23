@@ -68,28 +68,109 @@ export default function PromptResearch({ activeWorkspace, enabledEngines }) {
     }
   };
 
-  // Helper function to highlight the target company in the answer text
-  const renderHighlightedText = (text, companyName) => {
+  // Rich markdown renderer for images, clickable links, bold text, and brand highlighting
+  const renderHighlightedText = (text, companyName, citationsList = []) => {
     if (!text) return null;
-    const regex = new RegExp(`(${companyName}|Saleswizard|DoubleSmart|Inoma|Aanpoters)`, 'gi');
-    const parts = text.split(regex);
+    const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+
+    const normalizeUrl = (raw) => {
+      if (!raw) return '';
+      let u = raw.trim().replace(/^<|>$/g, '');
+      const sq = u.search(/\s+["']/);
+      if (sq > 0) u = u.slice(0, sq).trim();
+      if (u.startsWith('//')) return `https:${u}`;
+      if (u.startsWith('/search?') || u.startsWith('/maps')) return `https://www.google.nl${u}`;
+      if (u.startsWith('www.')) return `https://${u}`;
+      return u;
+    };
+
+    const renderInline = (lineStr, lineKey) => {
+      const tokenRegex = /(\[!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)|!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)|\[([^\]]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)|\*\*([^*]+)\*\*|(?:https?:\/\/|www\.)[^\s<)\]]+)/gi;
+      const out = [];
+      let last = 0;
+      let m;
+      let tIdx = 0;
+
+      const pushHighlighted = (str, k) => {
+        if (!str) return;
+        const regex = new RegExp(`(${companyName}|Saleswizard|DoubleSmart|Inoma|Aanpoters)`, 'gi');
+        const parts = str.split(regex);
+        parts.forEach((part, i) => {
+          if (!part) return;
+          if (part.match(regex)) {
+            out.push(
+              <strong key={`${k}_${i}`} style={{
+                backgroundColor: 'rgba(68, 0, 153, 0.12)',
+                color: 'var(--brand-primary)',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                border: '1px solid rgba(68, 0, 153, 0.25)',
+                fontWeight: 800
+              }}>
+                {part}
+              </strong>
+            );
+          } else {
+            out.push(<React.Fragment key={`${k}_${i}`}>{part}</React.Fragment>);
+          }
+        });
+      };
+
+      while ((m = tokenRegex.exec(lineStr)) !== null) {
+        if (m.index > last) {
+          pushHighlighted(lineStr.slice(last, m.index), `${lineKey}_p_${tIdx++}`);
+        }
+        if (m[2] !== undefined && m[3] !== undefined && m[4] !== undefined) {
+          const imgSrc = normalizeUrl(m[3]);
+          const linkHref = normalizeUrl(m[4]);
+          if (imgSrc.startsWith('http') && !imgSrc.includes('R0lGODlhAQAB')) {
+            out.push(
+              <a key={`${lineKey}_li_${tIdx++}`} href={linkHref} target="_blank" rel="noreferrer" style={{ display: 'inline-block', margin: '6px 6px 6px 0' }}>
+                <img src={imgSrc} alt={m[2] || ''} referrerPolicy="no-referrer" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} style={{ maxWidth: '180px', maxHeight: '120px', borderRadius: '6px', border: '1px solid #e2e8f0' }} />
+              </a>
+            );
+          }
+        } else if (m[5] !== undefined && m[6] !== undefined) {
+          const imgSrc = normalizeUrl(m[6]);
+          if (imgSrc.startsWith('http') && !imgSrc.includes('R0lGODlhAQAB')) {
+            out.push(
+              <img key={`${lineKey}_im_${tIdx++}`} src={imgSrc} alt={m[5] || ''} referrerPolicy="no-referrer" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} style={{ maxWidth: '180px', maxHeight: '120px', borderRadius: '6px', border: '1px solid #e2e8f0', margin: '6px 6px 6px 0', display: 'inline-block' }} />
+            );
+          }
+        } else if (m[7] !== undefined && m[8] !== undefined) {
+          const href = normalizeUrl(m[8]);
+          const label = m[7].replace(/^\*\*|\*\*$/g, '');
+          out.push(
+            <a key={`${lineKey}_lk_${tIdx++}`} href={href} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'underline', margin: '0 2px' }}>
+              {label} ↗
+            </a>
+          );
+        } else if (m[9] !== undefined) {
+          out.push(<strong key={`${lineKey}_bd_${tIdx++}`} style={{ color: '#0f172a' }}>{m[9]}</strong>);
+        } else {
+          const href = normalizeUrl(m[0]);
+          out.push(
+            <a key={`${lineKey}_bu_${tIdx++}`} href={href} target="_blank" rel="noreferrer" style={{ color: '#2563eb', fontWeight: 600, textDecoration: 'underline', margin: '0 2px' }}>
+              {href} ↗
+            </a>
+          );
+        }
+        last = tokenRegex.lastIndex;
+      }
+      if (last < lineStr.length) {
+        pushHighlighted(lineStr.slice(last), `${lineKey}_e_${tIdx++}`);
+      }
+      return out;
+    };
+
     return (
-      <span style={{ lineHeight: '1.6' }}>
-        {parts.map((part, i) => 
-          part.match(regex) ? (
-            <strong key={i} style={{
-              backgroundColor: 'rgba(68, 0, 153, 0.12)',
-              color: 'var(--brand-primary)',
-              padding: '2px 6px',
-              borderRadius: '4px',
-              border: '1px solid rgba(68, 0, 153, 0.25)',
-              fontWeight: 800
-            }}>
-              {part}
-            </strong>
-          ) : part
-        )}
-      </span>
+      <div style={{ lineHeight: '1.6', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {lines.map((ln, idx) => {
+          const tr = ln.trim();
+          if (!tr) return null;
+          return <div key={idx}>{renderInline(tr, `ln_${idx}`)}</div>;
+        })}
+      </div>
     );
   };
 

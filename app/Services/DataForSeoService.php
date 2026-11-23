@@ -60,23 +60,28 @@ class DataForSeoService
 
     /**
      * Detect account-wide DataForSEO auth or empty-balance errors that should trip the circuit breaker.
-     * Single-endpoint errors (e.g. 40400, 40501, 40102 "No Search Results", 500xx) do NOT trip it.
+     * Single-endpoint errors (e.g. 40400, 40501, 40102 "No Search Results", 40201 "Internal SE Server Error", 500xx) do NOT trip it.
      */
     public static function isAccountLevelCircuitBreakerError(?int $statusCode, string $message): bool
     {
         $lower = strtolower($message);
 
-        // 40102 on SERP endpoints means "No Search Results" — never an account failure
-        if ($statusCode === 40102 || str_contains($lower, 'no search results')) {
+        // 40102 ("No Search Results") and 40201 ("Internal SE Server Error") are single-request/engine conditions, NEVER account failures
+        if (in_array($statusCode, [40102, 40201, 40202], true)
+            || str_contains($lower, 'no search results')
+            || str_contains($lower, 'internal se server error')
+            || str_contains($lower, 'internal error')) {
             return false;
         }
 
-        // Account auth failure or empty DataForSEO balance
-        if (in_array($statusCode, [40100, 40101, 40200, 40201, 40202], true)) {
+        // Only account-wide empty balance (40200 Payment Required) should trip the global circuit breaker.
+        // 40100 (Not Authorized / IP whitelist / endpoint access) can occur on a single product (e.g. Perplexity LLM Responses)
+        // while Google SERP, AI Mode, Gemini and Claude succeed on the same account.
+        if ($statusCode === 40200) {
             return true;
         }
 
-        foreach (['not authorized', 'payment required', 'insufficient funds', 'insufficient balance', 'balance is empty'] as $hint) {
+        foreach (['payment required', 'insufficient funds', 'insufficient balance', 'balance is empty'] as $hint) {
             if (str_contains($lower, $hint)) {
                 return true;
             }
@@ -230,12 +235,12 @@ class DataForSeoService
         foreach ($specs as $key => $spec) {
             $resp = $responses[$key] ?? null;
 
-            // Single automatic retry on transient DataForSEO 5xxxx / "Internal SE Server Error"
-            // For Google AI Overviews, fall back from async to standard inline AI Overview fetch on retry.
+            // Single automatic retry on transient DataForSEO 5xxxx / 40201 "Internal SE Server Error"
+            // For Google AI Overviews, drop load_async_ai_overview on retry so standard organic + inline AIO succeeds.
             if ($this->isTransientRetryableResponse($resp)) {
                 $retryPayload = $spec['payload'];
                 if ($key === 'aioverviews' && isset($retryPayload[0]['load_async_ai_overview'])) {
-                    $retryPayload[0]['load_async_ai_overview'] = false;
+                    unset($retryPayload[0]['load_async_ai_overview']);
                 }
                 try {
                     $resp = Http::withBasicAuth($login, $password)
@@ -927,7 +932,8 @@ class DataForSeoService
         $citationUrls = [];
         $richCitations = [];
 
-        if (!empty($res['markdown']) && is_string($res['markdown'])) {
+        $hasTopMarkdown = !empty($res['markdown']) && is_string($res['markdown']);
+        if ($hasTopMarkdown) {
             $chunks[] = trim($res['markdown']);
         }
 
@@ -935,7 +941,13 @@ class DataForSeoService
             if (!is_array($item)) {
                 continue;
             }
-            $this->extractAiOverviewBlock($item, $chunks, $citationUrls, $richCitations, 'aimode');
+            $subChunks = [];
+            $this->extractAiOverviewBlock($item, $subChunks, $citationUrls, $richCitations, 'aimode');
+            if (!$hasTopMarkdown && !empty($subChunks)) {
+                foreach ($subChunks as $sc) {
+                    $chunks[] = $sc;
+                }
+            }
         }
 
         $content = trim(implode("\n\n", array_filter($chunks)));
@@ -1076,6 +1088,23 @@ class DataForSeoService
             $mdTable = $this->renderTableToMarkdown($item['table']);
             if ($mdTable !== '') {
                 $chunks[] = $mdTable;
+            }
+        }
+
+        if (!empty($item['images']) && is_array($item['images'])) {
+            foreach ($item['images'] as $img) {
+                if (is_array($img)) {
+                    $imgUrl = trim((string) ($img['image_url'] ?? $img['url'] ?? ''));
+                    if ($imgUrl !== '' && str_starts_with(strtolower($imgUrl), 'http')) {
+                        $imgAlt = trim((string) ($img['alt'] ?? $img['title'] ?? 'Afbeelding'));
+                        $pageUrl = trim((string) ($img['url'] ?? $imgUrl));
+                        if ($pageUrl !== '' && $pageUrl !== $imgUrl && str_starts_with(strtolower($pageUrl), 'http')) {
+                            $chunks[] = "[![{$imgAlt}]({$imgUrl})]({$pageUrl})";
+                        } else {
+                            $chunks[] = "![{$imgAlt}]({$imgUrl})";
+                        }
+                    }
+                }
             }
         }
 

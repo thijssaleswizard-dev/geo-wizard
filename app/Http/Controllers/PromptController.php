@@ -248,8 +248,63 @@ STRIKTE REGELS:
         return $fallback;
     }
 
+    protected function isStaffOrAdmin(Request $request): bool
+    {
+        $user = $request->user() ?? auth()->user();
+        $role = $user?->role;
+        $userId = $user?->id ?? $request->input('userId') ?? $request->query('userId');
+
+        if ($userId && !$role) {
+            $dbUser = \App\Models\User::find($userId);
+            if ($dbUser) {
+                $role = $dbUser->role;
+            }
+        }
+        if (!$role) {
+            $role = $request->input('role') ?? $request->query('role');
+        }
+
+        if ($role === 'klant') {
+            return false;
+        }
+
+        if ($role) {
+            return in_array(strtolower((string) $role), ['admin', 'medewerker'], true);
+        }
+
+        return true;
+    }
+
+    protected function recalculateProjectPromptCount(?int $projectId): int
+    {
+        if (!$projectId) {
+            return 0;
+        }
+
+        $activeKeywordIds = Keyword::where('project_id', $projectId)
+            ->where(function ($q) {
+                $q->where('is_archived', false)->orWhereNull('is_archived');
+            })
+            ->pluck('id');
+
+        $activeCount = Prompt::where('project_id', $projectId)
+            ->where(function ($q) use ($activeKeywordIds) {
+                $q->whereIn('keyword_id', $activeKeywordIds)
+                  ->orWhereNull('keyword_id');
+            })
+            ->count();
+
+        Project::where('id', $projectId)->update(['prompts_count' => $activeCount]);
+
+        return $activeCount;
+    }
+
     public function store(Request $request): JsonResponse
     {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers kunnen prompts toevoegen.'], 403);
+        }
+
         $company = $request->input('company', 'saleswizard');
         $projectId = $request->input('project_id');
         $text = trim($request->input('text', ''));
@@ -299,12 +354,15 @@ STRIKTE REGELS:
             'engines' => $defaultEngines,
         ]);
 
+        $newTotal = $this->recalculateProjectPromptCount($projectId);
+
         GeoLog::info("📝 [PROMPT AANGEMAAKT] ID #{$prompt->id} gekoppeld aan Project ID: #" . ($projectId ?? 'geen') . " (Keyword ID: #" . ($keywordId ?? 'geen') . ")");
 
         ProcessPromptJob::dispatch($prompt->id);
 
         return response()->json([
             'success' => true,
+            'totalUsedPrompts' => $newTotal,
             'prompt' => [
                 'id' => $prompt->id,
                 'project_id' => $prompt->project_id,
@@ -340,23 +398,53 @@ STRIKTE REGELS:
         return response()->json(['success' => true, 'message' => 'Scan gestart op de achtergrond.']);
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, int $id): JsonResponse
     {
-        $deleted = Prompt::where('id', $id)->delete();
-        if (!$deleted) {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers mogen prompts verwijderen en de limiet resetten.'], 403);
+        }
+
+        $prompt = Prompt::find($id);
+        if (!$prompt) {
             return response()->json(['error' => 'Prompt niet gevonden'], 404);
         }
-        return response()->json(['success' => true, 'message' => 'Prompt succesvol verwijderd']);
+
+        $projectId = $prompt->project_id;
+        \App\Models\Citation::where('prompt_id', $prompt->id)->delete();
+        $prompt->delete();
+
+        $newTotal = $this->recalculateProjectPromptCount($projectId);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Prompt succesvol verwijderd en promptlimiet vrijgegeven.',
+            'totalUsedPrompts' => $newTotal,
+        ]);
     }
 
     public function bulkDelete(Request $request): JsonResponse
     {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers mogen prompts verwijderen en de limiet resetten.'], 403);
+        }
+
         $ids = $request->input('ids', []);
         if (!is_array($ids) || empty($ids)) {
             return response()->json(['error' => 'Geen geldige IDs opgegeven.'], 400);
         }
 
+        $firstPrompt = Prompt::whereIn('id', $ids)->first();
+        $projectId = $firstPrompt?->project_id;
+
+        \App\Models\Citation::whereIn('prompt_id', $ids)->delete();
         Prompt::whereIn('id', $ids)->delete();
-        return response()->json(['success' => true, 'message' => 'Prompts succesvol verwijderd.']);
+
+        $newTotal = $this->recalculateProjectPromptCount($projectId);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Prompts succesvol verwijderd en promptlimiet vrijgegeven.',
+            'totalUsedPrompts' => $newTotal,
+        ]);
     }
 }

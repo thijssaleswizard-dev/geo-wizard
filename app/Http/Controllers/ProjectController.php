@@ -110,14 +110,46 @@ class ProjectController extends Controller
         return response()->json(['success' => true, 'clients' => $projectsWithCounts]);
     }
 
+    protected function isStaffOrAdmin(Request $request): bool
+    {
+        $user = $request->user();
+        $role = $user?->role;
+        $userId = $user?->id ?? $request->input('userId') ?? $request->query('userId');
+
+        if ($userId && !$role) {
+            $dbUser = User::find($userId);
+            if ($dbUser) {
+                $role = $dbUser->role;
+            }
+        }
+        if (!$role) {
+            $role = $request->input('role') ?? $request->query('role');
+        }
+
+        // Default for project admin actions when called by staff dashboard
+        if (!$role) {
+            return true;
+        }
+
+        return in_array(strtolower((string) $role), ['admin', 'medewerker'], true);
+    }
+
     public function store(Request $request): JsonResponse
     {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers kunnen projecten aanmaken.'], 403);
+        }
+
         $company = trim($request->input('company', ''));
         $name = trim($request->input('name', ''));
         $email = strtolower(trim($request->input('email', '')));
         $password = $request->input('password');
         $subscription = $request->input('subscription', 'AI Pro');
         $keywords = $request->input('keywords');
+        $generateAiPrompts = $request->has('generate_ai_prompts')
+            ? $request->boolean('generate_ai_prompts')
+            : true;
+        $customPromptsInput = $request->input('custom_prompts', []);
 
         if (empty($company) || empty($name) || empty($email)) {
             return response()->json(['error' => 'Bedrijfsnaam, klantnaam en e-mailadres zijn verplicht.'], 400);
@@ -127,28 +159,84 @@ class ProjectController extends Controller
             return response()->json(['error' => 'Deze bedrijfsnaam/workspace bestaat al.'], 400);
         }
 
+        // Normalize custom prompts: can be array/map per keyword or newline-separated string / flat array
+        $customPromptsByKeyword = [];
+        $flatCustomPrompts = [];
+        if (is_string($customPromptsInput)) {
+            $flatCustomPrompts = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $customPromptsInput))));
+        } elseif (is_array($customPromptsInput)) {
+            $isAssoc = array_keys($customPromptsInput) !== range(0, count($customPromptsInput) - 1);
+            if ($isAssoc) {
+                foreach ($customPromptsInput as $kwKey => $pVal) {
+                    $cleanKey = strtolower(trim((string) $kwKey));
+                    if (is_string($pVal)) {
+                        $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $pVal))));
+                    } elseif (is_array($pVal)) {
+                        $lines = array_values(array_filter(array_map('trim', $pVal)));
+                    } else {
+                        $lines = [];
+                    }
+                    if (!empty($lines)) {
+                        $customPromptsByKeyword[$cleanKey] = $lines;
+                    }
+                }
+            } else {
+                $flatCustomPrompts = array_values(array_filter(array_map('trim', $customPromptsInput)));
+            }
+        }
+
+        $totalCustomPromptsCount = count($flatCustomPrompts);
+        foreach ($customPromptsByKeyword as $pList) {
+            $totalCustomPromptsCount += count($pList);
+        }
+
         $hasKeywords = !empty($keywords) && strlen(trim($keywords)) > 0;
+        $rawKeywordsCheck = $hasKeywords
+            ? array_values(array_filter(array_map('trim', explode(',', $keywords))))
+            : [];
+
+        // If user did not enter keywords but did enter custom prompts, create a default keyword from company name
+        if (empty($rawKeywordsCheck) && $totalCustomPromptsCount > 0) {
+            $defaultKw = AiEngineService::cleanBrandKey($company) ?: strtolower($company);
+            $rawKeywordsCheck = [$defaultKw];
+            $keywords = $defaultKw;
+            $hasKeywords = true;
+        }
+
         $maxPrompts = Project::getPromptLimit($subscription);
-        $maxKeywords = (int) floor($maxPrompts / 3);
+        $maxKeywordsWithAi = (int) floor($maxPrompts / 3);
 
         if ($hasKeywords) {
-            $rawKeywordsCheck = array_values(array_filter(array_map('trim', explode(',', $keywords))));
-            if (count($rawKeywordsCheck) > $maxKeywords) {
+            if ($generateAiPrompts && count($rawKeywordsCheck) > $maxKeywordsWithAi) {
                 return response()->json([
-                    'error' => "Het gekozen pakket ({$subscription}) staat maximaal {$maxKeywords} zoekwoorden ({$maxPrompts} prompts) toe. U heeft er " . count($rawKeywordsCheck) . " opgegeven."
+                    'error' => "Het gekozen pakket ({$subscription}) staat bij automatische AI-generatie maximaal {$maxKeywordsWithAi} zoekwoorden ({$maxPrompts} prompts) toe. U heeft er " . count($rawKeywordsCheck) . " opgegeven."
+                ], 400);
+            }
+            if (!$generateAiPrompts && count($rawKeywordsCheck) > $maxPrompts) {
+                return response()->json([
+                    'error' => "Het gekozen pakket ({$subscription}) staat maximaal {$maxPrompts} zoekwoorden/prompts toe. U heeft er " . count($rawKeywordsCheck) . " opgegeven."
                 ], 400);
             }
         }
+
+        $expectedTotalPrompts = ($generateAiPrompts ? (count($rawKeywordsCheck) * 3) : 0) + $totalCustomPromptsCount;
+        if ($expectedTotalPrompts > $maxPrompts) {
+            return response()->json([
+                'error' => "Het totaal aantal prompts ({$expectedTotalPrompts}) overschrijdt de pakketlimiet van {$maxPrompts} prompts voor {$subscription}."
+            ], 400);
+        }
+
+        $willProcessPrompts = $expectedTotalPrompts > 0;
 
         $project = Project::create([
             'company' => $company,
             'name' => $name,
             'email' => $email,
             'subscription' => $subscription,
-            'prompts_count' => 0,
+            'prompts_count' => $expectedTotalPrompts,
             'visibility_index' => 0,
-            'setup_status' => $hasKeywords ? 'processing' : 'completed',
-            'setup_progress' => $hasKeywords ? 20 : 100,
+            'setup_status' => $willProcessPrompts ? 'processing' : 'completed',
+            'setup_progress' => $willProcessPrompts ? 20 : 100,
         ]);
 
         GeoLog::section("NIEUW PROJECT AANGEMAAKT: {$company}");
@@ -158,6 +246,8 @@ class ProjectController extends Controller
             "Contactpersoon: {$name} ({$email})",
             "Pakket: {$subscription} (Max {$maxPrompts} prompts)",
             "Keywords: " . ($hasKeywords ? $keywords : 'Geen'),
+            "AI Prompts Genereren: " . ($generateAiPrompts ? 'Ja' : 'Nee (Uitgeschakeld)'),
+            "Eigen Prompts Opgegeven: {$totalCustomPromptsCount}",
         ]);
 
         $userId = null;
@@ -189,7 +279,7 @@ class ProjectController extends Controller
         }
 
         if ($hasKeywords) {
-            $this->queueKeywordsSetup($project, $keywords);
+            $this->queueKeywordsSetup($project, $keywords, $generateAiPrompts, $customPromptsByKeyword, $flatCustomPrompts);
         }
 
         $project->refresh();
@@ -204,6 +294,7 @@ class ProjectController extends Controller
                 'subscription' => $project->subscription,
                 'promptsLimit' => $maxPrompts,
                 'promptsCount' => $project->prompts_count,
+                'keywordsCount' => count($rawKeywordsCheck),
                 'visibilityIndex' => $project->visibility_index,
                 'setup_status' => $project->setup_status,
                 'setup_progress' => $project->setup_progress,
@@ -214,8 +305,13 @@ class ProjectController extends Controller
     /**
      * Fast non-blocking keyword & prompt initialization linked to Project via foreign keys.
      */
-    protected function queueKeywordsSetup(Project $project, string $keywordsString): void
-    {
+    protected function queueKeywordsSetup(
+        Project $project,
+        string $keywordsString,
+        bool $generateAiPrompts = true,
+        array $customPromptsByKeyword = [],
+        array $flatCustomPrompts = []
+    ): void {
         $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
         $rawKeywords = array_values(array_filter(array_map('trim', explode(',', $keywordsString))));
 
@@ -224,7 +320,11 @@ class ProjectController extends Controller
         }
 
         GeoLog::subSection("KEYWORDS & PROMPT SETUP VOOR PROJECT #{$project->id} ({$project->company})");
-        GeoLog::info("Verwerken van " . count($rawKeywords) . " zoekwoorden...");
+        GeoLog::info("Verwerken van " . count($rawKeywords) . " zoekwoorden (AI prompts: " . ($generateAiPrompts ? 'AAN' : 'UIT') . ")...");
+
+        $defaultEngines = AiEngineService::getEnabledEngines();
+        $createdKeywords = [];
+        $totalCreatedPrompts = 0;
 
         foreach ($rawKeywords as $idx => $kw) {
             $cleanKw = strtolower(trim($kw));
@@ -241,22 +341,38 @@ class ProjectController extends Controller
                 'competitors_json' => null,
                 'brands_mentioned' => $companyKey,
             ]);
+            $createdKeywords[] = $keyword;
 
             // Dispatch background competitor scraper job
             ProcessKeywordCompetitorsJob::dispatch($keyword->id, $keyword->keyword, $companyKey);
 
-            // Generate 3 natural human search prompts
-            GeoLog::info("🤖 Genereren van 3 natuurlijke zoekvragen voor keyword: \"{$cleanKw}\"...");
-            $prompts = PromptController::generateNaturalPrompts($cleanKw, $project->company);
+            $promptEntries = [];
 
-            $defaultEngines = AiEngineService::getEnabledEngines();
+            if ($generateAiPrompts) {
+                GeoLog::info("🤖 Genereren van 3 natuurlijke zoekvragen voor keyword: \"{$cleanKw}\"...");
+                $aiPrompts = PromptController::generateNaturalPrompts($cleanKw, $project->company);
+                foreach ($aiPrompts as $pText) {
+                    $promptEntries[] = ['text' => $pText, 'category' => 'AI Generated'];
+                }
+            }
+
+            if (!empty($customPromptsByKeyword[$cleanKw])) {
+                foreach ($customPromptsByKeyword[$cleanKw] as $cpText) {
+                    $promptEntries[] = ['text' => $cpText, 'category' => 'Custom'];
+                }
+            }
+
             $promptLines = [];
-            foreach ($prompts as $pIdx => $pText) {
+            foreach ($promptEntries as $pIdx => $entry) {
+                $pText = trim($entry['text']);
+                if ($pText === '') {
+                    continue;
+                }
                 $promptRecord = Prompt::create([
                     'project_id' => $project->id,
                     'keyword_id' => $keyword->id,
-                    'prompt_text' => trim($pText),
-                    'category' => 'AI Generated',
+                    'prompt_text' => $pText,
+                    'category' => $entry['category'],
                     'response_summary' => 'Wachtend op achtergrond scan...',
                     'brand_mentioned' => false,
                     'position' => null,
@@ -266,17 +382,49 @@ class ProjectController extends Controller
                     'engines' => $defaultEngines,
                 ]);
 
-                // Asynchronously dispatch prompt scan to the queue
+                $totalCreatedPrompts++;
                 ProcessPromptJob::dispatch($promptRecord->id);
-                $promptLines[] = ($pIdx + 1) . ". [ID #{$promptRecord->id}] \"{$pText}\"";
+                $promptLines[] = ($pIdx + 1) . ". [ID #{$promptRecord->id} | {$entry['category']}] \"{$pText}\"";
             }
 
             GeoLog::box("KEYWORD #{$keyword->id} TOEGEVOEGD (" . ($idx + 1) . "/" . count($rawKeywords) . ")", array_merge([
                 "Zoekwoord: \"{$cleanKw}\"",
                 "Competitor Scraper Job: Gedispatcht naar queue",
-                "Aangemaakte Prompts & Scanjobs:",
+                "Aangemaakte Prompts & Scanjobs: " . (empty($promptLines) ? 'Geen (handmatig toevoegen)' : count($promptLines)),
             ], $promptLines));
         }
+
+        // Attach any flat/general custom prompts across the created keywords (round-robin or to first keyword)
+        if (!empty($flatCustomPrompts) && !empty($createdKeywords)) {
+            foreach ($flatCustomPrompts as $fIdx => $cpText) {
+                $pText = trim($cpText);
+                if ($pText === '') {
+                    continue;
+                }
+                $targetKw = $createdKeywords[$fIdx % count($createdKeywords)];
+                $promptRecord = Prompt::create([
+                    'project_id' => $project->id,
+                    'keyword_id' => $targetKw->id,
+                    'prompt_text' => $pText,
+                    'category' => 'Custom',
+                    'response_summary' => 'Wachtend op achtergrond scan...',
+                    'brand_mentioned' => false,
+                    'position' => null,
+                    'sentiment' => 'N/A',
+                    'engine' => 'ChatGPT',
+                    'status' => 'pending',
+                    'engines' => $defaultEngines,
+                ]);
+                $totalCreatedPrompts++;
+                ProcessPromptJob::dispatch($promptRecord->id);
+            }
+        }
+
+        $project->update([
+            'prompts_count' => $totalCreatedPrompts,
+            'setup_status' => $totalCreatedPrompts > 0 ? 'processing' : 'completed',
+            'setup_progress' => $totalCreatedPrompts > 0 ? 20 : 100,
+        ]);
     }
 
     public function update(Request $request, int $id): JsonResponse

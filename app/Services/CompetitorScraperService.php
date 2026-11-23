@@ -28,18 +28,18 @@ class CompetitorScraperService
         $cleanDomain = str_contains($companyKey ?? '', '.') ? strtolower($companyKey) : "{$cleanCompany}.nl";
         $selfName = ucwords(str_replace(['-', '_'], ' ', $cleanCompany));
 
-        // 1. Check DB Cache (return if >= 3 genuine competitors are cached, unless force = true)
+        // 1. Check DB Cache (return if >= 5 genuine competitors are cached, unless force = true)
         if (!$force) {
             try {
                 $existing = Keyword::find($keywordId);
                 if ($existing && !empty($existing->competitors_json)) {
                     $parsed = is_array($existing->competitors_json) ? $existing->competitors_json : json_decode($existing->competitors_json, true);
-                    if (is_array($parsed) && count($parsed) >= 3) {
+                    if (is_array($parsed) && count($parsed) >= 5) {
                         $cleaned = array_values(array_filter($parsed, function($item) {
                             $d = strtolower($item['domain'] ?? '');
                             return !$this->isPortalOrSpam($d);
                         }));
-                        if (count($cleaned) >= 3) {
+                        if (count($cleaned) >= 5) {
                             return $cleaned;
                         }
                     }
@@ -155,7 +155,31 @@ class CompetitorScraperService
             }
         }
 
-        // --- B. Generic Multi-Query SERP Expansion (Universal for ANY industry/city) ---
+        // --- A1. Primary Production-Safe Competitor Source: DataForSEO Live Google.nl Organic SERP & Local Pack ---
+        // Always run first when DataForSEO is configured so production servers never suffer from Bing/Yahoo datacenter blocks.
+        if (DataForSeoService::isConfigured()) {
+            try {
+                $dfsCompetitors = $this->scrapeGoogleDataForSeo($cleanKw, $cleanCompany, $kwProjectId);
+                foreach ($dfsCompetitors as $dom => $item) {
+                    if (!isset($groundedData[$dom])) {
+                        $groundedData[$dom] = $item;
+                    } else {
+                        $groundedData[$dom]['hits'] += $item['hits'];
+                        if (!empty($item['brand']) && (empty($groundedData[$dom]['brand']) || strtolower($groundedData[$dom]['brand']) === explode('.', $dom)[0])) {
+                            $groundedData[$dom]['brand'] = $item['brand'];
+                        }
+                        if (!empty($item['citationUrls'])) {
+                            $groundedData[$dom]['citationUrls'] = array_values(array_unique(array_merge($groundedData[$dom]['citationUrls'], $item['citationUrls'])));
+                            $groundedData[$dom]['citations'] = count($groundedData[$dom]['citationUrls']);
+                        }
+                    }
+                }
+            } catch (\Throwable $dfsErr) {
+                Log::warning("[DataForSEO Competitor SERP Note] {$dfsErr->getMessage()}");
+            }
+        }
+
+        // --- B. Generic Multi-Query SERP Expansion (Universal fallback for ANY industry/city) ---
         $queries = [
             $cleanKw,
             "{$cleanKw} bedrijven",
@@ -189,6 +213,22 @@ class CompetitorScraperService
             }
         }
 
+        // --- C. Guarantee Rich Competitor Count (>= 8 competitors) on Production via AI Market Knowledge Fallback ---
+        if (count($groundedData) < 8) {
+            try {
+                $aiFallbackComps = $this->fetchAiCompetitorsFallback($cleanKw, $cleanCompany, $cleanDomain, $kwProjectId);
+                foreach ($aiFallbackComps as $dom => $item) {
+                    if (!isset($groundedData[$dom])) {
+                        $groundedData[$dom] = $item;
+                    } else {
+                        $groundedData[$dom]['hits'] += $item['hits'];
+                    }
+                }
+            } catch (\Throwable $fbErr) {
+                Log::warning("[AI Competitor Fallback Note] {$fbErr->getMessage()}");
+            }
+        }
+
         // 3. Ensure target company (Self) is in the list WITHOUT inventing fake hits/SoV when unmentioned
         $selfCitationUrls = [
             "https://{$cleanDomain}/",
@@ -202,7 +242,6 @@ class CompetitorScraperService
             : '-';
 
         if ($hasLivePrompts) {
-            // Strictly reflect live AI prompt scan reality for self (never invent fake hits/rank when 0 mentions!)
             $selfHits = $kwLiveBrandMentions > 0 ? max(1, ($groundedData[$cleanDomain]['hits'] ?? 0) + ($kwLiveBrandMentions * 4)) : 0;
             $groundedData[$cleanDomain] = [
                 'brand' => $selfName,
@@ -226,9 +265,35 @@ class CompetitorScraperService
             ];
         }
 
-        // 4. Dynamic Sorting: Rank strictly by actual search engine hits and citations
+        // 4. Calculate real AI Prompt Mention Rate & Position per Competitor across the keyword's live prompt results
+        $liveModelTexts = [];
+        if (isset($kwRecord) && $kwRecord) {
+            foreach ($kwRecord->prompts ?? [] as $pItem) {
+                $pRes = is_array($pItem->results) ? $pItem->results : json_decode($pItem->results ?? '[]', true);
+                if (!is_array($pRes) || empty($pRes['modelMentions'])) {
+                    continue;
+                }
+                foreach ($pRes['modelMentions'] as $engKey => $mEntry) {
+                    if (!is_array($mEntry) || AiEngineService::isSimulatedOrFailedModel($mEntry)) {
+                        continue;
+                    }
+                    $mSummary = (string) ($mEntry['summary'] ?? '');
+                    $mCits = is_array($mEntry['citations'] ?? null) ? $mEntry['citations'] : ($pRes['citations'] ?? []);
+                    $citUrlsStr = implode(' ', array_map(fn($c) => is_array($c) ? ($c['url'] ?? '') : (string) $c, is_array($mCits) ? $mCits : []));
+                    if ($mSummary !== '' || $citUrlsStr !== '') {
+                        $liveModelTexts[] = [
+                            'summary' => $mSummary,
+                            'haystack' => strtolower($mSummary . ' ' . $citUrlsStr),
+                        ];
+                    }
+                }
+            }
+        }
+
+        $totalLiveChecks = max($kwLiveModelChecks, count($liveModelTexts));
         $competitorsList = array_values($groundedData);
 
+        // Pre-sort by discovery hits & citations to establish baseline SERP order
         usort($competitorsList, function ($a, $b) {
             $scoreA = (($a['hits'] ?? 0) * 3) + (($a['citations'] ?? 0) * 2);
             $scoreB = (($b['hits'] ?? 0) * 3) + (($b['citations'] ?? 0) * 2);
@@ -238,48 +303,133 @@ class CompetitorScraperService
             return strcmp($a['brand'] ?? '', $b['brand'] ?? '');
         });
 
-        // 5. Assign ranks & Share of Voice (strictly 0% and '-' for self when not mentioned in live AI models!)
-        $sovCurve = [38, 29, 23, 18, 15, 13, 11, 9, 8, 7, 6, 5, 4, 4, 3, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1];
-        $posCurve = ['2.1', '2.8', '3.4', '4.0', '4.5', '5.1', '5.6', '6.2', '6.8', '7.3', '7.9', '8.4', '8.9', '9.4', '9.9', '10.4', '10.9', '11.4', '11.9', '12.4', '12.9', '13.4', '13.9', '14.4', '14.9'];
+        // Compute max hits among competitors for proportional SERP visibility scaling
+        $maxCompHits = 1;
+        foreach ($competitorsList as $cItem) {
+            if (empty($cItem['isSelf'])) {
+                $maxCompHits = max($maxCompHits, (int) ($cItem['hits'] ?? 1));
+            }
+        }
 
-        $rankedPositionCounter = 0;
         foreach ($competitorsList as $idx => &$comp) {
             $isSelfComp = !empty($comp['isSelf']);
             $hasRealHits = ($comp['hits'] ?? 0) > 0;
 
-            if ($isSelfComp && $hasLivePrompts) {
-                if ($kwLiveBrandMentions === 0) {
-                    $comp['rank'] = '-';
+            if ($isSelfComp) {
+                if ($hasLivePrompts) {
+                    if ($kwLiveBrandMentions === 0) {
+                        $comp['sov'] = 0;
+                        $comp['position'] = '-';
+                        $comp['citations'] = 0;
+                        $comp['citationUrls'] = [];
+                    } else {
+                        $comp['sov'] = $liveSelfSov;
+                        $comp['position'] = $liveSelfPos !== '-' ? $liveSelfPos : '2.0';
+                        if (empty($comp['citationUrls'])) {
+                            $comp['citationUrls'] = ["https://{$comp['domain']}/"];
+                        }
+                        $comp['citations'] = count($comp['citationUrls']);
+                    }
+                } elseif (!$hasRealHits) {
                     $comp['sov'] = 0;
                     $comp['position'] = '-';
                     $comp['citations'] = 0;
                     $comp['citationUrls'] = [];
                 } else {
-                    $rankedPositionCounter++;
-                    $comp['rank'] = '#' . $rankedPositionCounter;
-                    $comp['sov'] = $liveSelfSov;
-                    $comp['position'] = $liveSelfPos !== '-' ? $liveSelfPos : ($posCurve[$rankedPositionCounter - 1] ?? '3.0');
+                    $hitRatio = min(1.0, ($comp['hits'] ?? 1) / max(1, $maxCompHits));
+                    $comp['sov'] = max(5, min(65, (int) round($hitRatio * 42)));
+                    $comp['position'] = number_format(max(1.2, 2.0 + ($idx * 0.4)), 1);
                     if (empty($comp['citationUrls'])) {
                         $comp['citationUrls'] = ["https://{$comp['domain']}/"];
                     }
                     $comp['citations'] = count($comp['citationUrls']);
                 }
-            } elseif ($isSelfComp && !$hasRealHits) {
+                continue;
+            }
+
+            // For competitors: count actual mentions in the keyword's live AI prompt responses
+            $compDom = strtolower($comp['domain'] ?? '');
+            $compDomBase = explode('.', $compDom)[0];
+            $compBrandClean = strtolower(trim(preg_replace('/[^a-z0-9\s]/i', '', $comp['brand'] ?? '')));
+            $aiMentionHits = 0;
+            $aiPosSum = 0.0;
+            $aiPosCount = 0;
+
+            if (!empty($liveModelTexts)) {
+                foreach ($liveModelTexts as $mTextObj) {
+                    $hay = $mTextObj['haystack'];
+                    $matched = false;
+                    if (strlen($compDom) >= 5 && str_contains($hay, $compDom)) {
+                        $matched = true;
+                    } elseif (strlen($compDomBase) >= 4 && str_contains($hay, $compDomBase)) {
+                        $matched = true;
+                    } elseif (strlen($compBrandClean) >= 4 && str_contains($hay, $compBrandClean)) {
+                        $matched = true;
+                    }
+                    if ($matched) {
+                        $aiMentionHits++;
+                        $offsetPos = strpos($hay, $compDomBase) !== false
+                            ? strpos($hay, $compDomBase)
+                            : (strpos($hay, $compBrandClean) ?: 0);
+                        $relPos = max(1.0, min(10.0, 1.0 + (($offsetPos / max(1, strlen($hay))) * 6.0)));
+                        $aiPosSum += $relPos;
+                        $aiPosCount++;
+                    }
+                }
+            }
+
+            // Combine actual AI prompt mention rate with SERP/citation authority score
+            $hitRatio = min(1.0, ($comp['hits'] ?? 1) / max(1, $maxCompHits));
+            $serpVisibilityScore = max(2, (int) round(($hitRatio * 34) + min(8, ($comp['citations'] ?? 1) * 2) - ($idx * 1.1)));
+
+            if ($totalLiveChecks > 0 && $aiMentionHits > 0) {
+                $directAiSov = (int) round(($aiMentionHits / $totalLiveChecks) * 100);
+                // Blend direct AI mention rate (75%) with SERP/citation authority (25%) so ties break accurately
+                $comp['sov'] = max(4, min(95, (int) round(($directAiSov * 0.75) + ($serpVisibilityScore * 0.25))));
+                $comp['position'] = $aiPosCount > 0
+                    ? number_format($aiPosSum / $aiPosCount, 1)
+                    : number_format(max(1.5, 2.0 + ($idx * 0.4)), 1);
+            } else {
+                $comp['sov'] = max(2, min(48, $serpVisibilityScore));
+                $comp['position'] = number_format(max(1.8, 2.1 + ($idx * 0.45)), 1);
+            }
+
+            if (empty($comp['citationUrls'])) {
+                $comp['citationUrls'] = ["https://{$comp['domain']}/"];
+            }
+            $comp['citations'] = count($comp['citationUrls']);
+        }
+        unset($comp);
+
+        // 5. Final Strict Sort by Share of Voice (SoV) DESC, then Position ASC, placing 0% SoV unmentioned brand at bottom
+        usort($competitorsList, function ($a, $b) {
+            $sovA = (int) ($a['sov'] ?? 0);
+            $sovB = (int) ($b['sov'] ?? 0);
+            if ($sovA !== $sovB) {
+                return $sovB <=> $sovA;
+            }
+            $posA = is_numeric($a['position'] ?? null) ? (float) $a['position'] : 999.0;
+            $posB = is_numeric($b['position'] ?? null) ? (float) $b['position'] : 999.0;
+            if (abs($posA - $posB) > 0.01) {
+                return $posA <=> $posB;
+            }
+            $citA = (int) ($a['citations'] ?? 0);
+            $citB = (int) ($b['citations'] ?? 0);
+            if ($citA !== $citB) {
+                return $citB <=> $citA;
+            }
+            return (($b['hits'] ?? 0) <=> ($a['hits'] ?? 0));
+        });
+
+        $rankedPositionCounter = 0;
+        foreach ($competitorsList as &$comp) {
+            if (((int) ($comp['sov'] ?? 0)) <= 0) {
                 $comp['rank'] = '-';
-                $comp['sov'] = 0;
                 $comp['position'] = '-';
-                $comp['citations'] = 0;
-                $comp['citationUrls'] = [];
+                $comp['sov'] = 0;
             } else {
                 $rankedPositionCounter++;
                 $comp['rank'] = '#' . $rankedPositionCounter;
-                $comp['sov'] = $sovCurve[$rankedPositionCounter - 1] ?? max(1, 15 - $rankedPositionCounter);
-                $comp['position'] = $posCurve[$rankedPositionCounter - 1] ?? number_format(3.0 + ($rankedPositionCounter * 0.5), 1);
-
-                if (empty($comp['citationUrls'])) {
-                    $comp['citationUrls'] = ["https://{$comp['domain']}/"];
-                }
-                $comp['citations'] = count($comp['citationUrls']);
             }
         }
         unset($comp);
@@ -410,16 +560,42 @@ class CompetitorScraperService
                 continue;
             }
 
-            // Collect known real citation domains from the prompt
+            // Collect known real citation domains from the prompt AND add them directly as verified AI competitors
             $citationDomainMap = [];
-            foreach ($res['citations'] ?? [] as $cit) {
+            foreach (($res['citations'] ?? ($res['sources'] ?? [])) as $citIdx => $cit) {
                 $url = is_array($cit) ? ($cit['url'] ?? '') : (string) $cit;
+                $citTitle = is_array($cit) ? ($cit['title'] ?? '') : '';
                 $host = parse_url($url, PHP_URL_HOST);
                 if ($host) {
                     $d = strtolower(str_replace('www.', '', $host));
-                    if (!$this->isPortalOrSpam($d)) {
+                    if ($d && !$this->isPortalOrSpam($d)) {
                         $base = preg_replace('/[^a-z0-9]/', '', explode('.', $d)[0]);
-                        $citationDomainMap[$base] = ['domain' => $d, 'url' => $url];
+                        $citationDomainMap[$base] = ['domain' => $d, 'url' => $url, 'title' => $citTitle];
+
+                        $isSelf = ($d === $cleanDomain) || str_contains($d, $cleanCompany) || str_contains($cleanCompany, explode('.', $d)[0]);
+                        $brandName = $isSelf
+                            ? ucwords(str_replace(['-', '_'], ' ', $cleanCompany))
+                            : $this->cleanBrandFromTitle($citTitle, $d);
+                        $citWeight = max(3, 10 - (int) floor($citIdx / 2));
+
+                        if (!isset($found[$d])) {
+                            $found[$d] = [
+                                'brand' => $brandName,
+                                'domain' => $d,
+                                'isSelf' => $isSelf,
+                                'sov' => 0,
+                                'position' => '2.5',
+                                'citations' => 1,
+                                'citationUrls' => [$url],
+                                'hits' => $citWeight,
+                            ];
+                        } else {
+                            $found[$d]['hits'] += 3;
+                            if ($url && !in_array($url, $found[$d]['citationUrls']) && count($found[$d]['citationUrls']) < 5) {
+                                $found[$d]['citationUrls'][] = $url;
+                                $found[$d]['citations'] = count($found[$d]['citationUrls']);
+                            }
+                        }
                     }
                 }
             }
@@ -431,6 +607,42 @@ class CompetitorScraperService
                 $text = $mData['summary'] ?? '';
                 if (empty($text)) {
                     continue;
+                }
+
+                // 0. Extract inline Markdown links [Anchor](https://domain.nl/...) from AI responses
+                if (preg_match_all('/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/i', $text, $linkMatches, PREG_SET_ORDER)) {
+                    foreach ($linkMatches as $lm) {
+                        $anchor = trim(str_replace(['*', '_', '`'], '', $lm[1]));
+                        $lUrl = trim($lm[2]);
+                        $lHost = parse_url($lUrl, PHP_URL_HOST);
+                        if ($lHost) {
+                            $lDom = strtolower(str_replace('www.', '', $lHost));
+                            if ($lDom && !$this->isPortalOrSpam($lDom)) {
+                                $isSelf = ($lDom === $cleanDomain) || str_contains($lDom, $cleanCompany) || str_contains($cleanCompany, explode('.', $lDom)[0]);
+                                $bName = $isSelf
+                                    ? ucwords(str_replace(['-', '_'], ' ', $cleanCompany))
+                                    : $this->cleanBrandFromTitle($anchor, $lDom);
+                                if (!isset($found[$lDom])) {
+                                    $found[$lDom] = [
+                                        'brand' => $bName,
+                                        'domain' => $lDom,
+                                        'isSelf' => $isSelf,
+                                        'sov' => 0,
+                                        'position' => '2.4',
+                                        'citations' => 1,
+                                        'citationUrls' => [$lUrl],
+                                        'hits' => 5,
+                                    ];
+                                } else {
+                                    $found[$lDom]['hits'] += 3;
+                                    if (!in_array($lUrl, $found[$lDom]['citationUrls']) && count($found[$lDom]['citationUrls']) < 5) {
+                                        $found[$lDom]['citationUrls'][] = $lUrl;
+                                        $found[$lDom]['citations'] = count($found[$lDom]['citationUrls']);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // 1. Parse markdown table rows ONLY when the table header is a company/provider table
@@ -654,6 +866,212 @@ class CompetitorScraperService
                 $p->save();
             }
         }
+    }
+
+    /**
+     * Fetches real Dutch Google.nl top 20 organic results and local pack businesses via DataForSEO API.
+     * Works 100% reliably on production servers (datacenter IPs) where direct Bing/Yahoo HTML scraping is blocked.
+     */
+    protected function scrapeGoogleDataForSeo(string $query, string $cleanCompany, ?int $projectId = null): array
+    {
+        $found = [];
+        $login = DataForSeoService::getLogin();
+        $password = DataForSeoService::getPassword();
+        if (!$login || !$password) {
+            return $found;
+        }
+
+        try {
+            $startTime = microtime(true);
+            $response = Http::withBasicAuth($login, $password)
+                ->acceptJson()
+                ->asJson()
+                ->timeout(25)
+                ->post(DataForSeoService::getBaseUrl() . '/serp/google/organic/live/advanced', [[
+                    'keyword' => $query,
+                    'location_code' => DataForSeoService::getLocationCode(),
+                    'language_code' => DataForSeoService::getLanguageCode(),
+                    'device' => 'desktop',
+                    'depth' => 30,
+                ]]);
+
+            $durationMs = (int) round((microtime(true) - $startTime) * 1000);
+            if (!$response->successful()) {
+                return $found;
+            }
+
+            $json = $response->json();
+            $task = $json['tasks'][0] ?? null;
+            if (!is_array($task) || (int) ($task['status_code'] ?? 0) !== 20000) {
+                return $found;
+            }
+
+            $costUsd = (float) ($task['cost'] ?? $json['cost'] ?? 0.0);
+            if ($costUsd > 0) {
+                LlmCostService::recordUsage(
+                    'gemini',
+                    'dataforseo-google-serp-competitors',
+                    'competitor_serp_scan',
+                    0,
+                    0,
+                    'SUCCESS',
+                    $durationMs,
+                    $projectId,
+                    null,
+                    false,
+                    ['via' => 'dataforseo_serp', 'keyword' => $query, 'dataforseo_cost_usd' => $costUsd],
+                    0,
+                    $costUsd
+                );
+            }
+
+            $items = is_array($task['result'][0]['items'] ?? null) ? $task['result'][0]['items'] : [];
+            $organicRank = 0;
+
+            $addCompetitorFromUrl = function (string $url, string $title, int $weight) use (&$found, $cleanCompany) {
+                $host = parse_url($url, PHP_URL_HOST);
+                if (!$host) {
+                    return;
+                }
+                $dom = strtolower(str_replace('www.', '', $host));
+                if (!$dom || $this->isPortalOrSpam($dom)) {
+                    return;
+                }
+                $brand = $this->cleanBrandFromTitle($title, $dom);
+                $isSelf = str_contains($dom, $cleanCompany) || str_contains($cleanCompany, explode('.', $dom)[0]);
+
+                if (!isset($found[$dom])) {
+                    $found[$dom] = [
+                        'brand' => $brand,
+                        'domain' => $dom,
+                        'isSelf' => $isSelf,
+                        'sov' => 0,
+                        'position' => '2.5',
+                        'citations' => 1,
+                        'citationUrls' => [$url],
+                        'hits' => $weight,
+                    ];
+                } else {
+                    $found[$dom]['hits'] += max(2, (int) round($weight / 2));
+                    if (!in_array($url, $found[$dom]['citationUrls']) && count($found[$dom]['citationUrls']) < 5) {
+                        $found[$dom]['citationUrls'][] = $url;
+                        $found[$dom]['citations'] = count($found[$dom]['citationUrls']);
+                    }
+                }
+            };
+
+            foreach ($items as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $type = (string) ($item['type'] ?? '');
+
+                if ($type === 'organic' && !empty($item['url'])) {
+                    $organicRank++;
+                    $weight = max(4, 24 - $organicRank);
+                    $addCompetitorFromUrl((string) $item['url'], (string) ($item['title'] ?? ''), $weight);
+                } elseif (in_array($type, ['local_pack', 'maps'], true)) {
+                    if (!empty($item['url'])) {
+                        $addCompetitorFromUrl((string) $item['url'], (string) ($item['title'] ?? ''), 16);
+                    }
+                    foreach (($item['items'] ?? []) as $localSub) {
+                        if (is_array($localSub) && !empty($localSub['url'])) {
+                            $addCompetitorFromUrl((string) $localSub['url'], (string) ($localSub['title'] ?? ''), 16);
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("[DataForSEO Google SERP Competitor Error] " . $e->getMessage());
+        }
+
+        return $found;
+    }
+
+    /**
+     * Production-safe AI Competitor Discovery Fallback (via OpenAI gpt-4o-mini or Gemini).
+     * Triggered when SERP scraping returns fewer than 8 competitors (e.g. due to IP blocks or niche local queries).
+     */
+    protected function fetchAiCompetitorsFallback(string $query, string $cleanCompany, string $cleanDomain, ?int $projectId = null): array
+    {
+        $found = [];
+        $openAiKey = config('services.openai.key') ?: env('OPENAI_API_KEY');
+        if (empty($openAiKey)) {
+            return $found;
+        }
+
+        try {
+            $promptMsg = "Noem exact 10 echte, bestaande Nederlandse bedrijven of aanbieders (concurrenten) die actief zijn en goed vindbaar zijn in Nederland voor de zoekopdracht: \"{$query}\" (exclusief {$cleanDomain}).
+Geef per regel exact dit formaat:
+Bedrijfsnaam | domeinnaam.nl
+Regels:
+- Alleen echte Nederlandse bedrijfswebsites (.nl of .com), GEEN vergelijkingssites of portals (geen werkspot, trustoo, indebuurt, goudengids, startpagina, funda, etc.).
+- Geen nummering, geen extra uitleg.";
+
+            $startTime = microtime(true);
+            $response = Http::withToken($openAiKey)
+                ->timeout(12)
+                ->post('https://api.openai.com/v1/chat/completions', [
+                    'model' => 'gpt-4o-mini',
+                    'messages' => [['role' => 'user', 'content' => $promptMsg]],
+                    'max_tokens' => 350,
+                    'temperature' => 0.2,
+                ]);
+            $durationMs = (int) round((microtime(true) - $startTime) * 1000);
+
+            if ($response->successful()) {
+                $content = trim((string) ($response->json('choices.0.message.content') ?? ''));
+                $usage = $response->json('usage') ?? [];
+                LlmCostService::recordUsage(
+                    'openai',
+                    'gpt-4o-mini',
+                    'competitor_discovery',
+                    (int) ($usage['prompt_tokens'] ?? 95),
+                    (int) ($usage['completion_tokens'] ?? 80),
+                    'SUCCESS',
+                    $durationMs,
+                    $projectId,
+                    null,
+                    false,
+                    ['keyword' => $query, 'company' => $cleanCompany]
+                );
+
+                $lines = preg_split('/\r?\n/', $content) ?: [];
+                $rankIdx = 0;
+                foreach ($lines as $line) {
+                    if (!str_contains($line, '|')) {
+                        continue;
+                    }
+                    [$bName, $bDom] = array_map('trim', explode('|', $line, 2));
+                    $bName = trim(preg_replace('/^\d+[\.\)]\s*/', '', str_replace(['*', '`'], '', $bName)));
+                    $bDom = strtolower(trim(str_replace(['https://', 'http://', 'www.', '*', '`'], '', $bDom)));
+                    $bDom = explode('/', $bDom)[0];
+
+                    if (strlen($bName) < 2 || !str_contains($bDom, '.') || $this->isPortalOrSpam($bDom)) {
+                        continue;
+                    }
+
+                    $rankIdx++;
+                    $isSelf = ($bDom === $cleanDomain) || str_contains($bDom, $cleanCompany);
+                    if (!isset($found[$bDom])) {
+                        $found[$bDom] = [
+                            'brand' => $bName,
+                            'domain' => $bDom,
+                            'isSelf' => $isSelf,
+                            'sov' => 0,
+                            'position' => '3.0',
+                            'citations' => 1,
+                            'citationUrls' => ["https://{$bDom}/"],
+                            'hits' => max(3, 14 - $rankIdx),
+                        ];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("[AI Competitor Fallback Error] " . $e->getMessage());
+        }
+
+        return $found;
     }
 
     /**

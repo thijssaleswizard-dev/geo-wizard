@@ -85,6 +85,28 @@ class ProcessPromptJob implements ShouldQueue
                 'updated_at' => now(),
             ]);
 
+            // Auto-enrich keyword competitors if the keyword belongs to this prompt and currently has few competitors (< 5)
+            if ($promptRecord->keyword_id) {
+                try {
+                    $kwModel = \App\Models\Keyword::find($promptRecord->keyword_id);
+                    if ($kwModel) {
+                        $existingComps = is_array($kwModel->competitors_json)
+                            ? $kwModel->competitors_json
+                            : json_decode($kwModel->competitors_json ?? '[]', true);
+                        if (!is_array($existingComps) || count($existingComps) < 5) {
+                            app(\App\Services\CompetitorScraperService::class)->getOrScrapeCompetitors(
+                                $kwModel->id,
+                                $kwModel->keyword,
+                                $kwModel->company_key ?: ($project ? $project->company : 'saleswizard'),
+                                true
+                            );
+                        }
+                    }
+                } catch (\Throwable $compErr) {
+                    GeoLog::warning("⚠️ [ProcessPromptJob Competitor Enrichment Fout] Keyword #{$promptRecord->keyword_id}: {$compErr->getMessage()}");
+                }
+            }
+
             // Auto-recalculate overview metrics strictly from live (non-simulated) prompt results
             if ($project) {
                 try {
