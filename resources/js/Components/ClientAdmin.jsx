@@ -614,7 +614,10 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                       {client.subscription === 'AI Lite' ? 'AI Starter' : (client.subscription || 'AI Pro')}
                     </span>
                     <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                      {client.keywordsCount || 0} keywords
+                      {(() => {
+                        const pCount = client.promptsCount ?? client.prompts_count ?? 0;
+                        return `${pCount} ${pCount === 1 ? 'prompt' : 'prompts'}`;
+                      })()}
                     </span>
                     <button
                       type="button"
@@ -1398,9 +1401,9 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                     backgroundColor: '#ffffff'
                   }}
                 >
-                  <option value="AI Starter">AI Starter (max. 5 keywords / 15 prompts)</option>
-                  <option value="AI Pro">AI Pro (max. 10 keywords / 30 prompts)</option>
-                  <option value="AI Enterprise">AI Enterprise (max. 20 keywords / 60 prompts)</option>
+                  <option value="AI Starter">AI Starter (15 prompts standaard)</option>
+                  <option value="AI Pro">AI Pro (30 prompts standaard)</option>
+                  <option value="AI Enterprise">AI Enterprise (60 prompts standaard)</option>
                 </select>
               </div>
 

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { 
   ChevronDown, ChevronUp, LayoutDashboard, Search, Eye, 
   Settings, Award, RefreshCw, BarChart2, Compass, AlertCircle, 
-  HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck, Coins
+  HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck, Coins, FileText
 } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -64,7 +64,8 @@ export default function Sidebar({
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
 
   const brandReportItems = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard }
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'report', label: 'Rapportage', icon: FileText }
   ];
 
   const generalItems = currentUser.role === 'medewerker'

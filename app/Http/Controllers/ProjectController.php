@@ -53,7 +53,14 @@ class ProjectController extends Controller
 
         $projectsWithCounts = $projects->map(function ($proj) {
             $kwCount = $proj->keywords_count;
-            $prCount = $proj->prompts_count;
+            $prCount = Prompt::where('project_id', $proj->id)
+                ->where(function ($q) {
+                    $q->whereNull('keyword_id')
+                      ->orWhereHas('keyword', function ($kq) {
+                          $kq->where('is_archived', false)->orWhereNull('is_archived');
+                      });
+                })
+                ->count();
 
             // Check if there are still pending prompts for this specific project
             $pendingPrompts = $proj->prompts

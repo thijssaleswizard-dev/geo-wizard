@@ -13,7 +13,11 @@ class DashboardController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $projects = Project::orderBy('id', 'desc')->get();
+        $projects = Project::withCount('prompts')->orderBy('id', 'desc')->get()->map(function ($proj) {
+            $arr = $proj->toArray();
+            $arr['promptsCount'] = $proj->prompts_count ?? $proj->promptsCount ?? 0;
+            return $arr;
+        });
 
         return Inertia::render('Dashboard', [
             'auth' => [

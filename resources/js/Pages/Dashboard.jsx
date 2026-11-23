@@ -11,6 +11,7 @@ import Login from '@/Components/Login';
 import AccountManagement from '@/Components/AccountManagement';
 import ClientAdmin from '@/Components/ClientAdmin';
 import Keywords from '@/Components/Keywords';
+import PromptReport from '@/Components/PromptReport';
 import PaymentSimulator from '@/Components/PaymentSimulator';
 import LlmCosts from '@/Components/LlmCosts';
 import WalkthroughGuide from '@/Components/WalkthroughGuide';
@@ -293,6 +294,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
     }
     switch (activeTab) {
       case 'overview': return 'Overview Dashboard';
+      case 'report': return 'Rapportage';
       case 'keywords': return 'Keywords';
       case 'citations': return 'Citations';
       case 'recommendations': return 'GEO Recommendations';
@@ -318,6 +320,9 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       if (activeTab === 'account_plan') {
         return <AccountManagement currentUser={currentUser} activeClient={activeClient} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       }
+      if (activeTab === 'report') {
+        return <PromptReport key={`report_${activeWorkspace}`} activeWorkspace={activeWorkspace} />;
+      }
       return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
     }
     if (activeTab === 'llm_costs') {
@@ -329,6 +334,8 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
     switch (activeTab) {
       case 'overview':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
+      case 'report':
+        return <PromptReport key={`report_${activeWorkspace}`} activeWorkspace={activeWorkspace} />;
       case 'keywords':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'citations':

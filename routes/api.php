@@ -8,6 +8,7 @@ use App\Http\Controllers\OverviewController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\PromptController;
+use App\Http\Controllers\ReportController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -53,6 +54,10 @@ Route::get('/agents-analytics', [OverviewController::class, 'agentsAnalytics']);
 Route::get('/llm-costs', [LlmCostController::class, 'index']);
 Route::post('/llm-costs/invoice', [LlmCostController::class, 'storeInvoice']);
 Route::post('/llm-costs/sync-ai-studio', [LlmCostController::class, 'syncAiStudio']);
+
+// Reports Routes (SalesWizard 16:9 Slide Layout & PDF Export)
+Route::get('/reports/prompts', [ReportController::class, 'promptReportData']);
+Route::get('/reports/prompts/pdf', [ReportController::class, 'promptReportPdf']);
 
 // Scraper Routes
 Route::post('/scraper/run', [OverviewController::class, 'runScraper']);

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import PromptReport from './PromptReport';
 import {
   ChevronRight, ChevronDown, ChevronUp, Plus, Search, Trash2, Archive, RotateCcw,
   Sparkles, Play, Edit2, X, AlertTriangle, Loader2,
-  ArrowLeft, Download, Share2, RotateCw, RefreshCw
+  ArrowLeft, Download, Share2, RotateCw, RefreshCw, FileText
 } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -70,7 +71,7 @@ const normalizeExternalUrl = (rawUrl) => {
     try {
       const qPart = u.split('url?q=')[1]?.split('&')[0];
       if (qPart) return decodeURIComponent(qPart);
-    } catch (e) {}
+    } catch (e) { }
   }
   if (u.startsWith('//')) return `https:${u}`;
   if (u.startsWith('/search?') || u.startsWith('/maps') || u.startsWith('/th?')) return `https://www.google.nl${u}`;
@@ -577,6 +578,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const [savingEditedPrompt, setSavingEditedPrompt] = useState(false);
   const [resettingNulmeting, setResettingNulmeting] = useState(false);
   const [nulmetingBanner, setNulmetingBanner] = useState(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [reportKeywordId, setReportKeywordId] = useState(null);
 
   const formatPromptFromApi = (p) => ({
     id: p.id,
@@ -711,7 +714,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         headers: { 'Content-Type': 'application/json' },
       });
       const data = await response.json();
-        if ( data.success) {
+      if (data.success) {
         setKeywords(prev => prev.map(k => {
           if (k.id === kwId) {
             return {
@@ -1087,13 +1090,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       ['Datum', 'Type Meting', 'Google Rank', 'Gemiddelde AI Positie', 'Share of Voice (%)', 'Citaties'],
       ...(kwHistory.length > 0
         ? kwHistory.map((h, idx) => [
-            h.displayDate || h.date || '-',
-            h.isBaseline || idx === 0 ? 'Nulmeting' : (h.label || `Meting #${idx + 1}`),
-            h.rank || kw.rank || '-',
-            h.position || '-',
-            `${h.sov ?? 0}%`,
-            h.citations ?? 0
-          ])
+          h.displayDate || h.date || '-',
+          h.isBaseline || idx === 0 ? 'Nulmeting' : (h.label || `Meting #${idx + 1}`),
+          h.rank || kw.rank || '-',
+          h.position || '-',
+          `${h.sov ?? 0}%`,
+          h.citations ?? 0
+        ])
         : [[kw.last_updated || dateStr, 'Nulmeting', kw.rank || '-', kw.position || '-', `${kw.sov ?? 0}%`, 0]]),
       [],
       ['3. MERKRANGSCHIKKING & CONCURRENTIE'],
@@ -1293,7 +1296,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     ].filter(Boolean).join('\n');
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(summaryText).catch(() => {});
+      navigator.clipboard.writeText(summaryText).catch(() => { });
     }
     setShareCopied(true);
     setTimeout(() => setShareCopied(false), 2500);
@@ -1590,7 +1593,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         const monthNames = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
         return `${day} ${monthNames[d.getMonth()]}`;
       }
-    } catch (e) {}
+    } catch (e) { }
     return String(dStr).slice(5, 10);
   };
 
@@ -2092,11 +2095,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       const engCitations = Array.isArray(entry?.citations) && entry.citations.length > 0
         ? entry.citations
         : (Array.isArray(p.citations) ? p.citations.filter(c => {
-            if (!c || typeof c !== 'object') return true;
-            if (Array.isArray(c.cited_by)) return c.cited_by.includes(id);
-            if (c.sourceEngine) return c.sourceEngine === id;
-            return true;
-          }) : []);
+          if (!c || typeof c !== 'object') return true;
+          if (Array.isArray(c.cited_by)) return c.cited_by.includes(id);
+          if (c.sourceEngine) return c.sourceEngine === id;
+          return true;
+        }) : []);
       return {
         id,
         name,
@@ -2130,16 +2133,16 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     const promptHistory = Array.isArray(p.history) && p.history.length > 0
       ? p.history
       : [{
-          date: new Date().toISOString().slice(0, 10),
-          displayDate: p.lastUpdated || kwContext?.last_updated || 'Nulmeting',
-          isBaseline: true,
-          label: 'Nulmeting',
-          mentioned: isMentioned,
-          position: p.position && p.position !== '-' ? p.position : (isMentioned ? kwContext?.position || '#1' : '-'),
-          totalMentions: p.totalMentions ?? (isMentioned ? 2 : 0),
-          totalModels: p.totalModels ?? Math.max(1, enginesList.length || 4),
-          overallScore: p.overallScore ?? (isMentioned ? 50 : 0)
-        }];
+        date: new Date().toISOString().slice(0, 10),
+        displayDate: p.lastUpdated || kwContext?.last_updated || 'Nulmeting',
+        isBaseline: true,
+        label: 'Nulmeting',
+        mentioned: isMentioned,
+        position: p.position && p.position !== '-' ? p.position : (isMentioned ? kwContext?.position || '#1' : '-'),
+        totalMentions: p.totalMentions ?? (isMentioned ? 2 : 0),
+        totalModels: p.totalModels ?? Math.max(1, enginesList.length || 4),
+        overallScore: p.overallScore ?? (isMentioned ? 50 : 0)
+      }];
     const promptBaseline = p.baseline || promptHistory[0];
 
     return (
@@ -2572,8 +2575,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                           background: isBase
                             ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
                             : (hItem.mentioned
-                                ? 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)'
-                                : '#e5e7eb'),
+                              ? 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)'
+                              : '#e5e7eb'),
                           boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
                           cursor: 'pointer'
                         }}
@@ -2910,6 +2913,15 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         boxSizing: 'border-box',
         flex: 1
       }}>
+        {reportModalOpen && (
+          <PromptReport
+            activeWorkspace={activeWorkspace}
+            initialKeywordId={reportKeywordId}
+            keywordsList={activeKeywords}
+            isModal={true}
+            onClose={() => setReportModalOpen(false)}
+          />
+        )}
         {renderPromptLimitAlert()}
         {renderNulmetingBanner()}
 
@@ -3028,6 +3040,30 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             )}
             <button
               type="button"
+              onClick={() => {
+                setReportKeywordId(kw.id);
+                setReportModalOpen(true);
+              }}
+              title="Open SalesWizard PDF Rapportage voor dit zoekwoord"
+              style={{
+                padding: '6px 14px',
+                borderRadius: '20px',
+                border: '1px solid #d8b4fe',
+                backgroundColor: '#3E008A',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer',
+                color: '#ffffff'
+              }}
+            >
+              <FileText size={12} />
+              Rapportage
+            </button>
+            <button
+              type="button"
               style={{
                 padding: '6px 14px',
                 borderRadius: '20px',
@@ -3141,15 +3177,15 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               const rawHistory = Array.isArray(kw.history) && kw.history.length > 0
                 ? kw.history
                 : [{
-                    date: new Date().toISOString().slice(0, 10),
-                    displayDate: kw.last_updated || 'Nulmeting',
-                    isBaseline: true,
-                    label: 'Nulmeting',
-                    rank: kw.rank || '-',
-                    position: kw.position || '-',
-                    sov: typeof kw.sov === 'number' ? kw.sov : 0,
-                    citations: 0
-                  }];
+                  date: new Date().toISOString().slice(0, 10),
+                  displayDate: kw.last_updated || 'Nulmeting',
+                  isBaseline: true,
+                  label: 'Nulmeting',
+                  rank: kw.rank || '-',
+                  position: kw.position || '-',
+                  sov: typeof kw.sov === 'number' ? kw.sov : 0,
+                  citations: 0
+                }];
 
               return (
                 <div style={{
@@ -3446,11 +3482,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                                   }}>
                                     <div style={{ fontWeight: 700, borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px', marginBottom: '2px', color: '#fbbf24' }}>Geciteerde Bronnen:</div>
                                     {r.citationUrls.map((url, uIdx) => (
-                                      <a 
-                                        key={uIdx} 
-                                        href={url} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
+                                      <a
+                                        key={uIdx}
+                                        href={url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
                                         style={{ color: '#60a5fa', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}
                                         onClick={(e) => e.stopPropagation()}
                                       >
@@ -3490,15 +3526,15 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               const rawHistory = Array.isArray(kw.history) && kw.history.length > 0
                 ? kw.history
                 : [{
-                    date: new Date().toISOString().slice(0, 10),
-                    displayDate: kw.last_updated || 'Nulmeting',
-                    isBaseline: true,
-                    label: 'Nulmeting',
-                    rank: kw.rank || '-',
-                    position: kw.position || '-',
-                    sov: typeof kw.sov === 'number' ? kw.sov : 0,
-                    citations: 0
-                  }];
+                  date: new Date().toISOString().slice(0, 10),
+                  displayDate: kw.last_updated || 'Nulmeting',
+                  isBaseline: true,
+                  label: 'Nulmeting',
+                  rank: kw.rank || '-',
+                  position: kw.position || '-',
+                  sov: typeof kw.sov === 'number' ? kw.sov : 0,
+                  citations: 0
+                }];
 
               const baselinePoint = kw.baseline || rawHistory[0];
               const latestPoint = rawHistory[rawHistory.length - 1] || baselinePoint;
@@ -4194,12 +4230,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       {renderPromptLimitAlert()}
       {renderNulmetingBanner()}
 
-      {/* Header bar */}
-      <div data-tour="keywords-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
-        <div>
+      {/* Header bar (Compact) */}
+      <div data-tour="keywords-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ minWidth: '260px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <h1 style={{
-              fontSize: '28px',
+              fontSize: '25px',
               fontWeight: 800,
               color: '#111827',
               fontFamily: "'Outfit', sans-serif",
@@ -4208,63 +4244,66 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             }}>
               Prompts & Zoektermen
             </h1>
+            <span
+              title="Geen harde promptlimiet. Extra prompts buiten uw pakket brengen extra API-/scankosten met zich mee."
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                padding: '3px 10px',
+                borderRadius: '12px',
+                backgroundColor: totalUsedPrompts > activeLimit ? '#fffbeb' : '#f3f4f6',
+                color: totalUsedPrompts > activeLimit ? '#92400e' : '#4b5563',
+                border: `1px solid ${totalUsedPrompts > activeLimit ? '#fde68a' : '#e5e7eb'}`,
+                cursor: 'help'
+              }}
+            >
+              {activePlanName} · {totalUsedPrompts}/{activeLimit} prompts{totalUsedPrompts > activeLimit ? ` (+${totalUsedPrompts - activeLimit} extra)` : ''}
+            </span>
             {isReadOnly && (
               <span style={{
                 fontSize: '11px',
                 fontWeight: 700,
-                padding: '4px 10px',
+                padding: '3px 9px',
                 borderRadius: '12px',
                 backgroundColor: '#f3e8ff',
-                color: '#6b21a8',
-                border: '1px solid #d8b4fe'
+                color: '#6b21a8'
               }}>
-                Read-only Klantweergave
+                Klantweergave
               </span>
             )}
           </div>
-          <p style={{ color: '#6b7280', fontSize: '13px', marginTop: '4px' }}>
+          <p style={{ color: '#6b7280', fontSize: '12.5px', margin: '3px 0 0 0' }}>
             {isReadOnly
-              ? `Live GEO resultaten, nulmeting en AI-zichtbaarheid voor ${activeWorkspace || 'uw merk'}.`
-              : `Beheer alle AI-prompts in één totaaloverzicht voor ${activeWorkspace ? activeWorkspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '') : 'uw merk'}. Zoektermen zijn optioneel.`}
+              ? `Live GEO resultaten en nulmeting voor ${activeWorkspace || 'uw merk'}.`
+              : `Beheer AI-prompts voor ${activeWorkspace ? activeWorkspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '') : 'uw merk'}. Extra prompts boven ${activeLimit} zijn mogelijk tegen meerkosten.`}
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <span style={{
-            fontSize: '11px',
-            fontWeight: 700,
-            padding: '4px 10px',
-            borderRadius: '12px',
-            backgroundColor: '#f3f4f6',
-            color: '#374151',
-            border: '1px solid #e5e7eb'
-          }}>
-            Pakket: {activePlanName}
-          </span>
-          <span style={{
-            fontSize: '12px',
-            color: totalUsedPrompts > activeLimit ? '#b45309' : '#374151',
-            backgroundColor: totalUsedPrompts > activeLimit ? '#fffbeb' : '#f9fafb',
-            border: `1px solid ${totalUsedPrompts > activeLimit ? '#fde68a' : '#e5e7eb'}`,
-            padding: '4px 12px',
-            borderRadius: '12px',
-            fontWeight: 700
-          }}>
-            Prompts actief: {totalUsedPrompts} ({activeLimit} inbegrepen{totalUsedPrompts > activeLimit ? ` · +${totalUsedPrompts - activeLimit} extra` : ''})
-          </span>
-          {!isReadOnly && (
-            <span style={{
-              fontSize: '11px',
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setReportKeywordId(null);
+              setReportModalOpen(true);
+            }}
+            style={{
+              backgroundColor: '#3E008A',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: '20px',
+              padding: '8px 14px',
+              fontSize: '12px',
               fontWeight: 700,
-              padding: '4px 10px',
-              borderRadius: '12px',
-              backgroundColor: '#fffbeb',
-              color: '#92400e',
-              border: '1px solid #fde68a'
-            }}>
-              Geen limiet · Extra prompts brengen extra kosten met zich mee
-            </span>
-          )}
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Bekijk en download de SalesWizard PDF Rapportage voor al uw prompts en stijgingen"
+          >
+            <FileText size={13} />
+            Rapportage
+          </button>
           <button
             type="button"
             onClick={handleExportProjectCsv}
@@ -4272,20 +4311,19 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               backgroundColor: '#ffffff',
               color: '#374151',
               border: '1px solid #d1d5db',
-              borderRadius: '24px',
-              padding: '9px 16px',
+              borderRadius: '20px',
+              padding: '8px 13px',
               fontSize: '12px',
               fontWeight: 700,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+              gap: '5px'
             }}
             title="Exporteer alle prompts, nulmeting en zoektermen naar CSV (Excel)"
           >
             <Download size={13} />
-            Export CSV
+            CSV
           </button>
           {!isReadOnly && (
             <>
@@ -4298,18 +4336,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   backgroundColor: '#faf5ff',
                   color: '#440099',
                   border: '1px solid #d8b4fe',
-                  borderRadius: '24px',
-                  padding: '9px 16px',
+                  borderRadius: '20px',
+                  padding: '8px 13px',
                   fontSize: '12px',
                   fontWeight: 700,
                   cursor: (resettingNulmeting || allPromptsList.length === 0) ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '5px'
                 }}
               >
                 <RefreshCw size={13} className={resettingNulmeting ? 'spin' : ''} />
-                Nieuwe 0-meting starten
+                Nieuwe 0-meting
               </button>
               <button
                 type="button"
@@ -4320,21 +4358,20 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   backgroundColor: '#000000',
                   color: '#ffffff',
                   border: 'none',
-                  borderRadius: '24px',
-                  padding: '10px 20px',
-                  fontSize: '13px',
+                  borderRadius: '20px',
+                  padding: '8px 15px',
+                  fontSize: '12px',
                   fontWeight: 700,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                  gap: '5px',
                   transition: 'background-color 0.15s ease'
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
               >
-                <Plus size={14} strokeWidth={3} />
+                <Plus size={13} strokeWidth={3} />
                 Prompts Toevoegen
               </button>
             </>
@@ -4679,7 +4716,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               gap: '8px'
             }}
           >
-            <span>Alle Prompts (Totaaloverzicht)</span>
+            <span>Alle Prompts</span>
             <span style={{
               fontSize: '11px',
               fontWeight: 800,
@@ -4710,7 +4747,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               gap: '8px'
             }}
           >
-            <span>Zoektermen & Concurrenten (Optioneel)</span>
+            <span>Zoektermen & Concurrenten</span>
             <span style={{
               fontSize: '11px',
               fontWeight: 800,
@@ -4808,427 +4845,437 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       {mainViewTab === 'keywords' && (
         <>
 
-      {/* Bulk actions */}
-      {!isReadOnly && selectedKeywordIds.length > 0 && (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: '#eff6ff',
-          border: '1px solid #bfdbfe',
-          borderRadius: '8px',
-          padding: '10px 16px',
-          marginTop: '12px',
-          width: '100%'
-        }}>
-          <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>
-            {selectedKeywordIds.length} keywords geselecteerd
-          </span>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={handleBulkRescrapeKeywords}
-              title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
-              style={{
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: '1px solid #93c5fd',
-                backgroundColor: '#2563eb',
-                color: 'white',
-                fontSize: '12px',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <RotateCw size={12} />
-              Opnieuw Scrapen
-            </button>
-            <button
-              type="button"
-              onClick={handleBulkArchiveKeywords}
-              style={{
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: 'none',
-                backgroundColor: '#f59e0b',
-                color: 'white',
-                fontSize: '12px',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <Archive size={12} />
-              Archiveer Geselecteerde
-            </button>
-            <button
-              type="button"
-              onClick={handleBulkDeleteKeywords}
-              title="Verwijder geselecteerde keywords en bijbehorende prompts definitief en geef de promptlimiet vrij"
-              style={{
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: 'none',
-                backgroundColor: '#ef4444',
-                color: 'white',
-                fontSize: '12px',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer'
-              }}
-            >
-              <Trash2 size={12} />
-              Verwijder & Reset Limiet
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Keywords Table */}
-      <div data-tour="keywords-table" style={{ width: '100%', overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-              {!isReadOnly && (
-                <th style={{ padding: '12px 16px', width: '40px' }}>
-                  <input
-                    type="checkbox"
-                    checked={filteredKeywords.length > 0 && selectedKeywordIds.length === filteredKeywords.length}
-                    onChange={handleSelectAllKeywords}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </th>
-              )}
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Het zoekwoord waarop de AI-zoekmachines worden gescand">Keyword</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De organische positie in de traditionele Google.nl zoekresultaten">Rank</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Percentage van de prompts waarin dit merk door AI-modellen wordt genoemd">Share of Voice</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De gemiddelde positie/volgorde waarin het merk wordt genoemd in de AI-antwoorden">Position</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Schatting van het aantal maandelijkse zoekopdrachten in Google Nederland">Search Volume</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De meest genoemde merken in de AI-zoekresultaten voor dit zoekwoord">Top Brands</th>
-              <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren of archiveren">
-                {isReadOnly ? 'Details' : 'Actions'}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredKeywords.map((kw) => {
-              const isKwScanning = kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
-
-              return (
-                <tr
-                  key={kw.id}
+          {/* Bulk actions */}
+          {!isReadOnly && selectedKeywordIds.length > 0 && (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: '8px',
+              padding: '10px 16px',
+              marginTop: '12px',
+              width: '100%'
+            }}>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>
+                {selectedKeywordIds.length} keywords geselecteerd
+              </span>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handleBulkRescrapeKeywords}
+                  title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
                   style={{
-                    cursor: 'pointer',
-                    borderBottom: '1px solid #f3f4f6',
-                    backgroundColor: isKwScanning ? '#f8faff' : 'transparent',
-                    transition: 'background-color 0.15s ease'
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: '1px solid #93c5fd',
+                    backgroundColor: '#2563eb',
+                    color: 'white',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
                   }}
-                  onClick={() => {
-                    setSelectedKeyword(kw);
-                    setDetailTab('rankings');
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f0f7ff' : '#f9fafb'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f8faff' : 'transparent'}
                 >
+                  <RotateCw size={12} />
+                  Opnieuw Scrapen
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkArchiveKeywords}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: 'none',
+                    backgroundColor: '#f59e0b',
+                    color: 'white',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Archive size={12} />
+                  Archiveer Geselecteerde
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteKeywords}
+                  title="Verwijder geselecteerde keywords en bijbehorende prompts definitief en geef de promptlimiet vrij"
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: 'none',
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Trash2 size={12} />
+                  Verwijder & Reset Limiet
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Keywords Table */}
+          <div data-tour="keywords-table" style={{ width: '100%', overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
                   {!isReadOnly && (
-                    <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
+                    <th style={{ padding: '12px 16px', width: '40px' }}>
                       <input
                         type="checkbox"
-                        checked={selectedKeywordIds.includes(kw.id)}
-                        onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
+                        checked={filteredKeywords.length > 0 && selectedKeywordIds.length === filteredKeywords.length}
+                        onChange={handleSelectAllKeywords}
+                        onClick={(e) => e.stopPropagation()}
                       />
-                    </td>
+                    </th>
                   )}
-                  <td style={{ padding: '16px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
-                      {isKwScanning && (
-                        <span style={{
-                          fontSize: '11px',
-                          padding: '2px 8px',
-                          borderRadius: '12px',
-                          backgroundColor: '#eff6ff',
-                          color: '#2563eb',
-                          fontWeight: 700,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          border: '1px solid #bfdbfe'
-                        }}>
-                          <Loader2 size={10} className="spin" /> AI Crawl
-                        </span>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Het zoekwoord waarop de AI-zoekmachines worden gescand">Keyword</th>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De organische positie in de traditionele Google.nl zoekresultaten">Rank</th>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Percentage van de prompts waarin dit merk door AI-modellen wordt genoemd">Share of Voice</th>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De gemiddelde positie/volgorde waarin het merk wordt genoemd in de AI-antwoorden">Position</th>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="Schatting van het aantal maandelijkse zoekopdrachten in Google Nederland">Search Volume</th>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', cursor: 'help' }} title="De meest genoemde merken in de AI-zoekresultaten voor dit zoekwoord">Top Brands</th>
+                  <th style={{ padding: '12px 16px', fontSize: '12px', fontWeight: 600, color: '#4b5563', textAlign: 'center', width: '90px', cursor: 'help' }} title="Acties zoals analyseren of archiveren">
+                    {isReadOnly ? 'Details' : 'Actions'}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredKeywords.map((kw) => {
+                  const isKwScanning = kw.is_crawling || (kw.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
+
+                  return (
+                    <tr
+                      key={kw.id}
+                      style={{
+                        cursor: 'pointer',
+                        borderBottom: '1px solid #f3f4f6',
+                        backgroundColor: isKwScanning ? '#f8faff' : 'transparent',
+                        transition: 'background-color 0.15s ease'
+                      }}
+                      onClick={() => {
+                        setSelectedKeyword(kw);
+                        setDetailTab('rankings');
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f0f7ff' : '#f9fafb'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isKwScanning ? '#f8faff' : 'transparent'}
+                    >
+                      {!isReadOnly && (
+                        <td style={{ padding: '16px', width: '40px' }} onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedKeywordIds.includes(kw.id)}
+                            onChange={(e) => handleSelectKeyword(kw.id, e.target.checked)}
+                          />
+                        </td>
                       )}
-                      <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f3f4f6', color: '#6b7280', fontWeight: 700 }}>
-                        🇳🇱 NL
-                      </span>
-                    </div>
-                  </td>
-
-                  <td style={{ padding: '16px', fontWeight: 700, color: kw.rank !== '-' ? '#111827' : '#9ca3af' }}>
-                    {isKwScanning ? (
-                      <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
-                        <Loader2 size={12} className="spin" /> Scannen...
-                      </span>
-                    ) : (
-                      kw.rank
-                    )}
-                  </td>
-
-                  <td style={{ padding: '16px' }}>
-                    {isKwScanning ? (
-                      <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
-                        <Loader2 size={12} className="spin" /> Analyseren...
-                      </span>
-                    ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '32px', color: '#111827' }}>{kw.sov}%</span>
-                        <div style={{ width: '80px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
-                          <div style={{
-                            width: `${kw.sov}%`,
-                            height: '100%',
-                            backgroundColor: '#f59e0b',
-                            borderRadius: '2px'
-                          }}></div>
+                      <td style={{ padding: '16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
+                          {isKwScanning && (
+                            <span style={{
+                              fontSize: '11px',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              backgroundColor: '#eff6ff',
+                              color: '#2563eb',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              border: '1px solid #bfdbfe'
+                            }}>
+                              <Loader2 size={10} className="spin" /> AI Crawl
+                            </span>
+                          )}
+                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f3f4f6', color: '#6b7280', fontWeight: 700 }}>
+                            🇳🇱 NL
+                          </span>
                         </div>
-                      </div>
-                    )}
-                  </td>
+                      </td>
 
-                  <td style={{ padding: '16px', fontWeight: 600, color: '#374151' }}>
-                    {isKwScanning ? (
-                      <span style={{ color: '#9ca3af' }}>-</span>
-                    ) : (
-                      kw.position
-                    )}
-                  </td>
+                      <td style={{ padding: '16px', fontWeight: 700, color: kw.rank !== '-' ? '#111827' : '#9ca3af' }}>
+                        {isKwScanning ? (
+                          <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
+                            <Loader2 size={12} className="spin" /> Scannen...
+                          </span>
+                        ) : (
+                          kw.rank
+                        )}
+                      </td>
 
-                <td style={{ padding: '16px', color: '#6b7280' }}>
-                  {kw.volume}
-                </td>
+                      <td style={{ padding: '16px' }}>
+                        {isKwScanning ? (
+                          <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
+                            <Loader2 size={12} className="spin" /> Analyseren...
+                          </span>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '32px', color: '#111827' }}>{kw.sov}%</span>
+                            <div style={{ width: '80px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
+                              <div style={{
+                                width: `${kw.sov}%`,
+                                height: '100%',
+                                backgroundColor: '#f59e0b',
+                                borderRadius: '2px'
+                              }}></div>
+                            </div>
+                          </div>
+                        )}
+                      </td>
 
-                <td style={{ padding: '16px' }}>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {(kw.brands || []).slice(0, 5).map((brandKey, bIdx) => {
-                      const details = getBrandLogo(brandKey);
-                      return (
-                        <FaviconImage
-                          key={brandKey || bIdx}
-                          domain={details.domain}
-                          fallbackLabel={details.label}
-                          fallbackBg={details.color}
-                          fallbackColor={details.text}
-                          size={22}
-                          style={{ border: '1px solid #ffffff', borderRadius: '50%' }}
-                        />
-                      );
-                    })}
-                  </div>
-                </td>
+                      <td style={{ padding: '16px', fontWeight: 600, color: '#374151' }}>
+                        {isKwScanning ? (
+                          <span style={{ color: '#9ca3af' }}>-</span>
+                        ) : (
+                          kw.position
+                        )}
+                      </td>
 
-                <td style={{ padding: '16px' }} onClick={(e) => { if (!isReadOnly) e.stopPropagation(); }}>
-                  {isReadOnly ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--brand-primary)', fontSize: '12px', fontWeight: 700 }}>
-                      Bekijken <ChevronRight size={14} />
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={(e) => handleRescrapeKeyword(kw.id, e)}
-                        title="Keyword rankings en AI-prompts opnieuw scrapen"
-                        disabled={rescrapingKeywords[kw.id]}
-                        style={{
-                          padding: '6px',
-                          borderRadius: '4px',
-                          border: 'none',
-                          background: 'none',
-                          cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
-                          color: rescrapingKeywords[kw.id] ? '#2563eb' : '#9ca3af',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                        onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#2563eb'; }}
-                        onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#9ca3af'; }}
-                      >
-                        <RotateCw size={14} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); handleArchiveKeyword(kw); }}
-                        title="Zoekwoord Archiveren"
-                        style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = '#f59e0b'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
-                      >
-                        <Archive size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteKeyword(kw); }}
-                        title="Zoekterm & gekoppelde prompts definitief verwijderen"
-                        style={{
-                          padding: '5px 10px',
-                          borderRadius: '6px',
-                          border: '1px solid #fecaca',
-                          backgroundColor: '#fef2f2',
-                          cursor: 'pointer',
-                          color: '#dc2626',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
-                      >
-                        <Trash2 size={13} />
-                        Verwijderen
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-          </tbody>
-        </table>
-      </div>
+                      <td style={{ padding: '16px', color: '#6b7280' }}>
+                        {kw.volume}
+                      </td>
 
-      {/* Collapsible Archived Keywords Accordion */}
-      {!isReadOnly && (
-        <div style={{ marginTop: '24px' }}>
-          <button
-            type="button"
-            onClick={() => setIsArchivedOpen(!isArchivedOpen)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              backgroundColor: '#f9fafb',
-              border: '1px solid #e5e7eb',
-              borderRadius: '8px',
-              fontSize: '13px',
-              color: '#4b5563',
-              fontWeight: 600,
-              cursor: 'pointer',
-              padding: '10px 14px',
-              width: '100%',
-              justifyContent: 'space-between',
-              transition: 'background-color 0.15s ease'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Archive size={15} style={{ color: '#d97706' }} />
-              <span>Gearchiveerde zoekwoorden ({archivedKeywords.length})</span>
-              <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>
-                (tellen niet mee in de actieve prompts; kunnen hersteld of definitief verwijderd worden)
-              </span>
-            </div>
-            {isArchivedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
+                      <td style={{ padding: '16px' }}>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          {(kw.brands || []).slice(0, 5).map((brandKey, bIdx) => {
+                            const details = getBrandLogo(brandKey);
+                            return (
+                              <FaviconImage
+                                key={brandKey || bIdx}
+                                domain={details.domain}
+                                fallbackLabel={details.label}
+                                fallbackBg={details.color}
+                                fallbackColor={details.text}
+                                size={22}
+                                style={{ border: '1px solid #ffffff', borderRadius: '50%' }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </td>
 
-          {isArchivedOpen && (
-            archivedKeywords.length > 0 ? (
-              <div style={{ marginTop: '10px', overflowX: 'auto', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#6b7280', fontSize: '12px' }}>
-                      <th style={{ padding: '10px 16px' }}>Zoekwoord</th>
-                      <th style={{ padding: '10px 16px' }}>Prompts</th>
-                      <th style={{ padding: '10px 16px' }}>Rank</th>
-                      <th style={{ padding: '10px 16px' }}>Share of Voice</th>
-                      <th style={{ padding: '10px 16px' }}>Volume</th>
-                      <th style={{ padding: '10px 16px', textAlign: 'right' }}>Actie</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {archivedKeywords.map(kw => (
-                      <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                        <td style={{ padding: '10px 16px', fontWeight: 500, color: '#374151' }}>
-                          <span style={{ textDecoration: 'line-through', color: '#9ca3af', marginRight: '8px' }}>{kw.text}</span>
-                          <span style={{ fontSize: '10px', color: '#b45309', backgroundColor: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>Gearchiveerd</span>
-                        </td>
-                        <td style={{ padding: '10px 16px', color: '#6b7280' }}>
-                          {(kw.prompts || []).length} prompt{(kw.prompts || []).length === 1 ? '' : 's'}
-                        </td>
-                        <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
-                        <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
-                        <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
-                        <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                      <td style={{ padding: '16px' }} onClick={(e) => { if (!isReadOnly) e.stopPropagation(); }}>
+                        {isReadOnly ? (
+                          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', color: 'var(--brand-primary)', fontSize: '12px', fontWeight: 700 }}>
+                            Bekijken <ChevronRight size={14} />
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                             <button
                               type="button"
-                              onClick={() => handleRestoreKeyword(kw)}
+                              onClick={(e) => handleRescrapeKeyword(kw.id, e)}
+                              title="Keyword rankings en AI-prompts opnieuw scrapen"
+                              disabled={rescrapingKeywords[kw.id]}
                               style={{
-                                fontSize: '12px',
-                                padding: '5px 12px',
-                                borderRadius: '6px',
-                                backgroundColor: '#ffffff',
-                                border: '1px solid #d1d5db',
-                                color: '#1f2937',
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                display: 'inline-flex',
+                                padding: '6px',
+                                borderRadius: '4px',
+                                border: 'none',
+                                background: 'none',
+                                cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
+                                color: rescrapingKeywords[kw.id] ? '#2563eb' : '#9ca3af',
+                                display: 'flex',
                                 alignItems: 'center',
-                                gap: '5px'
+                                justifyContent: 'center',
                               }}
-                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.borderColor = '#9ca3af'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
-                              title="Herstel dit zoekwoord naar de actieve lijst"
+                              onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#2563eb'; }}
+                              onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.color = '#9ca3af'; }}
                             >
-                              <RotateCcw size={13} />
-                              Dearchiveren
+                              <RotateCw size={14} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
                             </button>
                             <button
                               type="button"
-                              onClick={() => handleDeleteKeyword(kw)}
+                              onClick={(e) => { e.stopPropagation(); handleArchiveKeyword(kw); }}
+                              title="Zoekwoord Archiveren"
+                              style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = '#f59e0b'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
+                            >
+                              <Archive size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteKeyword(kw); }}
+                              title="Zoekterm & gekoppelde prompts definitief verwijderen"
                               style={{
-                                fontSize: '12px',
-                                padding: '5px 12px',
+                                padding: '5px 10px',
                                 borderRadius: '6px',
-                                backgroundColor: '#fef2f2',
                                 border: '1px solid #fecaca',
-                                color: '#dc2626',
-                                fontWeight: 600,
+                                backgroundColor: '#fef2f2',
                                 cursor: 'pointer',
+                                color: '#dc2626',
+                                fontSize: '11px',
+                                fontWeight: 700,
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '5px'
+                                gap: '4px'
                               }}
                               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
                               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
-                              title="Verwijder dit zoekwoord en bijbehorende prompts definitief"
                             >
                               <Trash2 size={13} />
                               Verwijderen
                             </button>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p style={{ fontSize: '13px', color: '#9ca3af', padding: '16px', fontStyle: 'italic', textAlign: 'center', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb', marginTop: '10px' }}>
-                Er zijn momenteel geen gearchiveerde zoekwoorden voor dit project.
-              </p>
-            )
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Collapsible Archived Keywords Accordion */}
+          {!isReadOnly && (
+            <div style={{ marginTop: '24px' }}>
+              <button
+                type="button"
+                onClick={() => setIsArchivedOpen(!isArchivedOpen)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  backgroundColor: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  color: '#4b5563',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  padding: '10px 14px',
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  transition: 'background-color 0.15s ease'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f9fafb'}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Archive size={15} style={{ color: '#d97706' }} />
+                  <span>Gearchiveerde zoekwoorden ({archivedKeywords.length})</span>
+                  <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>
+                    (tellen niet mee in de actieve prompts; kunnen hersteld of definitief verwijderd worden)
+                  </span>
+                </div>
+                {isArchivedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+
+              {isArchivedOpen && (
+                archivedKeywords.length > 0 ? (
+                  <div style={{ marginTop: '10px', overflowX: 'auto', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid #e5e7eb', backgroundColor: '#f9fafb', color: '#6b7280', fontSize: '12px' }}>
+                          <th style={{ padding: '10px 16px' }}>Zoekwoord</th>
+                          <th style={{ padding: '10px 16px' }}>Prompts</th>
+                          <th style={{ padding: '10px 16px' }}>Rank</th>
+                          <th style={{ padding: '10px 16px' }}>Share of Voice</th>
+                          <th style={{ padding: '10px 16px' }}>Volume</th>
+                          <th style={{ padding: '10px 16px', textAlign: 'right' }}>Actie</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {archivedKeywords.map(kw => (
+                          <tr key={kw.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                            <td style={{ padding: '10px 16px', fontWeight: 500, color: '#374151' }}>
+                              <span style={{ textDecoration: 'line-through', color: '#9ca3af', marginRight: '8px' }}>{kw.text}</span>
+                              <span style={{ fontSize: '10px', color: '#b45309', backgroundColor: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>Gearchiveerd</span>
+                            </td>
+                            <td style={{ padding: '10px 16px', color: '#6b7280' }}>
+                              {(kw.prompts || []).length} prompt{(kw.prompts || []).length === 1 ? '' : 's'}
+                            </td>
+                            <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.rank}</td>
+                            <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.sov}%</td>
+                            <td style={{ padding: '10px 16px', color: '#9ca3af' }}>{kw.volume}</td>
+                            <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRestoreKeyword(kw)}
+                                  style={{
+                                    fontSize: '12px',
+                                    padding: '5px 12px',
+                                    borderRadius: '6px',
+                                    backgroundColor: '#ffffff',
+                                    border: '1px solid #d1d5db',
+                                    color: '#1f2937',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.borderColor = '#9ca3af'; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
+                                  title="Herstel dit zoekwoord naar de actieve lijst"
+                                >
+                                  <RotateCcw size={13} />
+                                  Dearchiveren
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteKeyword(kw)}
+                                  style={{
+                                    fontSize: '12px',
+                                    padding: '5px 12px',
+                                    borderRadius: '6px',
+                                    backgroundColor: '#fef2f2',
+                                    border: '1px solid #fecaca',
+                                    color: '#dc2626',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
+                                  title="Verwijder dit zoekwoord en bijbehorende prompts definitief"
+                                >
+                                  <Trash2 size={13} />
+                                  Verwijderen
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '13px', color: '#9ca3af', padding: '16px', fontStyle: 'italic', textAlign: 'center', backgroundColor: '#f9fafb', borderRadius: '8px', border: '1px solid #e5e7eb', marginTop: '10px' }}>
+                    Er zijn momenteel geen gearchiveerde zoekwoorden voor dit project.
+                  </p>
+                )
+              )}
+            </div>
           )}
-        </div>
-      )}
         </>
+      )}
+
+      {reportModalOpen && (
+        <PromptReport
+          activeWorkspace={activeWorkspace}
+          initialKeywordId={reportKeywordId}
+          keywordsList={activeKeywords}
+          isModal={true}
+          onClose={() => setReportModalOpen(false)}
+        />
       )}
     </div>
   );
