@@ -547,6 +547,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const isStaffOrAdmin = currentUser?.role === 'medewerker' || currentUser?.role === 'admin';
   const isReadOnly = !isStaffOrAdmin;
   const [keywords, setKeywords] = useState([]);
+  const [standalonePrompts, setStandalonePrompts] = useState([]);
+  const [mainViewTab, setMainViewTab] = useState('all_prompts');
   const [projectInfo, setProjectInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selectedKeyword, setSelectedKeyword] = useState(null);
@@ -556,7 +558,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const [generatingPromptsForKw, setGeneratingPromptsForKw] = useState({});
   const [recommending, setRecommending] = useState(false);
   const [keywordInput, setKeywordInput] = useState('');
-  const [generateAiPromptsOnAdd, setGenerateAiPromptsOnAdd] = useState(true);
+  const [directPromptKeywordId, setDirectPromptKeywordId] = useState('');
+  const [generateAiPromptsOnAdd, setGenerateAiPromptsOnAdd] = useState(false);
   const [customPromptsOnAdd, setCustomPromptsOnAdd] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -569,6 +572,34 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const [limitAlert, setLimitAlert] = useState(null);
   const [crawlingStatus, setCrawlingStatus] = useState(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [editingPromptId, setEditingPromptId] = useState(null);
+  const [editingPromptText, setEditingPromptText] = useState('');
+  const [savingEditedPrompt, setSavingEditedPrompt] = useState(false);
+  const [resettingNulmeting, setResettingNulmeting] = useState(false);
+  const [nulmetingBanner, setNulmetingBanner] = useState(null);
+
+  const formatPromptFromApi = (p) => ({
+    id: p.id,
+    keyword_id: p.keyword_id || null,
+    keyword_text: p.keyword_text || null,
+    text: p.prompt_text || p.text || '',
+    status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
+    mentioned: Boolean(p.mentioned ?? p.brand_mentioned ?? (p.status === 'Cited')),
+    position: p.position || '-',
+    totalMentions: p.totalMentions ?? 0,
+    totalModels: p.totalModels ?? 0,
+    failedModelsCount: p.failedModelsCount ?? 0,
+    overallScore: p.overallScore ?? 0,
+    engines: Array.isArray(p.engines) ? p.engines : [],
+    brandsCount: p.brandsCount || 0,
+    sourcesCount: p.sourcesCount || 0,
+    modelMentions: p.modelMentions || null,
+    responseSummary: p.responseSummary || '',
+    citations: p.citations || null,
+    history: Array.isArray(p.history) ? p.history : [],
+    baseline: p.baseline || (Array.isArray(p.history) && p.history.length > 0 ? p.history[0] : null),
+    lastUpdated: p.lastUpdated || null
+  });
 
   const formatKeywordFromApi = (k) => ({
     id: k.id,
@@ -584,26 +615,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     history: Array.isArray(k.history) ? k.history : [],
     baseline: k.baseline || (Array.isArray(k.history) && k.history.length > 0 ? k.history[0] : null),
     last_updated: k.last_updated || null,
-    prompts: (k.prompts || []).map(p => ({
-      id: p.id,
-      text: p.prompt_text || p.text || '',
-      status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
-      mentioned: Boolean(p.mentioned ?? p.brand_mentioned ?? (p.status === 'Cited')),
-      position: p.position || '-',
-      totalMentions: p.totalMentions ?? 0,
-      totalModels: p.totalModels ?? 0,
-      failedModelsCount: p.failedModelsCount ?? 0,
-      overallScore: p.overallScore ?? 0,
-      engines: Array.isArray(p.engines) ? p.engines : [],
-      brandsCount: p.brandsCount || 0,
-      sourcesCount: p.sourcesCount || 0,
-      modelMentions: p.modelMentions || null,
-      responseSummary: p.responseSummary || '',
-      citations: p.citations || null,
-      history: Array.isArray(p.history) ? p.history : [],
-      baseline: p.baseline || (Array.isArray(p.history) && p.history.length > 0 ? p.history[0] : null),
-      lastUpdated: p.lastUpdated || null
-    }))
+    prompts: (k.prompts || []).map(formatPromptFromApi)
   });
 
   const handleSelectAllKeywords = (e) => {
@@ -835,12 +847,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           return p;
         };
 
-        setKeywords(prev => prev.map(k => {
-          if (k.id === selectedKeyword?.id) {
-            return { ...k, prompts: (k.prompts || []).map(updatePromptObj) };
-          }
-          return k;
-        }));
+        setKeywords(prev => prev.map(k => ({
+          ...k,
+          prompts: (k.prompts || []).map(updatePromptObj)
+        })));
+
+        setStandalonePrompts(prev => prev.map(updatePromptObj));
 
         if (selectedKeyword) {
           setSelectedKeyword(prev => ({
@@ -883,7 +895,9 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   // Smart background polling when prompts are being crawled / analyzed
   useEffect(() => {
     let interval = null;
-    const hasPending = (keywords || []).some(k => k.is_crawling || (k.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]));
+    const hasPendingKw = (keywords || []).some(k => k.is_crawling || (k.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]));
+    const hasPendingStandalone = (standalonePrompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
+    const hasPending = hasPendingKw || hasPendingStandalone;
 
     if (hasPending) {
       let pendingCount = 0;
@@ -895,6 +909,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             pendingCount++;
           }
         });
+      });
+      (standalonePrompts || []).forEach(p => {
+        totalCount++;
+        if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
+          pendingCount++;
+        }
       });
 
       setCrawlingStatus({
@@ -925,9 +945,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 setProjectInfo(data.project);
               }
               const formatted = (data.keywords || []).map(formatKeywordFromApi);
+              const formattedStandalone = (data.standalonePrompts || []).map(formatPromptFromApi);
               setKeywords(formatted);
+              setStandalonePrompts(formattedStandalone);
               setSelectedKeyword(prev => prev ? (formatted.find(f => f.id === prev.id) || prev) : null);
-              const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0);
+              const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0) + formattedStandalone.length;
               setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
             }
           })
@@ -945,10 +967,10 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [keywords, scanningPrompts, activeWorkspace]);
+  }, [keywords, standalonePrompts, scanningPrompts, activeWorkspace]);
 
 
-  // Fetch active keywords from DB
+  // Fetch active keywords & standalone prompts from DB
   useEffect(() => {
     setLoading(true);
     setSelectedKeyword(null);
@@ -961,9 +983,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             setProjectInfo(data.project);
           }
           const formatted = (data.keywords || []).map(formatKeywordFromApi);
+          const formattedStandalone = (data.standalonePrompts || []).map(formatPromptFromApi);
           setKeywords(formatted);
+          setStandalonePrompts(formattedStandalone);
 
-          const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0);
+          const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0) + formattedStandalone.length;
           setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
         }
       })
@@ -999,7 +1023,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
   const activeLimit = getPlanLimit();
   const activePlanName = getActivePlanName();
-  const isLimitReached = totalUsedPrompts >= activeLimit;
+  // Prompts zijn niet langer gelimiteerd; extra prompts brengen wel extra kosten met zich mee
+  const isLimitReached = false;
 
   const downloadCsvFile = (filename, rows) => {
     const escapeCell = (val) => {
@@ -1284,41 +1309,73 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     setCustomPromptInputs(prev => ({ ...prev, [kwId]: val }));
   };
 
-    const handleAddKeywords = async (e) => {
+  const handleAddKeywords = async (e) => {
     e.preventDefault();
-    if (!isStaffOrAdmin || !keywordInput.trim()) return;
+    if (!isStaffOrAdmin) return;
 
     const rawKeywords = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
     const customLines = customPromptsOnAdd
       .split(/\r?\n/)
       .map(s => s.trim())
       .filter(Boolean);
-    const aiPromptsCount = generateAiPromptsOnAdd ? rawKeywords.length * 3 : 0;
-    const promptsToGenerateCount = aiPromptsCount + customLines.length;
-    const remainingPrompts = Math.max(0, activeLimit - totalUsedPrompts);
 
-    if (promptsToGenerateCount > 0 && (totalUsedPrompts + promptsToGenerateCount > activeLimit)) {
-      setLimitAlert({
-        type: 'error',
-        title: 'Onvoldoende prompts limiet over',
-        promptsToGenerate: promptsToGenerateCount,
-        keywordsCount: rawKeywords.length,
-        currentUsed: totalUsedPrompts,
-        maxLimit: activeLimit,
-        available: remainingPrompts
-      });
+    if (rawKeywords.length === 0 && customLines.length === 0) {
       return;
     }
 
     setLimitAlert(null);
     const workspace = activeWorkspace || 'Saleswizard.nl';
+    const targetExistingKwId = directPromptKeywordId ? Number(directPromptKeywordId) : null;
 
     try {
       setIsAdding(false);
       setKeywordInput('');
       setCustomPromptsOnAdd('');
+      setDirectPromptKeywordId('');
 
       let totalCreatedPromptsCount = 0;
+
+      // Case 1: Geen nieuwe zoektermen opgegeven -> voeg prompts direct toe (als losse prompts of gekoppeld aan gekozen zoekterm)
+      if (rawKeywords.length === 0 && customLines.length > 0) {
+        const createdDirectPrompts = [];
+        for (const cLine of customLines) {
+          const pResponse = await fetch('/api/prompts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              company: workspace,
+              text: cLine,
+              tag: 'Custom',
+              keyword_id: targetExistingKwId || null,
+              userId: currentUser?.id,
+              role: currentUser?.role
+            })
+          });
+          const pData = await pResponse.json();
+          if (pData.success) {
+            totalCreatedPromptsCount++;
+            createdDirectPrompts.push(formatPromptFromApi({
+              ...pData.prompt,
+              status: 'pending',
+              engines: ['chatgpt', 'gemini', 'perplexity']
+            }));
+          }
+        }
+
+        if (createdDirectPrompts.length > 0) {
+          if (targetExistingKwId) {
+            setKeywords(prev => prev.map(k => k.id === targetExistingKwId ? {
+              ...k,
+              is_crawling: true,
+              prompts: [...(k.prompts || []), ...createdDirectPrompts]
+            } : k));
+          } else {
+            setStandalonePrompts(prev => [...createdDirectPrompts, ...prev]);
+          }
+          setTotalUsedPrompts(prev => prev + totalCreatedPromptsCount);
+        }
+        return;
+      }
 
       for (let kwIdx = 0; kwIdx < rawKeywords.length; kwIdx++) {
         const kwText = rawKeywords[kwIdx];
@@ -1478,19 +1535,6 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
   const handleRestoreKeyword = async (kw) => {
     if (!isStaffOrAdmin) return;
-    const kwPromptCount = (kw.prompts || []).length;
-    if (totalUsedPrompts + kwPromptCount > activeLimit) {
-      setLimitAlert({
-        type: 'error',
-        title: 'Onvoldoende prompts limiet om te herstellen',
-        promptsToGenerate: kwPromptCount,
-        keywordsCount: 1,
-        currentUsed: totalUsedPrompts,
-        maxLimit: activeLimit,
-        available: Math.max(0, activeLimit - totalUsedPrompts)
-      });
-      return;
-    }
 
     try {
       const response = await fetch(`/api/keywords/${kw.id}/restore`, {
@@ -1502,7 +1546,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       if (response.ok && data.success) {
         setKeywords(prev => {
           const next = prev.map(k => k.id === kw.id ? { ...k, is_archived: false } : k);
-          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0) + standalonePrompts.length;
           setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
           return next;
         });
@@ -1588,19 +1632,6 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     const lines = input.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     if (lines.length === 0) return;
 
-    const remainingPrompts = Math.max(0, activeLimit - totalUsedPrompts);
-    if (totalUsedPrompts + lines.length > activeLimit) {
-      setLimitAlert({
-        type: 'error',
-        title: 'Onvoldoende prompts limiet over',
-        promptsToGenerate: lines.length,
-        keywordsCount: 1,
-        currentUsed: totalUsedPrompts,
-        maxLimit: activeLimit,
-        available: remainingPrompts
-      });
-      return;
-    }
     setLimitAlert(null);
 
     const workspace = activeWorkspace || 'Saleswizard.nl';
@@ -1674,19 +1705,6 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
   const handleGenerateAiPromptsForKeyword = async (kw) => {
     if (!isStaffOrAdmin || !kw) return;
-    const remainingPrompts = Math.max(0, activeLimit - totalUsedPrompts);
-    if (totalUsedPrompts + 3 > activeLimit) {
-      setLimitAlert({
-        type: 'error',
-        title: 'Onvoldoende prompts limiet over',
-        promptsToGenerate: 3,
-        keywordsCount: 1,
-        currentUsed: totalUsedPrompts,
-        maxLimit: activeLimit,
-        available: remainingPrompts
-      });
-      return;
-    }
     setLimitAlert(null);
     setGeneratingPromptsForKw(prev => ({ ...prev, [kw.id]: true }));
     const workspace = activeWorkspace || 'Saleswizard.nl';
@@ -1764,7 +1782,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
   const handleDeletePrompt = async (kwId, promptId) => {
     if (!isStaffOrAdmin) return;
-    if (!window.confirm('Weet u zeker dat u deze prompt wilt verwijderen? Uw promptlimiet wordt direct met 1 verlaagd/vrijgegeven.')) return;
+    if (!window.confirm('Weet u zeker dat u deze prompt definitief wilt verwijderen?')) return;
 
     try {
       const params = new URLSearchParams({
@@ -1774,9 +1792,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       const res = await fetch(`/api/prompts/${promptId}?${params.toString()}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        setStandalonePrompts(prev => prev.filter(p => p.id !== promptId));
+
         setKeywords(prev => {
           const next = prev.map(k => {
-            if (k.id === kwId) {
+            if (!kwId || k.id === kwId) {
               return {
                 ...k,
                 prompts: (k.prompts || []).filter(p => p.id !== promptId)
@@ -1784,12 +1804,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             }
             return k;
           });
-          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0);
+          const activeCount = next.filter(k => !k.is_archived).reduce((acc, k) => acc + (k.prompts || []).length, 0) + standalonePrompts.filter(p => p.id !== promptId).length;
           setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
           return next;
         });
 
-        if (selectedKeyword && selectedKeyword.id === kwId) {
+        if (selectedKeyword && (!kwId || selectedKeyword.id === kwId)) {
           setSelectedKeyword(prev => ({
             ...prev,
             prompts: (prev.prompts || []).filter(p => p.id !== promptId)
@@ -1800,6 +1820,154 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleSaveEditedPrompt = async (promptObj, startNewNulmeting = true) => {
+    if (!isStaffOrAdmin || !promptObj || !editingPromptText.trim()) return;
+    setSavingEditedPrompt(true);
+    try {
+      const res = await fetch(`/api/prompts/${promptObj.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: editingPromptText.trim(),
+          reset_nulmeting: startNewNulmeting,
+          rescan: startNewNulmeting,
+          userId: currentUser?.id,
+          role: currentUser?.role
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const newText = editingPromptText.trim();
+        const updateP = (p) => {
+          if (p.id !== promptObj.id) return p;
+          if (startNewNulmeting) {
+            return {
+              ...p,
+              text: newText,
+              status: 'pending',
+              history: [],
+              baseline: null
+            };
+          }
+          return { ...p, text: newText };
+        };
+
+        setKeywords(prev => prev.map(k => ({
+          ...k,
+          is_crawling: startNewNulmeting && (k.prompts || []).some(p => p.id === promptObj.id) ? true : k.is_crawling,
+          prompts: (k.prompts || []).map(updateP)
+        })));
+        setStandalonePrompts(prev => prev.map(updateP));
+        if (selectedKeyword) {
+          setSelectedKeyword(prev => ({
+            ...prev,
+            is_crawling: startNewNulmeting ? true : prev.is_crawling,
+            prompts: (prev.prompts || []).map(updateP)
+          }));
+        }
+        setEditingPromptId(null);
+        setEditingPromptText('');
+        if (startNewNulmeting) {
+          setNulmetingBanner({
+            message: `Prompt gewijzigd en nieuwe 0-meting gestart voor "${newText}".`
+          });
+          setTimeout(() => setNulmetingBanner(null), 6000);
+        }
+      } else {
+        alert(data.error || 'Fout bij opslaan van gewijzigde prompt.');
+      }
+    } catch (err) {
+      console.error('Failed to edit prompt:', err);
+    } finally {
+      setSavingEditedPrompt(false);
+    }
+  };
+
+  const handleStartNewNulmeting = async ({ keywordId = null, promptIds = null, label = 'dit project' } = {}) => {
+    if (!isStaffOrAdmin) return;
+    if (!window.confirm(`Weet u zeker dat u handmatig een nieuwe 0-meting wilt starten voor ${label}?\n\nDe bestaande metingshistorie wordt gereset en de prompts worden direct opnieuw gescand als nieuw startpunt (Nulmeting).`)) {
+      return;
+    }
+
+    setResettingNulmeting(true);
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    try {
+      const res = await fetch('/api/prompts/reset-nulmeting', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company: workspace,
+          keyword_id: keywordId,
+          prompt_ids: promptIds,
+          rescan: true,
+          userId: currentUser?.id,
+          role: currentUser?.role
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const shouldResetPrompt = (p, kwId) => {
+          if (Array.isArray(promptIds) && promptIds.length > 0) {
+            return promptIds.includes(p.id);
+          }
+          if (keywordId) {
+            return kwId === keywordId;
+          }
+          return true;
+        };
+
+        setKeywords(prev => prev.map(k => {
+          const resetKw = !promptIds && (!keywordId || k.id === keywordId);
+          return {
+            ...k,
+            is_crawling: resetKw || (k.prompts || []).some(p => shouldResetPrompt(p, k.id)) ? true : k.is_crawling,
+            history: resetKw ? [] : k.history,
+            baseline: resetKw ? null : k.baseline,
+            prompts: (k.prompts || []).map(p => shouldResetPrompt(p, k.id) ? {
+              ...p,
+              status: 'pending',
+              history: [],
+              baseline: null
+            } : p)
+          };
+        }));
+
+        setStandalonePrompts(prev => prev.map(p => shouldResetPrompt(p, null) ? {
+          ...p,
+          status: 'pending',
+          history: [],
+          baseline: null
+        } : p));
+
+        if (selectedKeyword && (!keywordId || selectedKeyword.id === keywordId)) {
+          setSelectedKeyword(prev => ({
+            ...prev,
+            is_crawling: true,
+            history: !promptIds ? [] : prev.history,
+            baseline: !promptIds ? null : prev.baseline,
+            prompts: (prev.prompts || []).map(p => shouldResetPrompt(p, prev.id) ? {
+              ...p,
+              status: 'pending',
+              history: [],
+              baseline: null
+            } : p)
+          }));
+        }
+
+        setNulmetingBanner({
+          message: data.message || `Nieuwe 0-meting is gestart voor ${label}! De prompts worden nu live gescand.`
+        });
+        setTimeout(() => setNulmetingBanner(null), 7000);
+      } else {
+        alert(data.error || 'Fout bij starten van nieuwe 0-meting.');
+      }
+    } catch (err) {
+      console.error('Failed to reset 0-meting:', err);
+    } finally {
+      setResettingNulmeting(false);
     }
   };
 
@@ -1841,6 +2009,21 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
   };
 
+  const activeKeywords = keywords.filter(kw => !kw.is_archived);
+
+  const allPromptsList = [
+    ...(standalonePrompts || []).map(p => ({ ...p, _keywordObj: null })),
+    ...activeKeywords.flatMap(kw => (kw.prompts || []).map(p => ({ ...p, _keywordObj: kw })))
+  ];
+
+  const filteredAllPrompts = allPromptsList.filter(p => {
+    if (!searchQuery || !searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    const matchText = p.text ? String(p.text).toLowerCase().includes(q) : false;
+    const matchKw = p._keywordObj?.text ? String(p._keywordObj.text).toLowerCase().includes(q) : false;
+    return matchText || matchKw;
+  });
+
   const filteredKeywords = keywords.filter(kw =>
     !kw.is_archived && (kw && kw.text ? String(kw.text).toLowerCase().includes((searchQuery || '').toLowerCase()) : false)
   );
@@ -1848,6 +2031,774 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const archivedKeywords = keywords.filter(kw =>
     kw.is_archived && (kw && kw.text ? String(kw.text).toLowerCase().includes((searchQuery || '').toLowerCase()) : false)
   );
+
+  const renderNulmetingBanner = () => {
+    if (!nulmetingBanner) return null;
+    return (
+      <div style={{
+        backgroundColor: '#f5f0ff',
+        border: '1px solid #d8b4fe',
+        borderRadius: '12px',
+        padding: '14px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '12px',
+        boxShadow: '0 2px 8px rgba(68, 0, 153, 0.08)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#440099', fontSize: '13px', fontWeight: 700 }}>
+          <RefreshCw size={16} />
+          <span>{nulmetingBanner.message}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setNulmetingBanner(null)}
+          style={{ background: 'none', border: 'none', color: '#6b21a8', cursor: 'pointer', padding: '4px' }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+    );
+  };
+
+  const renderSinglePromptCard = (p, pIdx, kwContext = null, showEditActions = false) => {
+    const promptKey = p.id || `p_${pIdx}`;
+    const isOpen = !!expandedPrompts[promptKey];
+    const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling';
+    const isMentioned = p.status === 'Cited' || p.mentioned;
+    const brandsCount = p.brandsCount || (isMentioned ? (p.citations ? p.citations.length + 3 : 5) : 0);
+    const sourcesCount = p.sourcesCount || (p.citations ? p.citations.length : 0);
+    const mData = p.modelMentions || {};
+    const isEditingThis = editingPromptId === p.id;
+
+    const isModelUnavailable = (entry) => {
+      if (!entry) return true;
+      const methodLower = String(entry.method || '').toLowerCase();
+      const summaryLower = String(entry.summary || '').toLowerCase().trim();
+      return Boolean(
+        entry.isSimulated ||
+        entry.fallbackUsed ||
+        entry.failed ||
+        entry.available === false ||
+        methodLower.includes('simulator') ||
+        methodLower.includes('niet gemeten') ||
+        summaryLower.startsWith('[simulator]')
+      );
+    };
+
+    const buildEngineRow = (id, name) => {
+      const entry = mData[id];
+      const unavailable = isModelUnavailable(entry);
+      const engCitations = Array.isArray(entry?.citations) && entry.citations.length > 0
+        ? entry.citations
+        : (Array.isArray(p.citations) ? p.citations.filter(c => {
+            if (!c || typeof c !== 'object') return true;
+            if (Array.isArray(c.cited_by)) return c.cited_by.includes(id);
+            if (c.sourceEngine) return c.sourceEngine === id;
+            return true;
+          }) : []);
+      return {
+        id,
+        name,
+        unavailable,
+        mentioned: !unavailable && Boolean(entry?.mentioned),
+        brands: unavailable ? 0 : (entry?.brands || 0),
+        sources: unavailable ? 0 : (entry?.sources || 0),
+        summary: unavailable ? '' : (entry?.summary || ''),
+        citations: unavailable ? [] : engCitations,
+        errorMsg: entry?.errorMsg || (unavailable ? (entry?.method || 'Niet gemeten (API fout)') : null),
+        method: entry?.method || null,
+      };
+    };
+
+    const enginesList = [
+      buildEngineRow('chatgpt', 'OpenAI ChatGPT'),
+      buildEngineRow('aioverviews', 'Google AI Overviews'),
+      buildEngineRow('aimode', 'Google AI Mode'),
+      buildEngineRow('gemini', 'Google Gemini'),
+      buildEngineRow('perplexity', 'Perplexity AI'),
+      buildEngineRow('claude', 'Anthropic Claude'),
+      buildEngineRow('copilot', 'Microsoft Copilot'),
+      buildEngineRow('meta', 'Meta AI')
+    ].filter(e => {
+      if (enabledEngines && enabledEngines[e.id] === false && !(p.modelMentions && e.id in p.modelMentions)) return false;
+      if (p.modelMentions && !(e.id in p.modelMentions)) return false;
+      if (!p.modelMentions && (e.id === 'copilot' || e.id === 'meta')) return false;
+      return true;
+    });
+
+    const promptHistory = Array.isArray(p.history) && p.history.length > 0
+      ? p.history
+      : [{
+          date: new Date().toISOString().slice(0, 10),
+          displayDate: p.lastUpdated || kwContext?.last_updated || 'Nulmeting',
+          isBaseline: true,
+          label: 'Nulmeting',
+          mentioned: isMentioned,
+          position: p.position && p.position !== '-' ? p.position : (isMentioned ? kwContext?.position || '#1' : '-'),
+          totalMentions: p.totalMentions ?? (isMentioned ? 2 : 0),
+          totalModels: p.totalModels ?? Math.max(1, enginesList.length || 4),
+          overallScore: p.overallScore ?? (isMentioned ? 50 : 0)
+        }];
+    const promptBaseline = p.baseline || promptHistory[0];
+
+    return (
+      <div
+        key={promptKey}
+        style={{
+          backgroundColor: '#ffffff',
+          border: isCrawling ? '1px solid #93c5fd' : '1px solid #e5e7eb',
+          borderRadius: '10px',
+          overflow: 'hidden',
+          boxShadow: isCrawling ? '0 2px 8px rgba(37, 99, 235, 0.08)' : '0 1px 3px rgba(0,0,0,0.02)',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        {/* Prompt Card Header */}
+        <div
+          style={{
+            padding: '14px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: isCrawling ? '#f0f7ff' : '#f9fafb',
+            cursor: isEditingThis ? 'default' : 'pointer',
+            userSelect: 'none',
+            gap: '12px',
+            flexWrap: 'wrap'
+          }}
+          onClick={() => { if (!isEditingThis) toggleExpandedPrompt(promptKey); }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '240px', flexWrap: 'wrap' }}>
+            {isEditingThis ? (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}
+              >
+                <input
+                  type="text"
+                  value={editingPromptText}
+                  onChange={(e) => setEditingPromptText(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #440099',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: '#111827'
+                  }}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    disabled={savingEditedPrompt || !editingPromptText.trim()}
+                    onClick={() => handleSaveEditedPrompt(p, true)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#440099',
+                      color: '#ffffff',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      border: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {savingEditedPrompt ? 'Opslaan...' : 'Opslaan & Nieuwe 0-meting starten'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingEditedPrompt || !editingPromptText.trim()}
+                    onClick={() => handleSaveEditedPrompt(p, false)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      backgroundColor: '#ffffff',
+                      color: '#374151',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      border: '1px solid #d1d5db',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Alleen tekst opslaan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingPromptId(null); setEditingPromptText(''); }}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '6px',
+                      backgroundColor: 'transparent',
+                      color: '#6b7280',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      border: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Annuleren
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>
+                  {p.text}
+                </span>
+                {!selectedKeyword && (
+                  kwContext ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedKeyword(kwContext);
+                        setDetailTab('rankings');
+                      }}
+                      title="Open zoekterm details & concurrentierankings"
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        padding: '2px 10px',
+                        borderRadius: '12px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#374151',
+                        border: '1px solid #e5e7eb',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      🔍 {kwContext.text}
+                    </button>
+                  ) : (
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      padding: '2px 10px',
+                      borderRadius: '12px',
+                      backgroundColor: '#f8fafc',
+                      color: '#64748b',
+                      border: '1px solid #e2e8f0'
+                    }}>
+                      Losse prompt
+                    </span>
+                  )
+                )}
+                {isCrawling && (
+                  <span style={{
+                    fontSize: '11px',
+                    padding: '3px 10px',
+                    borderRadius: '16px',
+                    backgroundColor: '#dbeafe',
+                    color: '#1d4ed8',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    border: '1px solid #bfdbfe'
+                  }}>
+                    <Loader2 size={11} className="spin" /> AI Crawl & Grounding actief
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {isCrawling ? (
+              <span style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#2563eb',
+                backgroundColor: '#eff6ff',
+                padding: '3px 12px',
+                borderRadius: '16px',
+                border: '1px solid #bfdbfe'
+              }}>
+                Wachten op AI modellen...
+              </span>
+            ) : (
+              <>
+                {p.status === 'failed' ? (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#dc2626',
+                    backgroundColor: '#fee2e2',
+                    padding: '3px 10px',
+                    borderRadius: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    ✕ Mislukt
+                  </span>
+                ) : isMentioned ? (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: '#16a34a',
+                    backgroundColor: '#dcfce7',
+                    padding: '3px 10px',
+                    borderRadius: '16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}>
+                    ✓ Mentioned {p.position && p.position !== '-' ? `(${p.position})` : ''}
+                  </span>
+                ) : (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: '#6b7280',
+                    backgroundColor: '#f3f4f6',
+                    padding: '3px 10px',
+                    borderRadius: '16px'
+                  }}>
+                    Not Mentioned
+                  </span>
+                )}
+
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#6b21a8',
+                  backgroundColor: '#f3e8ff',
+                  padding: '3px 10px',
+                  borderRadius: '16px'
+                }}>
+                  Nulmeting: {promptBaseline?.mentioned ? (promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : 'Vermeld') : 'Niet vermeld'}
+                </span>
+
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#2563eb',
+                  backgroundColor: '#eff6ff',
+                  padding: '3px 10px',
+                  borderRadius: '16px'
+                }}>
+                  • {brandsCount} Brands
+                </span>
+
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#ea580c',
+                  backgroundColor: '#fff7ed',
+                  padding: '3px 10px',
+                  borderRadius: '16px'
+                }}>
+                  • {sourcesCount} Sources
+                </span>
+              </>
+            )}
+
+            {!isReadOnly && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPromptId(p.id);
+                    setEditingPromptText(p.text || '');
+                  }}
+                  title="Prompt tekst wijzigen (en optioneel nieuwe 0-meting starten)"
+                  style={{
+                    padding: '5px 8px',
+                    borderRadius: '6px',
+                    border: '1px solid #e5e7eb',
+                    backgroundColor: '#ffffff',
+                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <Edit2 size={12} />
+                </button>
+                <button
+                  type="button"
+                  disabled={isCrawling || resettingNulmeting}
+                  onClick={() => handleStartNewNulmeting({ promptIds: [p.id], label: `prompt "${p.text}"` })}
+                  title="Start handmatig een nieuwe 0-meting voor deze prompt"
+                  style={{
+                    padding: '5px 9px',
+                    borderRadius: '6px',
+                    border: '1px solid #d8b4fe',
+                    backgroundColor: '#faf5ff',
+                    color: '#440099',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    cursor: (isCrawling || resettingNulmeting) ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <RefreshCw size={11} />
+                  0-meting
+                </button>
+                <button
+                  type="button"
+                  disabled={isCrawling}
+                  onClick={() => handleRunPromptScan(p.id, p.text)}
+                  style={{
+                    padding: '5px 11px',
+                    borderRadius: '6px',
+                    backgroundColor: isCrawling ? '#93c5fd' : '#000000',
+                    color: '#ffffff',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    cursor: isCrawling ? 'not-allowed' : 'pointer',
+                    border: 'none',
+                    opacity: isCrawling ? 0.8 : 1
+                  }}
+                >
+                  {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
+                  {isCrawling ? 'Crawling...' : 'Crawl'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeletePrompt(kwContext?.id || null, p.id)}
+                  title="Prompt definitief verwijderen"
+                  style={{
+                    padding: '6px',
+                    borderRadius: '6px',
+                    color: '#ef4444',
+                    cursor: 'pointer',
+                    backgroundColor: showEditActions ? '#fef2f2' : 'transparent',
+                    border: showEditActions ? '1px solid #fecaca' : 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            )}
+
+            <div style={{ color: '#9ca3af', marginLeft: '2px', display: 'flex', alignItems: 'center' }}>
+              {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </div>
+          </div>
+        </div>
+
+        {/* Engine Breakdown Rows + Per-Prompt History */}
+        {isOpen && (
+          <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
+            <div style={{
+              margin: '12px 20px',
+              padding: '16px',
+              backgroundColor: '#fafafa',
+              border: '1px solid #e5e7eb',
+              borderRadius: '10px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 800, color: '#111827' }}>
+                    Nulmeting & Resultaten Historie (Prompt)
+                  </span>
+                  <span style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    backgroundColor: '#f3e8ff',
+                    color: '#6b21a8'
+                  }}>
+                    Nulmeting ({promptBaseline?.displayDate || promptBaseline?.date}): {promptBaseline?.mentioned ? `Vermeld (${promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : `${promptBaseline.totalMentions || 1}/${promptBaseline.totalModels || 4} AI`})` : 'Niet vermeld'}
+                  </span>
+                </div>
+                <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
+                  Huidig: {isMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : `${p.totalMentions || 1}/${p.totalModels || 4} AI`})` : 'Niet vermeld'}
+                </span>
+              </div>
+
+              <div style={{
+                minHeight: '100px',
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '6px',
+                padding: '10px 8px 6px 8px',
+                backgroundColor: '#ffffff',
+                borderRadius: '8px',
+                border: '1px solid #e5e7eb',
+                overflowX: 'auto'
+              }}>
+                {promptHistory.map((hItem, hIdx) => {
+                  const isBase = hIdx === 0 || !!hItem.isBaseline;
+                  const scoreVal = typeof hItem.overallScore === 'number' && hItem.overallScore > 0
+                    ? hItem.overallScore
+                    : (hItem.mentioned ? 65 : 12);
+                  const barPx = Math.max(14, Math.round((Math.min(100, Math.max(15, scoreVal)) / 100) * 54));
+
+                  return (
+                    <div
+                      key={hIdx}
+                      style={{
+                        flex: '0 0 auto',
+                        width: '32px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'flex-end',
+                        gap: '3px'
+                      }}
+                    >
+                      <span style={{ fontSize: '9px', fontWeight: 800, color: hItem.mentioned ? '#15803d' : '#9ca3af', whiteSpace: 'nowrap' }}>
+                        {hItem.position && hItem.position !== '-' ? hItem.position : (hItem.mentioned ? '✓' : '✕')}
+                      </span>
+                      <div
+                        title={`${isBase ? 'Nulmeting' : `Meting #${hIdx + 1}`}: ${hItem.displayDate || hItem.date}\nStatus: ${hItem.mentioned ? 'Vermeld' : 'Niet vermeld'}\nPositie: ${hItem.position || '-'}\nModellen: ${hItem.totalMentions ?? (hItem.mentioned ? 1 : 0)}/${hItem.totalModels ?? 4} AI`}
+                        style={{
+                          width: '12px',
+                          height: `${barPx}px`,
+                          borderRadius: '4px 4px 2px 2px',
+                          background: isBase
+                            ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
+                            : (hItem.mentioned
+                                ? 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)'
+                                : '#e5e7eb'),
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                          cursor: 'pointer'
+                        }}
+                      />
+                      <span style={{ fontSize: '8px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                        {formatCompactDate(hItem.displayDate || hItem.date)}
+                      </span>
+                      <span style={{
+                        fontSize: '7px',
+                        fontWeight: 800,
+                        padding: '1px 3px',
+                        borderRadius: '3px',
+                        backgroundColor: isBase ? '#f3e8ff' : '#f3f4f6',
+                        color: isBase ? '#6b21a8' : '#6b7280',
+                        lineHeight: 1
+                      }}>
+                        {isBase ? 'NUL' : `#${hIdx + 1}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {isCrawling && !p.modelMentions ? (
+              <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', backgroundColor: '#f8fafc' }}>
+                <Loader2 size={24} className="spin" style={{ color: '#2563eb' }} />
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e293b' }}>
+                  Prompt wordt momenteel live uitgevoerd in AI zoekmachines...
+                </span>
+                <span style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', maxWidth: '480px' }}>
+                  OpenAI SearchGPT, Google AI Mode, Gemini en Perplexity analyseren het web op zoek naar actuele citaties, reviews en merkvermeldingen. Resultaten verschijnen automatisch zodra de scan gereed is.
+                </span>
+              </div>
+            ) : (
+              enginesList.map((eng, engIdx) => {
+                const engKey = `${promptKey}_${eng.id}`;
+                const isEngExpanded = !!expandedEngines[engKey];
+                return (
+                  <div
+                    key={engIdx}
+                    style={{
+                      borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 20px',
+                        cursor: eng.summary ? 'pointer' : 'default',
+                        userSelect: 'none',
+                        backgroundColor: isEngExpanded ? '#f9fafb' : 'transparent'
+                      }}
+                      onClick={() => eng.summary && toggleExpandedEngine(promptKey, eng.id)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {EngineLogos[eng.id]}
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                          {eng.name}
+                        </span>
+                        {eng.summary && (
+                          <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>
+                            {isEngExpanded ? '(klik om antwoord te verbergen)' : '(klik om antwoord te tonen)'}
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {eng.unavailable ? (
+                          <span
+                            title={eng.errorMsg || 'Engine niet beschikbaar tijdens deze scan; telt niet mee in scores.'}
+                            style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#b45309',
+                              backgroundColor: '#fef3c7',
+                              border: '1px solid #fde68a',
+                              padding: '2px 10px',
+                              borderRadius: '12px',
+                              cursor: 'help'
+                            }}
+                          >
+                            Niet gemeten (telt niet mee)
+                          </span>
+                        ) : (
+                          <>
+                            {eng.mentioned && (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#16a34a',
+                                backgroundColor: '#dcfce7',
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '2px'
+                              }}>
+                                ✓
+                              </span>
+                            )}
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#2563eb',
+                              backgroundColor: '#eff6ff',
+                              padding: '2px 8px',
+                              borderRadius: '12px'
+                            }}>
+                              • {eng.brands} Brands
+                            </span>
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#ea580c',
+                              backgroundColor: '#fff7ed',
+                              padding: '2px 8px',
+                              borderRadius: '12px'
+                            }}>
+                              • {eng.sources} Sources
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {isEngExpanded && eng.summary && (
+                      <div style={{
+                        padding: '14px 20px 18px 52px',
+                        backgroundColor: '#f8fafc',
+                        fontSize: '13px',
+                        lineHeight: '1.6',
+                        color: '#334155',
+                        borderTop: '1px solid #f1f5f9',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px'
+                      }}>
+                        <RichAiMarkdownView
+                          content={eng.summary}
+                          targetCompany={activeWorkspace || 'Saleswizard'}
+                          citations={eng.citations && eng.citations.length > 0 ? eng.citations : (p.citations || [])}
+                        />
+
+                        {(() => {
+                          const rawCits = (eng.citations && eng.citations.length > 0) ? eng.citations : (p.citations || []);
+                          const normalizedCits = (Array.isArray(rawCits) ? rawCits : [])
+                            .map(c => {
+                              if (typeof c === 'string') {
+                                const u = normalizeExternalUrl(c);
+                                const d = extractDomainFromUrl(u);
+                                return u ? { url: u, domain: d, title: d || u } : null;
+                              }
+                              if (c && typeof c === 'object' && c.url) {
+                                const u = normalizeExternalUrl(c.url);
+                                const d = c.domain || extractDomainFromUrl(u);
+                                return { url: u, domain: d, title: c.title || d || u };
+                              }
+                              return null;
+                            })
+                            .filter(c => c && c.url && c.url.startsWith('http'));
+
+                          if (normalizedCits.length === 0) return null;
+
+                          return (
+                            <div style={{
+                              marginTop: '4px',
+                              paddingTop: '10px',
+                              borderTop: '1px dashed #e2e8f0',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                                Geciteerde Bronnen & Links ({normalizedCits.length})
+                              </span>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {normalizedCits.slice(0, 12).map((cit, cIdx) => (
+                                  <a
+                                    key={cIdx}
+                                    href={cit.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={cit.url}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '4px 10px',
+                                      borderRadius: '16px',
+                                      backgroundColor: '#ffffff',
+                                      border: '1px solid #cbd5e1',
+                                      color: '#1e293b',
+                                      fontSize: '11px',
+                                      fontWeight: 600,
+                                      textDecoration: 'none',
+                                      boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                                      maxWidth: '260px'
+                                    }}
+                                  >
+                                    <FaviconImage domain={cit.domain} fallbackLabel={cit.domain} size={14} />
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {cit.title && !cit.title.startsWith('Bron: ') ? cit.title : cit.domain}
+                                    </span>
+                                    <span style={{ color: '#2563eb', fontSize: '10px', flexShrink: 0 }}>↗</span>
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
 
   const renderPromptLimitAlert = () => {
@@ -1960,6 +2911,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         flex: 1
       }}>
         {renderPromptLimitAlert()}
+        {renderNulmetingBanner()}
 
         {/* Detail Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -2002,31 +2954,77 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             {!isReadOnly && (
-              <button
-                type="button"
-                onClick={(e) => handleRescrapeKeyword(kw.id, e)}
-                disabled={rescrapingKeywords[kw.id]}
-                title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  border: '1px solid #bfdbfe',
-                  backgroundColor: rescrapingKeywords[kw.id] ? '#eff6ff' : '#f0f7ff',
-                  color: '#1d4ed8',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-                onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#dbeafe'; }}
-                onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#f0f7ff'; }}
-              >
-                <RotateCw size={13} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
-                {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw Scrapen'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleStartNewNulmeting({ keywordId: kw.id, label: `zoekterm "${kw.text}"` })}
+                  disabled={resettingNulmeting}
+                  title="Start handmatig een nieuwe 0-meting voor dit zoekwoord en de bijbehorende prompts"
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: '1px solid #d8b4fe',
+                    backgroundColor: '#faf5ff',
+                    color: '#440099',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: resettingNulmeting ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <RefreshCw size={13} className={resettingNulmeting ? 'spin' : ''} />
+                  Nieuwe 0-meting
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleRescrapeKeyword(kw.id, e)}
+                  disabled={rescrapingKeywords[kw.id]}
+                  title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: '1px solid #bfdbfe',
+                    backgroundColor: rescrapingKeywords[kw.id] ? '#eff6ff' : '#f0f7ff',
+                    color: '#1d4ed8',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#dbeafe'; }}
+                  onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#f0f7ff'; }}
+                >
+                  <RotateCw size={13} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
+                  {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw Scrapen'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteKeyword(kw)}
+                  title="Zoekterm en gekoppelde prompts definitief verwijderen"
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '20px',
+                    border: '1px solid #fecaca',
+                    backgroundColor: '#fef2f2',
+                    color: '#dc2626',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <Trash2 size={13} />
+                  Zoekterm Verwijderen
+                </button>
+              </>
             )}
             <button
               type="button"
@@ -3037,584 +4035,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 ) : null;
               })()}
 
-              {(kw.prompts || []).map((p, pIdx) => {
-                const promptKey = p.id || pIdx;
-                const isOpen = !!expandedPrompts[promptKey];
-                const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling';
-                const isMentioned = p.status === 'Cited' || p.mentioned;
-                const brandsCount = p.brandsCount || (isMentioned ? (p.citations ? p.citations.length + 3 : 5) : 0);
-                const sourcesCount = p.sourcesCount || (p.citations ? p.citations.length : 0);
-                const mData = p.modelMentions || {};
-
-                const isModelUnavailable = (entry) => {
-                  if (!entry) return true;
-                  const methodLower = String(entry.method || '').toLowerCase();
-                  const summaryLower = String(entry.summary || '').toLowerCase().trim();
-                  return Boolean(
-                    entry.isSimulated ||
-                    entry.fallbackUsed ||
-                    entry.failed ||
-                    entry.available === false ||
-                    methodLower.includes('simulator') ||
-                    methodLower.includes('niet gemeten') ||
-                    summaryLower.startsWith('[simulator]')
-                  );
-                };
-
-                const buildEngineRow = (id, name) => {
-                  const entry = mData[id];
-                  const unavailable = isModelUnavailable(entry);
-                  const engCitations = Array.isArray(entry?.citations) && entry.citations.length > 0
-                    ? entry.citations
-                    : (Array.isArray(p.citations) ? p.citations.filter(c => {
-                        if (!c || typeof c !== 'object') return true;
-                        if (Array.isArray(c.cited_by)) return c.cited_by.includes(id);
-                        if (c.sourceEngine) return c.sourceEngine === id;
-                        return true;
-                      }) : []);
-                  return {
-                    id,
-                    name,
-                    unavailable,
-                    mentioned: !unavailable && Boolean(entry?.mentioned),
-                    brands: unavailable ? 0 : (entry?.brands || 0),
-                    sources: unavailable ? 0 : (entry?.sources || 0),
-                    summary: unavailable ? '' : (entry?.summary || ''),
-                    citations: unavailable ? [] : engCitations,
-                    errorMsg: entry?.errorMsg || (unavailable ? (entry?.method || 'Niet gemeten (API fout)') : null),
-                    method: entry?.method || null,
-                  };
-                };
-
-                const enginesList = [
-                  buildEngineRow('chatgpt', 'OpenAI ChatGPT'),
-                  buildEngineRow('aioverviews', 'Google AI Overviews'),
-                  buildEngineRow('aimode', 'Google AI Mode'),
-                  buildEngineRow('gemini', 'Google Gemini'),
-                  buildEngineRow('perplexity', 'Perplexity AI'),
-                  buildEngineRow('claude', 'Anthropic Claude'),
-                  buildEngineRow('copilot', 'Microsoft Copilot'),
-                  buildEngineRow('meta', 'Meta AI')
-                ].filter(e => {
-                  if (enabledEngines && enabledEngines[e.id] === false && !(p.modelMentions && e.id in p.modelMentions)) return false;
-                  if (p.modelMentions && !(e.id in p.modelMentions)) return false;
-                  if (!p.modelMentions && (e.id === 'copilot' || e.id === 'meta')) return false;
-                  return true;
-                });
-
-                const promptHistory = Array.isArray(p.history) && p.history.length > 0
-                  ? p.history
-                  : [{
-                      date: new Date().toISOString().slice(0, 10),
-                      displayDate: p.lastUpdated || kw.last_updated || 'Nulmeting',
-                      isBaseline: true,
-                      label: 'Nulmeting',
-                      mentioned: isMentioned,
-                      position: p.position && p.position !== '-' ? p.position : (isMentioned ? kw.position || '#1' : '-'),
-                      totalMentions: p.totalMentions ?? (isMentioned ? 2 : 0),
-                      totalModels: p.totalModels ?? Math.max(1, enginesList.length || 4),
-                      overallScore: p.overallScore ?? (isMentioned ? 50 : 0)
-                    }];
-                const promptBaseline = p.baseline || promptHistory[0];
-
-                return (
-                  <div
-                    key={pIdx}
-                    style={{
-                      backgroundColor: '#ffffff',
-                      border: isCrawling ? '1px solid #93c5fd' : '1px solid #e5e7eb',
-                      borderRadius: '10px',
-                      overflow: 'hidden',
-                      boxShadow: isCrawling ? '0 2px 8px rgba(37, 99, 235, 0.08)' : '0 1px 3px rgba(0,0,0,0.02)',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    {/* LLMRefs Prompt Card Header */}
-                    <div
-                      style={{
-                        padding: '14px 20px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        backgroundColor: isCrawling ? '#f0f7ff' : '#f9fafb',
-                        cursor: 'pointer',
-                        userSelect: 'none'
-                      }}
-                      onClick={() => toggleExpandedPrompt(promptKey)}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, paddingRight: '12px', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: '14px', fontWeight: 700, color: '#111827' }}>
-                          {p.text}
-                        </span>
-                        {isCrawling && (
-                          <span style={{
-                            fontSize: '11px',
-                            padding: '3px 10px',
-                            borderRadius: '16px',
-                            backgroundColor: '#dbeafe',
-                            color: '#1d4ed8',
-                            fontWeight: 700,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px',
-                            border: '1px solid #bfdbfe'
-                          }}>
-                            <Loader2 size={11} className="spin" /> AI Crawl & Grounding actief
-                          </span>
-                        )}
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        {isCrawling ? (
-                          <span style={{
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            color: '#2563eb',
-                            backgroundColor: '#eff6ff',
-                            padding: '3px 12px',
-                            borderRadius: '16px',
-                            border: '1px solid #bfdbfe'
-                          }}>
-                            Wachten op AI modellen...
-                          </span>
-                        ) : (
-                          <>
-                            {p.status === 'failed' ? (
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#dc2626',
-                                backgroundColor: '#fee2e2',
-                                padding: '3px 10px',
-                                borderRadius: '16px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                              }}>
-                                ✕ Mislukt
-                              </span>
-                            ) : isMentioned ? (
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#16a34a',
-                                backgroundColor: '#dcfce7',
-                                padding: '3px 10px',
-                                borderRadius: '16px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                              }}>
-                                ✓ Mentioned {p.position && p.position !== '-' ? `(${p.position})` : ''}
-                              </span>
-                            ) : (
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 600,
-                                color: '#6b7280',
-                                backgroundColor: '#f3f4f6',
-                                padding: '3px 10px',
-                                borderRadius: '16px'
-                              }}>
-                                Not Mentioned
-                              </span>
-                            )}
-
-                            <span style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: '#6b21a8',
-                              backgroundColor: '#f3e8ff',
-                              padding: '3px 10px',
-                              borderRadius: '16px'
-                            }}>
-                              Nulmeting: {promptBaseline?.mentioned ? (promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : 'Vermeld') : 'Niet vermeld'}
-                            </span>
-
-                            <span style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: '#2563eb',
-                              backgroundColor: '#eff6ff',
-                              padding: '3px 10px',
-                              borderRadius: '16px'
-                            }}>
-                              • {brandsCount} Brands
-                            </span>
-
-                            <span style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: '#ea580c',
-                              backgroundColor: '#fff7ed',
-                              padding: '3px 10px',
-                              borderRadius: '16px'
-                            }}>
-                              • {sourcesCount} Sources
-                            </span>
-                          </>
-                        )}
-
-                        {!isReadOnly && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            {!isEditMode && (
-                              <button
-                                type="button"
-                                disabled={isCrawling}
-                                onClick={(e) => { e.stopPropagation(); handleRunPromptScan(p.id, p.text); }}
-                                style={{
-                                  padding: '5px 12px',
-                                  borderRadius: '6px',
-                                  backgroundColor: isCrawling ? '#93c5fd' : '#000000',
-                                  color: '#ffffff',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  cursor: isCrawling ? 'not-allowed' : 'pointer',
-                                  border: 'none',
-                                  opacity: isCrawling ? 0.8 : 1,
-                                  marginLeft: '4px'
-                                }}
-                              >
-                                {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
-                                {isCrawling ? 'Crawling...' : 'Crawl'}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); handleDeletePrompt(kw.id, p.id); }}
-                              title="Verwijder prompt en geef promptlimiet vrij"
-                              style={{
-                                padding: '6px',
-                                borderRadius: '6px',
-                                color: '#ef4444',
-                                cursor: 'pointer',
-                                backgroundColor: isEditMode ? '#fef2f2' : 'transparent',
-                                border: isEditMode ? '1px solid #fecaca' : 'none',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-                        )}
-
-                        <div style={{ color: '#9ca3af', marginLeft: '2px', display: 'flex', alignItems: 'center' }}>
-                          {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* LLMRefs Engine Breakdown Rows + Per-Prompt History */}
-                    {isOpen && (
-                      <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
-                        {/* Per-Prompt Nulmeting & Results History Graph */}
-                        <div style={{
-                          margin: '12px 20px',
-                          padding: '16px',
-                          backgroundColor: '#fafafa',
-                          border: '1px solid #e5e7eb',
-                          borderRadius: '10px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '12px'
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ fontSize: '12px', fontWeight: 800, color: '#111827' }}>
-                                Nulmeting & Resultaten Historie (Prompt)
-                              </span>
-                              <span style={{
-                                fontSize: '10px',
-                                fontWeight: 700,
-                                padding: '2px 8px',
-                                borderRadius: '10px',
-                                backgroundColor: '#f3e8ff',
-                                color: '#6b21a8'
-                              }}>
-                                Nulmeting ({promptBaseline?.displayDate || promptBaseline?.date}): {promptBaseline?.mentioned ? `Vermeld (${promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : `${promptBaseline.totalMentions || 1}/${promptBaseline.totalModels || 4} AI`})` : 'Niet vermeld'}
-                              </span>
-                            </div>
-                            <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
-                              Huidig: {isMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : `${p.totalMentions || 1}/${p.totalModels || 4} AI`})` : 'Niet vermeld'}
-                            </span>
-                          </div>
-
-                          <div style={{
-                            minHeight: '100px',
-                            display: 'flex',
-                            alignItems: 'flex-end',
-                            gap: '6px',
-                            padding: '10px 8px 6px 8px',
-                            backgroundColor: '#ffffff',
-                            borderRadius: '8px',
-                            border: '1px solid #e5e7eb',
-                            overflowX: 'auto'
-                          }}>
-                            {promptHistory.map((hItem, hIdx) => {
-                              const isBase = hIdx === 0 || !!hItem.isBaseline;
-                              const scoreVal = typeof hItem.overallScore === 'number' && hItem.overallScore > 0
-                                ? hItem.overallScore
-                                : (hItem.mentioned ? 65 : 12);
-                              const barPx = Math.max(14, Math.round((Math.min(100, Math.max(15, scoreVal)) / 100) * 54));
-
-                              return (
-                                <div
-                                  key={hIdx}
-                                  style={{
-                                    flex: '0 0 auto',
-                                    width: '32px',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                    justifyContent: 'flex-end',
-                                    gap: '3px'
-                                  }}
-                                >
-                                  <span style={{ fontSize: '9px', fontWeight: 800, color: hItem.mentioned ? '#15803d' : '#9ca3af', whiteSpace: 'nowrap' }}>
-                                    {hItem.position && hItem.position !== '-' ? hItem.position : (hItem.mentioned ? '✓' : '✕')}
-                                  </span>
-                                  <div
-                                    title={`${isBase ? 'Nulmeting' : `Meting #${hIdx + 1}`}: ${hItem.displayDate || hItem.date}\nStatus: ${hItem.mentioned ? 'Vermeld' : 'Niet vermeld'}\nPositie: ${hItem.position || '-'}\nModellen: ${hItem.totalMentions ?? (hItem.mentioned ? 1 : 0)}/${hItem.totalModels ?? 4} AI`}
-                                    style={{
-                                      width: '12px',
-                                      height: `${barPx}px`,
-                                      borderRadius: '4px 4px 2px 2px',
-                                      background: isBase
-                                        ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
-                                        : (hItem.mentioned
-                                            ? 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)'
-                                            : '#e5e7eb'),
-                                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                                      cursor: 'pointer'
-                                    }}
-                                  />
-                                  <span style={{ fontSize: '8px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
-                                    {formatCompactDate(hItem.displayDate || hItem.date)}
-                                  </span>
-                                  <span style={{
-                                    fontSize: '7px',
-                                    fontWeight: 800,
-                                    padding: '1px 3px',
-                                    borderRadius: '3px',
-                                    backgroundColor: isBase ? '#f3e8ff' : '#f3f4f6',
-                                    color: isBase ? '#6b21a8' : '#6b7280',
-                                    lineHeight: 1
-                                  }}>
-                                    {isBase ? 'NUL' : `#${hIdx + 1}`}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {isCrawling && !p.modelMentions ? (
-                          <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', backgroundColor: '#f8fafc' }}>
-                            <Loader2 size={24} className="spin" style={{ color: '#2563eb' }} />
-                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e293b' }}>
-                              Prompt wordt momenteel live uitgevoerd in AI zoekmachines...
-                            </span>
-                            <span style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', maxWidth: '480px' }}>
-                              OpenAI SearchGPT, Google AI Mode, Gemini en Perplexity analyseren het web op zoek naar actuele citaties, reviews en merkvermeldingen. Resultaten verschijnen automatisch zodra de scan gereed is.
-                            </span>
-                          </div>
-                        ) : (
-                          enginesList.map((eng, engIdx) => {
-                            const engKey = `${promptKey}_${eng.id}`;
-                            const isEngExpanded = !!expandedEngines[engKey];
-                            return (
-                              <div
-                                key={engIdx}
-                                style={{
-                                  borderBottom: engIdx < enginesList.length - 1 ? '1px solid #f3f4f6' : 'none'
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    padding: '10px 20px',
-                                    cursor: eng.summary ? 'pointer' : 'default',
-                                    userSelect: 'none',
-                                    backgroundColor: isEngExpanded ? '#f9fafb' : 'transparent'
-                                  }}
-                                  onClick={() => eng.summary && toggleExpandedEngine(promptKey, eng.id)}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    {EngineLogos[eng.id]}
-                                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                                      {eng.name}
-                                    </span>
-                                    {eng.summary && (
-                                      <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>
-                                        {isEngExpanded ? '(klik om antwoord te verbergen)' : '(klik om antwoord te tonen)'}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    {eng.unavailable ? (
-                                      <span
-                                        title={eng.errorMsg || 'Engine niet beschikbaar tijdens deze scan; telt niet mee in scores.'}
-                                        style={{
-                                          fontSize: '11px',
-                                          fontWeight: 700,
-                                          color: '#b45309',
-                                          backgroundColor: '#fef3c7',
-                                          border: '1px solid #fde68a',
-                                          padding: '2px 10px',
-                                          borderRadius: '12px',
-                                          cursor: 'help'
-                                        }}
-                                      >
-                                        Niet gemeten (telt niet mee)
-                                      </span>
-                                    ) : (
-                                      <>
-                                        {eng.mentioned && (
-                                          <span style={{
-                                            fontSize: '11px',
-                                            fontWeight: 800,
-                                            color: '#16a34a',
-                                            backgroundColor: '#dcfce7',
-                                            padding: '2px 8px',
-                                            borderRadius: '12px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '2px'
-                                          }}>
-                                            ✓
-                                          </span>
-                                        )}
-                                        <span style={{
-                                          fontSize: '11px',
-                                          fontWeight: 700,
-                                          color: '#2563eb',
-                                          backgroundColor: '#eff6ff',
-                                          padding: '2px 8px',
-                                          borderRadius: '12px'
-                                        }}>
-                                          • {eng.brands} Brands
-                                        </span>
-                                        <span style={{
-                                          fontSize: '11px',
-                                          fontWeight: 700,
-                                          color: '#ea580c',
-                                          backgroundColor: '#fff7ed',
-                                          padding: '2px 8px',
-                                          borderRadius: '12px'
-                                        }}>
-                                          • {eng.sources} Sources
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {isEngExpanded && eng.summary && (
-                                  <div style={{
-                                    padding: '14px 20px 18px 52px',
-                                    backgroundColor: '#f8fafc',
-                                    fontSize: '13px',
-                                    lineHeight: '1.6',
-                                    color: '#334155',
-                                    borderTop: '1px solid #f1f5f9',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '12px'
-                                  }}>
-                                    <RichAiMarkdownView
-                                      content={eng.summary}
-                                      targetCompany={activeWorkspace || 'Saleswizard'}
-                                      citations={eng.citations && eng.citations.length > 0 ? eng.citations : (p.citations || [])}
-                                    />
-
-                                    {/* Clickable Cited Sources & Favicon Links for this Engine */}
-                                    {(() => {
-                                      const rawCits = (eng.citations && eng.citations.length > 0) ? eng.citations : (p.citations || []);
-                                      const normalizedCits = (Array.isArray(rawCits) ? rawCits : [])
-                                        .map(c => {
-                                          if (typeof c === 'string') {
-                                            const u = normalizeExternalUrl(c);
-                                            const d = extractDomainFromUrl(u);
-                                            return u ? { url: u, domain: d, title: d || u } : null;
-                                          }
-                                          if (c && typeof c === 'object' && c.url) {
-                                            const u = normalizeExternalUrl(c.url);
-                                            const d = c.domain || extractDomainFromUrl(u);
-                                            return { url: u, domain: d, title: c.title || d || u };
-                                          }
-                                          return null;
-                                        })
-                                        .filter(c => c && c.url && c.url.startsWith('http'));
-
-                                      if (normalizedCits.length === 0) return null;
-
-                                      return (
-                                        <div style={{
-                                          marginTop: '4px',
-                                          paddingTop: '10px',
-                                          borderTop: '1px dashed #e2e8f0',
-                                          display: 'flex',
-                                          flexDirection: 'column',
-                                          gap: '6px'
-                                        }}>
-                                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                                            Geciteerde Bronnen & Links ({normalizedCits.length})
-                                          </span>
-                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                            {normalizedCits.slice(0, 12).map((cit, cIdx) => (
-                                              <a
-                                                key={cIdx}
-                                                href={cit.url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                onClick={(e) => e.stopPropagation()}
-                                                title={cit.url}
-                                                style={{
-                                                  display: 'inline-flex',
-                                                  alignItems: 'center',
-                                                  gap: '6px',
-                                                  padding: '4px 10px',
-                                                  borderRadius: '16px',
-                                                  backgroundColor: '#ffffff',
-                                                  border: '1px solid #cbd5e1',
-                                                  color: '#1e293b',
-                                                  fontSize: '11px',
-                                                  fontWeight: 600,
-                                                  textDecoration: 'none',
-                                                  boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                                                  maxWidth: '260px'
-                                                }}
-                                              >
-                                                <FaviconImage domain={cit.domain} fallbackLabel={cit.domain} size={14} />
-                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                  {cit.title && !cit.title.startsWith('Bron: ') ? cit.title : cit.domain}
-                                                </span>
-                                                <span style={{ color: '#2563eb', fontSize: '10px', flexShrink: 0 }}>↗</span>
-                                              </a>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {(kw.prompts || []).map((p, pIdx) => renderSinglePromptCard(p, pIdx, kw, isEditMode))}
               {(kw.prompts || []).length === 0 && (
                 <div style={{
                   padding: '28px 20px',
@@ -3650,7 +4071,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
                   <textarea
                     rows={2}
-                    placeholder={"bijv. Wat kost een gemiddelde seo optimalisatie bij Saleswizard?\nWelk marketingbureau in Arnhem heeft de beste reviews?"}
+                    placeholder={`bijv. Welke partij is een betrouwbare keuze voor ${kw.text || 'deze dienst'}?\nWat zijn de ervaringen en kosten voor ${kw.text || 'dit aanbod'}?`}
                     value={getCustomPromptInput(kw.id)}
                     onChange={(e) => setCustomPromptInput(kw.id, e.target.value)}
                     disabled={isLimitReached}
@@ -3771,6 +4192,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }}>
 
       {renderPromptLimitAlert()}
+      {renderNulmetingBanner()}
 
       {/* Header bar */}
       <div data-tour="keywords-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
@@ -3784,7 +4206,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               letterSpacing: '-0.5px',
               margin: 0
             }}>
-              Keywords
+              Prompts & Zoektermen
             </h1>
             {isReadOnly && (
               <span style={{
@@ -3803,11 +4225,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           <p style={{ color: '#6b7280', fontSize: '13px', marginTop: '4px' }}>
             {isReadOnly
               ? `Live GEO resultaten, nulmeting en AI-zichtbaarheid voor ${activeWorkspace || 'uw merk'}.`
-              : `Setup your keywords for ${activeWorkspace ? activeWorkspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '') : 'Saleswizard'} brand visibility tracking.`}
+              : `Beheer alle AI-prompts in één totaaloverzicht voor ${activeWorkspace ? activeWorkspace.replace(/\.(nl|com|eu|de|be|org|net|io|co|info|biz|[a-z]{2,8})$/i, '') : 'uw merk'}. Zoektermen zijn optioneel.`}
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <span style={{
             fontSize: '11px',
             fontWeight: 700,
@@ -3819,9 +4241,30 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           }}>
             Pakket: {activePlanName}
           </span>
-          <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
-            Prompts: {totalUsedPrompts} / {activeLimit}
+          <span style={{
+            fontSize: '12px',
+            color: totalUsedPrompts > activeLimit ? '#b45309' : '#374151',
+            backgroundColor: totalUsedPrompts > activeLimit ? '#fffbeb' : '#f9fafb',
+            border: `1px solid ${totalUsedPrompts > activeLimit ? '#fde68a' : '#e5e7eb'}`,
+            padding: '4px 12px',
+            borderRadius: '12px',
+            fontWeight: 700
+          }}>
+            Prompts actief: {totalUsedPrompts} ({activeLimit} inbegrepen{totalUsedPrompts > activeLimit ? ` · +${totalUsedPrompts - activeLimit} extra` : ''})
           </span>
+          {!isReadOnly && (
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '4px 10px',
+              borderRadius: '12px',
+              backgroundColor: '#fffbeb',
+              color: '#92400e',
+              border: '1px solid #fde68a'
+            }}>
+              Geen limiet · Extra prompts brengen extra kosten met zich mee
+            </span>
+          )}
           <button
             type="button"
             onClick={handleExportProjectCsv}
@@ -3839,43 +4282,67 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               gap: '6px',
               boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
             }}
-            title="Exporteer alle keywords, nulmeting en prompts naar CSV (Excel)"
+            title="Exporteer alle prompts, nulmeting en zoektermen naar CSV (Excel)"
           >
             <Download size={13} />
             Export CSV
           </button>
           {!isReadOnly && (
-            <button
-              type="button"
-              onClick={() => {
-                setIsAdding(!isAdding);
-              }}
-              style={{
-                backgroundColor: '#000000',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '24px',
-                padding: '10px 20px',
-                fontSize: '13px',
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                transition: 'background-color 0.15s ease'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
-            >
-              <Plus size={14} strokeWidth={3} />
-              Add Keywords
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={resettingNulmeting || allPromptsList.length === 0}
+                onClick={() => handleStartNewNulmeting({ label: activeWorkspace || 'dit project' })}
+                title="Start handmatig een nieuwe 0-meting voor alle prompts van dit project (handig na het wijzigen van prompts)"
+                style={{
+                  backgroundColor: '#faf5ff',
+                  color: '#440099',
+                  border: '1px solid #d8b4fe',
+                  borderRadius: '24px',
+                  padding: '9px 16px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: (resettingNulmeting || allPromptsList.length === 0) ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <RefreshCw size={13} className={resettingNulmeting ? 'spin' : ''} />
+                Nieuwe 0-meting starten
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdding(!isAdding);
+                }}
+                style={{
+                  backgroundColor: '#000000',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '24px',
+                  padding: '10px 20px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                  transition: 'background-color 0.15s ease'
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+              >
+                <Plus size={14} strokeWidth={3} />
+                Prompts Toevoegen
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Add Keywords Form */}
+      {/* Add Prompts & Optional Keywords Form (Prompts-first!) */}
       {!isReadOnly && isAdding && (
         <form onSubmit={handleAddKeywords} style={{
           display: 'flex',
@@ -3886,74 +4353,144 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           borderRadius: '12px',
           backgroundColor: '#f9fafb'
         }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: '#111827' }}>
-            <Sparkles size={16} style={{ color: 'var(--brand-primary)' }} />
-            Add Keywords & Generate Prompts
-          </h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: '#111827', margin: 0 }}>
+              <Sparkles size={16} style={{ color: 'var(--brand-primary)' }} />
+              Prompts toevoegen (Zoektermen zijn optioneel)
+            </h3>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 700,
+              padding: '3px 10px',
+              borderRadius: '12px',
+              backgroundColor: '#fffbeb',
+              color: '#92400e',
+              border: '1px solid #fde68a'
+            }}>
+              Geen limiet op aantal prompts · Extra prompts brengen extra kosten met zich mee
+            </span>
+          </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>Keywords (comma-separated)</label>
+          {/* 1. Primary: Prompts opgeven */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            padding: '14px 16px',
+            borderRadius: '10px',
+            backgroundColor: '#ffffff',
+            border: '2px solid #e9d5ff'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 800, color: '#111827' }}>
+                1. Prompts opgeven (1 prompt per regel)
+              </label>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#440099' }}>
+                Prompts vormen de basis van de AI-meting
+              </span>
+            </div>
+            <textarea
+              rows={4}
+              placeholder={"Welke partij is een betrouwbare keuze voor onze dienstverlening?\nWat zijn de beste aanbieders en ervaringen in deze branche?\nWelke specialist wordt het meest aanbevolen?"}
+              value={customPromptsOnAdd}
+              onChange={(e) => setCustomPromptsOnAdd(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid #d1d5db',
+                fontSize: '13px',
+                lineHeight: 1.5
+              }}
+            />
+            {activeKeywords.length > 0 && !keywordInput.trim() && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>
+                  Optioneel koppelen aan bestaande zoekterm:
+                </label>
+                <select
+                  value={directPromptKeywordId}
+                  onChange={(e) => setDirectPromptKeywordId(e.target.value)}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '12px',
+                    backgroundColor: '#ffffff',
+                    color: '#111827',
+                    fontWeight: 600
+                  }}
+                >
+                  <option value="">— Niet koppelen (Opslaan als losse prompts) —</option>
+                  {activeKeywords.map(k => (
+                    <option key={k.id} value={k.id}>{k.text}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* 2. Optional: Nieuwe zoektermen toevoegen */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+            padding: '12px 14px',
+            borderRadius: '8px',
+            backgroundColor: '#ffffff',
+            border: '1px solid #e5e7eb'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>
+                2. Optioneel: Nieuwe zoektermen toevoegen (komma-gescheiden, niet verplicht)
+              </label>
               <button
                 type="button"
                 onClick={handleRecommendKeywords}
-                disabled={recommending || isLimitReached}
+                disabled={recommending}
                 style={{
-                  fontSize: '12px',
+                  fontSize: '11px',
                   fontWeight: 700,
                   color: '#440099',
                   backgroundColor: '#f3e8ff',
                   border: '1px solid #d8b4fe',
                   borderRadius: '16px',
-                  padding: '4px 12px',
-                  cursor: recommending || isLimitReached ? 'not-allowed' : 'pointer',
+                  padding: '3px 10px',
+                  cursor: recommending ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px',
-                  transition: 'all 0.15s ease'
+                  gap: '4px'
                 }}
               >
                 {recommending ? (
                   <>
-                    <Loader2 size={12} className="spin" />
-                    Keywords aanbevelen...
+                    <Loader2 size={11} className="spin" />
+                    Zoektermen aanbevelen...
                   </>
                 ) : (
                   <>
-                    <Sparkles size={12} />
-                    Recommend keywords
+                    <Sparkles size={11} />
+                    Recommend zoektermen
                   </>
                 )}
               </button>
             </div>
-            <textarea
-              rows={2}
-              placeholder="e.g. seo arnhem, online marketing bureau, ads uitbesteden"
+            <input
+              type="text"
+              placeholder="Optioneel: bijv. uw dienst, productnaam, specialist in regio (laat leeg om alleen prompts toe te voegen)"
               value={keywordInput}
               onChange={(e) => setKeywordInput(e.target.value)}
-              required
-              disabled={generateAiPromptsOnAdd && isLimitReached}
               style={{
                 width: '100%',
-                padding: '10px',
+                padding: '9px 12px',
                 borderRadius: '8px',
                 border: '1px solid #d1d5db',
                 fontSize: '13px'
               }}
             />
 
-            {/* Toggle AI Prompt generation & Custom prompts when adding keywords */}
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-              padding: '12px 14px',
-              borderRadius: '8px',
-              backgroundColor: '#ffffff',
-              border: '1px solid #e5e7eb',
-              marginTop: '4px'
-            }}>
-              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', margin: 0 }}>
+            {keywordInput.trim().length > 0 && (
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginTop: '4px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <input
                     type="checkbox"
@@ -3962,7 +4499,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     style={{ width: '16px', height: '16px', accentColor: '#440099', cursor: 'pointer' }}
                   />
                   <span style={{ fontSize: '12px', fontWeight: 700, color: '#111827' }}>
-                    Automatisch AI prompts genereren (3 per keyword)
+                    Automatisch 3 AI prompts per nieuwe zoekterm genereren
                   </span>
                 </div>
                 <span style={{
@@ -3976,88 +4513,46 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   {generateAiPromptsOnAdd ? 'AAN' : 'UIT'}
                 </span>
               </label>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '11px', fontWeight: 700, color: '#4b5563' }}>
-                  Zelf eigen prompts opgeven (optioneel, 1 prompt per regel)
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder={"Typ hier uw eigen zoekvragen (1 per regel) of laat leeg om ze later bij het keyword in te voeren..."}
-                  value={customPromptsOnAdd}
-                  onChange={(e) => setCustomPromptsOnAdd(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 10px',
-                    borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    fontSize: '12px'
-                  }}
-                />
-              </div>
-            </div>
-
-            {(() => {
-              const enteredKws = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
-              const customLinesCount = customPromptsOnAdd.split(/\r?\n/).map(s => s.trim()).filter(Boolean).length;
-              const countPrompts = (generateAiPromptsOnAdd ? enteredKws.length * 3 : 0) + customLinesCount;
-              const remaining = Math.max(0, activeLimit - totalUsedPrompts);
-              const willExceed = countPrompts > 0 && ((totalUsedPrompts + countPrompts) > activeLimit);
-
-              if (enteredKws.length > 0 || customLinesCount > 0) {
-                return (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    backgroundColor: willExceed ? '#fef2f2' : '#f0fdf4',
-                    border: `1px solid ${willExceed ? '#fecaca' : '#bbf7d0'}`,
-                    fontSize: '12px',
-                    color: willExceed ? '#991b1b' : '#166534',
-                    fontWeight: 600,
-                    flexWrap: 'wrap',
-                    gap: '6px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      {willExceed ? <AlertTriangle size={14} color="#dc2626" /> : <Sparkles size={14} color="#16a34a" />}
-                      <span>
-                        {enteredKws.length} keyword(s) · <strong>{countPrompts} prompt(s)</strong> ({generateAiPromptsOnAdd ? `${enteredKws.length * 3} AI` : '0 AI'}{customLinesCount > 0 ? ` + ${customLinesCount} eigen` : ''})
-                      </span>
-                    </div>
-                    <span>
-                      {willExceed ? (
-                        <span style={{ color: '#dc2626' }}>
-                          Limiet overschreden! (max: {activeLimit}, gebruikt: {totalUsedPrompts})
-                        </span>
-                      ) : (
-                        <span>
-                          Nog <strong>{remaining - countPrompts}</strong> over na toevoegen (max: {activeLimit})
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                );
-              }
-
-              if (generateAiPromptsOnAdd && isLimitReached) {
-                return (
-                  <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: 700 }}>
-                    Prompts limiet bereikt ({totalUsedPrompts}/{activeLimit}). Verwijder oude prompts/keywords of zet automatische AI-prompts uit.
-                  </span>
-                );
-              }
-
-              return (
-                <p style={{ fontSize: '11px', color: '#6b7280', margin: 0 }}>
-                  {generateAiPromptsOnAdd
-                    ? 'AI Prompts Generator maakt automatisch 3 zoekvragen per keyword (verbruikt 3 prompts per keyword).'
-                    : 'Automatische AI-prompts staan uit. Keywords worden toegevoegd met alleen uw eigen opgegeven prompts.'}
-                </p>
-              );
-            })()}
+            )}
           </div>
+
+          {(() => {
+            const enteredKws = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
+            const customLinesCount = customPromptsOnAdd.split(/\r?\n/).map(s => s.trim()).filter(Boolean).length;
+            const countPrompts = (generateAiPromptsOnAdd ? enteredKws.length * 3 : 0) + customLinesCount;
+            const newTotal = totalUsedPrompts + countPrompts;
+            const extraBeyondPlan = Math.max(0, newTotal - activeLimit);
+
+            return (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                backgroundColor: extraBeyondPlan > 0 ? '#fffbeb' : '#f0fdf4',
+                border: `1px solid ${extraBeyondPlan > 0 ? '#fde68a' : '#bbf7d0'}`,
+                fontSize: '12px',
+                color: extraBeyondPlan > 0 ? '#92400e' : '#166534',
+                fontWeight: 600,
+                flexWrap: 'wrap',
+                gap: '8px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {extraBeyondPlan > 0 ? <AlertTriangle size={14} color="#d97706" /> : <Sparkles size={14} color="#16a34a" />}
+                  <span>
+                    Toe te voegen: <strong>{countPrompts} prompt(s)</strong>
+                    {enteredKws.length > 0 ? ` en ${enteredKws.length} zoekterm(en)` : ' (zonder nieuwe zoekterm)'}
+                  </span>
+                </div>
+                <span>
+                  {extraBeyondPlan > 0
+                    ? `Let op: na toevoegen heeft u ${newTotal} prompts (${extraBeyondPlan} extra boven pakketbundel van ${activeLimit} — brengt extra kosten met zich mee).`
+                    : `Totaal na toevoegen: ${newTotal} prompts (${activeLimit} inbegrepen in pakket).`}
+                </span>
+              </div>
+            );
+          })()}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
             <button
@@ -4073,22 +4568,22 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 backgroundColor: '#ffffff'
               }}
             >
-              Cancel
+              Annuleren
             </button>
             <button
               type="submit"
-              disabled={generateAiPromptsOnAdd && isLimitReached}
               style={{
-                padding: '8px 16px',
+                padding: '8px 18px',
                 borderRadius: '6px',
-                backgroundColor: (generateAiPromptsOnAdd && isLimitReached) ? '#e5e7eb' : 'var(--brand-primary)',
+                backgroundColor: 'var(--brand-primary)',
                 color: 'white',
                 fontWeight: 700,
                 fontSize: '13px',
-                cursor: (generateAiPromptsOnAdd && isLimitReached) ? 'not-allowed' : 'pointer'
+                border: 'none',
+                cursor: 'pointer'
               }}
             >
-              {generateAiPromptsOnAdd ? 'Genereer Prompts & Voeg Toe' : 'Keywords Toevoegen'}
+              Prompts Opslaan & Scannen
             </button>
           </div>
         </form>
@@ -4103,6 +4598,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               totalActive++;
             }
           });
+        });
+        (standalonePrompts || []).forEach(p => {
+          if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
+            totalActive++;
+          }
         });
 
         if (totalActive > 0) {
@@ -4150,12 +4650,93 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         return null;
       })()}
 
+      {/* Main View Switcher Tabs: 1. Alle Prompts (Totaaloverzicht) | 2. Zoektermen & Concurrenten */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderBottom: '1px solid #e5e7eb',
+        gap: '12px',
+        flexWrap: 'wrap'
+      }}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            type="button"
+            onClick={() => setMainViewTab('all_prompts')}
+            style={{
+              padding: '12px 20px',
+              fontSize: '14px',
+              fontWeight: mainViewTab === 'all_prompts' ? 800 : 600,
+              color: mainViewTab === 'all_prompts' ? '#440099' : '#6b7280',
+              borderBottom: mainViewTab === 'all_prompts' ? '3px solid #440099' : '3px solid transparent',
+              backgroundColor: 'transparent',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <span>Alle Prompts (Totaaloverzicht)</span>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 800,
+              padding: '2px 8px',
+              borderRadius: '12px',
+              backgroundColor: mainViewTab === 'all_prompts' ? '#f3e8ff' : '#f3f4f6',
+              color: mainViewTab === 'all_prompts' ? '#440099' : '#4b5563'
+            }}>
+              {allPromptsList.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMainViewTab('keywords')}
+            style={{
+              padding: '12px 20px',
+              fontSize: '14px',
+              fontWeight: mainViewTab === 'keywords' ? 800 : 600,
+              color: mainViewTab === 'keywords' ? '#440099' : '#6b7280',
+              borderBottom: mainViewTab === 'keywords' ? '3px solid #440099' : '3px solid transparent',
+              backgroundColor: 'transparent',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
+            <span>Zoektermen & Concurrenten (Optioneel)</span>
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 800,
+              padding: '2px 8px',
+              borderRadius: '12px',
+              backgroundColor: mainViewTab === 'keywords' ? '#f3e8ff' : '#f3f4f6',
+              color: mainViewTab === 'keywords' ? '#440099' : '#4b5563'
+            }}>
+              {activeKeywords.length}
+            </span>
+          </button>
+        </div>
+
+        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 500, paddingBottom: '8px' }}>
+          {mainViewTab === 'all_prompts'
+            ? 'Klik op een prompt om de nulmeting, historie en volledige AI-antwoorden te bekijken of direct te bewerken.'
+            : 'Beheer gekoppelde zoektermen, bekijk concurrentierankings of verwijder zoektermen definitief.'}
+        </span>
+      </div>
+
       {/* Filter box */}
       <div style={{ position: 'relative', width: '100%' }}>
         <Search size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
         <input
           type="text"
-          placeholder="Filter keywords..."
+          placeholder={mainViewTab === 'all_prompts' ? 'Filter door alle prompts of zoektermen...' : 'Filter zoektermen...'}
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{
@@ -4173,6 +4754,59 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           onBlur={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
         />
       </div>
+
+      {/* VIEW 1: ALLE PROMPTS (TOTAALOVERZICHT) */}
+      {mainViewTab === 'all_prompts' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Quick Summary Strip */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '12px'
+          }}>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Totaal Prompts</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#111827', marginTop: '2px' }}>{allPromptsList.length}</div>
+            </div>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #dcfce7', backgroundColor: '#f0fdf4' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#15803d', textTransform: 'uppercase' }}>Vermeld in AI</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#166534', marginTop: '2px' }}>
+                {allPromptsList.filter(p => p.status === 'Cited' || p.mentioned).length}
+              </div>
+            </div>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Losse Prompts (Zonder zoekterm)</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#111827', marginTop: '2px' }}>{standalonePrompts.length}</div>
+            </div>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Actieve Zoektermen</div>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: '#111827', marginTop: '2px' }}>{activeKeywords.length}</div>
+            </div>
+          </div>
+
+          {filteredAllPrompts.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {filteredAllPrompts.map((p, pIdx) => renderSinglePromptCard(p, pIdx, p._keywordObj || null, true))}
+            </div>
+          ) : (
+            <div style={{
+              padding: '36px 24px',
+              borderRadius: '12px',
+              border: '1px dashed #d1d5db',
+              backgroundColor: '#f9fafb',
+              textAlign: 'center',
+              color: '#6b7280',
+              fontSize: '14px'
+            }}>
+              Er zijn nog geen prompts gevonden voor dit project. Klik rechtsboven op <strong>"+ Prompts Toevoegen"</strong> om direct uw prompts in te voeren (zoektermen zijn niet verplicht).
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* VIEW 2: ZOEKTERMEN & CONCURRENTEN */}
+      {mainViewTab === 'keywords' && (
+        <>
 
       {/* Bulk actions */}
       {!isReadOnly && selectedKeywordIds.length > 0 && (
@@ -4439,12 +5073,25 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleDeleteKeyword(kw); }}
-                        title="Zoekwoord & prompts definitief verwijderen (reset promptlimiet)"
-                        style={{ padding: '6px', borderRadius: '4px', border: 'none', background: 'none', cursor: 'pointer', color: '#9ca3af' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = '#9ca3af'; }}
+                        title="Zoekterm & gekoppelde prompts definitief verwijderen"
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #fecaca',
+                          backgroundColor: '#fef2f2',
+                          cursor: 'pointer',
+                          color: '#dc2626',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={13} />
+                        Verwijderen
                       </button>
                     </div>
                   )}
@@ -4485,7 +5132,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               <Archive size={15} style={{ color: '#d97706' }} />
               <span>Gearchiveerde zoekwoorden ({archivedKeywords.length})</span>
               <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 400 }}>
-                (tellen niet mee in de actieve promptlimiet; kunnen hersteld of definitief verwijderd worden)
+                (tellen niet mee in de actieve prompts; kunnen hersteld of definitief verwijderd worden)
               </span>
             </div>
             {isArchivedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -4580,6 +5227,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             )
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

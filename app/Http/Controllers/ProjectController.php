@@ -195,38 +195,9 @@ class ProjectController extends Controller
             ? array_values(array_filter(array_map('trim', explode(',', $keywords))))
             : [];
 
-        // If user did not enter keywords but did enter custom prompts, create a default keyword from company name
-        if (empty($rawKeywordsCheck) && $totalCustomPromptsCount > 0) {
-            $defaultKw = AiEngineService::cleanBrandKey($company) ?: strtolower($company);
-            $rawKeywordsCheck = [$defaultKw];
-            $keywords = $defaultKw;
-            $hasKeywords = true;
-        }
-
         $maxPrompts = Project::getPromptLimit($subscription);
-        $maxKeywordsWithAi = (int) floor($maxPrompts / 3);
-
-        if ($hasKeywords) {
-            if ($generateAiPrompts && count($rawKeywordsCheck) > $maxKeywordsWithAi) {
-                return response()->json([
-                    'error' => "Het gekozen pakket ({$subscription}) staat bij automatische AI-generatie maximaal {$maxKeywordsWithAi} zoekwoorden ({$maxPrompts} prompts) toe. U heeft er " . count($rawKeywordsCheck) . " opgegeven."
-                ], 400);
-            }
-            if (!$generateAiPrompts && count($rawKeywordsCheck) > $maxPrompts) {
-                return response()->json([
-                    'error' => "Het gekozen pakket ({$subscription}) staat maximaal {$maxPrompts} zoekwoorden/prompts toe. U heeft er " . count($rawKeywordsCheck) . " opgegeven."
-                ], 400);
-            }
-        }
-
         $expectedTotalPrompts = ($generateAiPrompts ? (count($rawKeywordsCheck) * 3) : 0) + $totalCustomPromptsCount;
-        if ($expectedTotalPrompts > $maxPrompts) {
-            return response()->json([
-                'error' => "Het totaal aantal prompts ({$expectedTotalPrompts}) overschrijdt de pakketlimiet van {$maxPrompts} prompts voor {$subscription}."
-            ], 400);
-        }
-
-        $willProcessPrompts = $expectedTotalPrompts > 0;
+        $willProcessPrompts = $expectedTotalPrompts > 0 || !empty($rawKeywordsCheck);
 
         $project = Project::create([
             'company' => $company,
@@ -235,8 +206,8 @@ class ProjectController extends Controller
             'subscription' => $subscription,
             'prompts_count' => $expectedTotalPrompts,
             'visibility_index' => 0,
-            'setup_status' => $willProcessPrompts ? 'processing' : 'completed',
-            'setup_progress' => $willProcessPrompts ? 20 : 100,
+            'setup_status' => $expectedTotalPrompts > 0 ? 'processing' : 'completed',
+            'setup_progress' => $expectedTotalPrompts > 0 ? 20 : 100,
         ]);
 
         GeoLog::section("NIEUW PROJECT AANGEMAAKT: {$company}");
@@ -244,8 +215,8 @@ class ProjectController extends Controller
             "Project ID: #{$project->id}",
             "Bedrijfsnaam: {$company}",
             "Contactpersoon: {$name} ({$email})",
-            "Pakket: {$subscription} (Max {$maxPrompts} prompts)",
-            "Keywords: " . ($hasKeywords ? $keywords : 'Geen'),
+            "Pakket: {$subscription} (Standaard bundel: {$maxPrompts} prompts, geen harde limiet)",
+            "Keywords: " . ($hasKeywords ? $keywords : 'Geen (Directe prompts workflow)'),
             "AI Prompts Genereren: " . ($generateAiPrompts ? 'Ja' : 'Nee (Uitgeschakeld)'),
             "Eigen Prompts Opgegeven: {$totalCustomPromptsCount}",
         ]);
@@ -278,8 +249,8 @@ class ProjectController extends Controller
             $project->users()->syncWithoutDetaching([$userId]);
         }
 
-        if ($hasKeywords) {
-            $this->queueKeywordsSetup($project, $keywords, $generateAiPrompts, $customPromptsByKeyword, $flatCustomPrompts);
+        if ($willProcessPrompts) {
+            $this->queueKeywordsSetup($project, (string) ($keywords ?? ''), $generateAiPrompts, $customPromptsByKeyword, $flatCustomPrompts);
         }
 
         $project->refresh();
@@ -315,12 +286,12 @@ class ProjectController extends Controller
         $companyKey = \App\Services\AiEngineService::cleanBrandKey($project->company);
         $rawKeywords = array_values(array_filter(array_map('trim', explode(',', $keywordsString))));
 
-        if (empty($rawKeywords)) {
+        if (empty($rawKeywords) && empty($flatCustomPrompts) && empty($customPromptsByKeyword)) {
             return;
         }
 
         GeoLog::subSection("KEYWORDS & PROMPT SETUP VOOR PROJECT #{$project->id} ({$project->company})");
-        GeoLog::info("Verwerken van " . count($rawKeywords) . " zoekwoorden (AI prompts: " . ($generateAiPrompts ? 'AAN' : 'UIT') . ")...");
+        GeoLog::info("Verwerken van " . count($rawKeywords) . " zoekwoorden en directe prompts (AI prompts: " . ($generateAiPrompts ? 'AAN' : 'UIT') . ")...");
 
         $defaultEngines = AiEngineService::getEnabledEngines();
         $createdKeywords = [];
@@ -394,17 +365,19 @@ class ProjectController extends Controller
             ], $promptLines));
         }
 
-        // Attach any flat/general custom prompts across the created keywords (round-robin or to first keyword)
-        if (!empty($flatCustomPrompts) && !empty($createdKeywords)) {
+        // Attach any flat/general custom prompts across created keywords, or directly to the project without a keyword
+        if (!empty($flatCustomPrompts)) {
             foreach ($flatCustomPrompts as $fIdx => $cpText) {
                 $pText = trim($cpText);
                 if ($pText === '') {
                     continue;
                 }
-                $targetKw = $createdKeywords[$fIdx % count($createdKeywords)];
+                $targetKwId = !empty($createdKeywords)
+                    ? $createdKeywords[$fIdx % count($createdKeywords)]->id
+                    : null;
                 $promptRecord = Prompt::create([
                     'project_id' => $project->id,
-                    'keyword_id' => $targetKw->id,
+                    'keyword_id' => $targetKwId,
                     'prompt_text' => $pText,
                     'category' => 'Custom',
                     'response_summary' => 'Wachtend op achtergrond scan...',

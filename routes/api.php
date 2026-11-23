@@ -37,7 +37,9 @@ Route::post('/keywords/bulk-delete', [KeywordController::class, 'bulkDelete']);
 // Prompts Routes
 Route::get('/prompts', [PromptController::class, 'index']);
 Route::post('/prompts', [PromptController::class, 'store']);
+Route::put('/prompts/{id}', [PromptController::class, 'update']);
 Route::post('/prompts/generate', [PromptController::class, 'generate']);
+Route::post('/prompts/reset-nulmeting', [PromptController::class, 'resetNulmeting']);
 Route::post('/prompts/{id}/scan', [PromptController::class, 'scan']);
 Route::delete('/prompts/{id}', [PromptController::class, 'destroy']);
 Route::post('/prompts/bulk-delete', [PromptController::class, 'bulkDelete']);

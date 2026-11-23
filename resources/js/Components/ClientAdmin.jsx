@@ -355,21 +355,6 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
     const aiPromptsCount = generateAiPrompts ? enteredKeywords.length * 3 : 0;
     const totalPromptsToCreate = aiPromptsCount + customPromptsCount;
 
-    if (generateAiPrompts && enteredKeywords.length > maxKws) {
-      setError(`Met het gekozen pakket (${subscription}) en automatische AI-prompts kunt u maximaal ${maxKws} keywords (${maxPrompts} prompts) toevoegen. U heeft er nu ${enteredKeywords.length} ingevuld.`);
-      return;
-    }
-
-    if (!generateAiPrompts && enteredKeywords.length > maxPrompts) {
-      setError(`Met het gekozen pakket (${subscription}) kunt u maximaal ${maxPrompts} keywords/prompts toevoegen. U heeft er nu ${enteredKeywords.length} ingevuld.`);
-      return;
-    }
-
-    if (totalPromptsToCreate > maxPrompts) {
-      setError(`Het totaal aantal prompts (${totalPromptsToCreate}) overschrijdt het maximum van ${maxPrompts} prompts voor ${subscription}.`);
-      return;
-    }
-
     setError('');
     setLoading(true);
 
@@ -839,9 +824,9 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                       onChange={(e) => setSubscription(e.target.value)}
                       disabled={loading}
                     >
-                      <option value="AI Starter">AI Starter — max. 5 keywords / 15 prompts (€195/mnd)</option>
-                      <option value="AI Pro">AI Pro — max. 10 keywords / 30 prompts (€350/mnd)</option>
-                      <option value="AI Enterprise">AI Enterprise — max. 20 keywords / 60 prompts (€700/mnd)</option>
+                      <option value="AI Starter">AI Starter — 15 prompts inbegrepen (€195/mnd)</option>
+                      <option value="AI Pro">AI Pro — 30 prompts inbegrepen (€350/mnd)</option>
+                      <option value="AI Enterprise">AI Enterprise — 60 prompts inbegrepen (€700/mnd)</option>
                     </select>
                   </div>
 
@@ -874,7 +859,7 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                         cursor: 'pointer'
                       }}
                     >
-                      Volgende: Keywords
+                      Volgende: Prompts
                     </button>
                   </div>
                 </form>
@@ -883,10 +868,10 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
               <>
                 <div>
                   <h3 style={{ fontSize: '18px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>
-                    Keywords Toevoegen
+                    Prompts & Zoektermen Instellen
                   </h3>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    Voeg optioneel alvast keywords toe voor dit project (komma-gescheiden).
+                    Geef direct uw eigen prompts op. Zoektermen (keywords) zijn niet verplicht.
                   </p>
                 </div>
 
@@ -904,10 +889,103 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                 )}
 
                 <form onSubmit={handleAddClientSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        Keywords (komma-gescheiden)
+                  {/* 1. Primary: Direct Prompts Input */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '14px',
+                    borderRadius: '10px',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #d8b4fe'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 800, color: '#111827' }}>
+                        Prompts opgeven (1 prompt per regel)
+                      </label>
+                      {keywordInput.split(',').map(k => k.trim()).filter(Boolean).length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setUsePerKeywordPrompts(!usePerKeywordPrompts)}
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            color: '#440099',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            textDecoration: 'underline',
+                            padding: 0
+                          }}
+                        >
+                          {usePerKeywordPrompts ? 'Algemene lijst gebruiken' : 'Per zoekterm opgeven'}
+                        </button>
+                      )}
+                    </div>
+
+                    {usePerKeywordPrompts && keywordInput.split(',').map(k => k.trim()).filter(Boolean).length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '190px', overflowY: 'auto', paddingRight: '4px' }}>
+                        {keywordInput.split(',').map(k => k.trim()).filter(Boolean).map((kw, idx) => {
+                          const kwKey = kw.toLowerCase();
+                          return (
+                            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#374151' }}>
+                                Zoekterm: <span style={{ color: '#440099' }}>{kw}</span>
+                              </span>
+                              <textarea
+                                rows={2}
+                                placeholder={`Typ eigen prompt(s) voor "${kw}" (1 per regel)...`}
+                                value={customPromptsByKeyword[kwKey] || ''}
+                                onChange={(e) => setCustomPromptsByKeyword(prev => ({ ...prev, [kwKey]: e.target.value }))}
+                                disabled={loading}
+                                style={{
+                                  width: '100%',
+                                  padding: '8px 10px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #d1d5db',
+                                  fontSize: '12px'
+                                }}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={4}
+                        placeholder={"bijv. Welke partij raden jullie aan voor deze dienst of dit product?\nWat zijn de ervaringen en kosten bij een specialist in de regio?"}
+                        value={customPromptsInput}
+                        onChange={(e) => setCustomPromptsInput(e.target.value)}
+                        disabled={loading}
+                        style={{
+                          width: '100%',
+                          padding: '10px',
+                          borderRadius: 'var(--border-radius-sm)',
+                          border: '1px solid var(--border-medium)',
+                          backgroundColor: 'var(--bg-card)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    )}
+                    <span style={{ fontSize: '10px', color: '#6b7280' }}>
+                      U kunt hier direct alle prompts plakken of ze later in het project toevoegen en bewerken.
+                    </span>
+                  </div>
+
+                  {/* 2. Optional: Keywords & AI Prompt Generation */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #e2e8f0'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>
+                        Optioneel: Zoektermen / Keywords (komma-gescheiden, niet verplicht)
                       </label>
                       <button
                         type="button"
@@ -942,81 +1020,29 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                       </button>
                     </div>
                     <textarea
-                      rows={4}
-                      placeholder="bijv. seo optimalisatie, online marketing bureau, ads uitbesteden"
+                      rows={2}
+                      placeholder="Optioneel: laat leeg om alleen met bovenstaande prompts te werken..."
                       value={keywordInput}
                       onChange={(e) => setKeywordInput(e.target.value)}
                       disabled={loading}
                       style={{
                         width: '100%',
-                        padding: '10px',
+                        padding: '8px 10px',
                         borderRadius: 'var(--border-radius-sm)',
                         border: '1px solid var(--border-medium)',
-                        backgroundColor: 'var(--bg-card)',
+                        backgroundColor: '#ffffff',
                         color: 'var(--text-primary)',
-                        fontSize: '13px'
+                        fontSize: '12px'
                       }}
                     />
-                    {(() => {
-                      const enteredKws = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
-                      const maxKws = getMaxKeywordsForPlan(subscription);
-                      const maxPrompts = maxKws * 3;
-                      let customCount = 0;
-                      if (usePerKeywordPrompts && enteredKws.length > 0) {
-                        enteredKws.forEach(kw => {
-                          customCount += (customPromptsByKeyword[kw.toLowerCase()] || '')
-                            .split(/\r?\n/)
-                            .map(s => s.trim())
-                            .filter(Boolean).length;
-                        });
-                      } else {
-                        customCount = customPromptsInput.split(/\r?\n/).map(s => s.trim()).filter(Boolean).length;
-                      }
-                      const aiPromptsCount = generateAiPrompts ? enteredKws.length * 3 : 0;
-                      const totalPromptsCount = aiPromptsCount + customCount;
-                      const exceeded = (generateAiPrompts && enteredKws.length > maxKws) || totalPromptsCount > maxPrompts || enteredKws.length > maxPrompts;
-                      return (
-                        <div style={{
-                          marginTop: '6px',
-                          padding: '8px 12px',
-                          borderRadius: '8px',
-                          backgroundColor: exceeded ? '#fef2f2' : '#f8fafc',
-                          border: `1px solid ${exceeded ? '#fecaca' : '#e2e8f0'}`,
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          color: exceeded ? '#dc2626' : '#475569',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          flexWrap: 'wrap',
-                          gap: '6px'
-                        }}>
-                          <span>Pakket: <strong>{subscription}</strong> (max. {maxPrompts} prompts)</span>
-                          <span>
-                            Keywords: <strong>{enteredKws.length}</strong> · Prompts: <strong>{totalPromptsCount} / {maxPrompts}</strong>
-                          </span>
-                        </div>
-                      );
-                    })()}
-                  </div>
 
-                  {/* Toggle Automatic AI Prompt Generation */}
-                  <div style={{
-                    padding: '12px 14px',
-                    borderRadius: '10px',
-                    backgroundColor: generateAiPrompts ? '#faf5ff' : '#f8fafc',
-                    border: `1px solid ${generateAiPrompts ? '#d8b4fe' : '#e2e8f0'}`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '6px'
-                  }}>
                     <label style={{
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       cursor: 'pointer',
                       gap: '10px',
-                      margin: 0
+                      margin: '4px 0 0 0'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <input
@@ -1024,10 +1050,10 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                           checked={generateAiPrompts}
                           onChange={(e) => setGenerateAiPrompts(e.target.checked)}
                           disabled={loading}
-                          style={{ width: '16px', height: '16px', accentColor: '#440099', cursor: 'pointer' }}
+                          style={{ width: '15px', height: '15px', accentColor: '#440099', cursor: 'pointer' }}
                         />
-                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#111827' }}>
-                          Automatisch AI prompts genereren (3 per keyword)
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#334155' }}>
+                          Automatisch 3 AI-prompts per ingevulde zoekterm genereren
                         </span>
                       </div>
                       <span style={{
@@ -1041,96 +1067,49 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                         {generateAiPrompts ? 'AAN' : 'UIT'}
                       </span>
                     </label>
-                    <p style={{ fontSize: '11px', color: '#6b7280', margin: 0, lineHeight: 1.4 }}>
-                      {generateAiPrompts
-                        ? 'De tool bedenkt automatisch 3 zoekvragen per ingevuld keyword. Zet dit uit als u alleen uw eigen prompts wilt gebruiken.'
-                        : 'Automatische AI-prompts staan uit. U kunt hieronder direct zelf prompts opgeven of ze later per keyword in het project toevoegen.'}
-                    </p>
                   </div>
 
-                  {/* Custom User Prompts Input */}
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px',
-                    padding: '12px 14px',
-                    borderRadius: '10px',
-                    backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                        Zelf prompts opgeven (optioneel, 1 prompt per regel)
-                      </label>
-                      {keywordInput.split(',').map(k => k.trim()).filter(Boolean).length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => setUsePerKeywordPrompts(!usePerKeywordPrompts)}
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: 700,
-                            color: '#440099',
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            textDecoration: 'underline',
-                            padding: 0
-                          }}
-                        >
-                          {usePerKeywordPrompts ? 'Algemene lijst gebruiken' : 'Per keyword opgeven'}
-                        </button>
-                      )}
-                    </div>
-
-                    {usePerKeywordPrompts && keywordInput.split(',').map(k => k.trim()).filter(Boolean).length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '190px', overflowY: 'auto', paddingRight: '4px' }}>
-                        {keywordInput.split(',').map(k => k.trim()).filter(Boolean).map((kw, idx) => {
-                          const kwKey = kw.toLowerCase();
-                          return (
-                            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#374151' }}>
-                                Keyword: <span style={{ color: '#440099' }}>{kw}</span>
-                              </span>
-                              <textarea
-                                rows={2}
-                                placeholder={`Typ eigen prompt(s) voor "${kw}" (1 per regel)...`}
-                                value={customPromptsByKeyword[kwKey] || ''}
-                                onChange={(e) => setCustomPromptsByKeyword(prev => ({ ...prev, [kwKey]: e.target.value }))}
-                                disabled={loading}
-                                style={{
-                                  width: '100%',
-                                  padding: '8px 10px',
-                                  borderRadius: '6px',
-                                  border: '1px solid #d1d5db',
-                                  fontSize: '12px'
-                                }}
-                              />
-                            </div>
-                          );
-                        })}
+                  {/* 3. Unlimited Prompts & Extra Cost Notice */}
+                  {(() => {
+                    const enteredKws = keywordInput.split(',').map(k => k.trim()).filter(Boolean);
+                    const maxKws = getMaxKeywordsForPlan(subscription);
+                    const includedPrompts = maxKws * 3;
+                    let customCount = 0;
+                    if (usePerKeywordPrompts && enteredKws.length > 0) {
+                      enteredKws.forEach(kw => {
+                        customCount += (customPromptsByKeyword[kw.toLowerCase()] || '')
+                          .split(/\r?\n/)
+                          .map(s => s.trim())
+                          .filter(Boolean).length;
+                      });
+                    } else {
+                      customCount = customPromptsInput.split(/\r?\n/).map(s => s.trim()).filter(Boolean).length;
+                    }
+                    const aiPromptsCount = generateAiPrompts ? enteredKws.length * 3 : 0;
+                    const totalPromptsCount = aiPromptsCount + customCount;
+                    const extraPrompts = Math.max(0, totalPromptsCount - includedPrompts);
+                    return (
+                      <div style={{
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        backgroundColor: extraPrompts > 0 ? '#fffbeb' : '#faf5ff',
+                        border: `1px solid ${extraPrompts > 0 ? '#fde68a' : '#e9d5ff'}`,
+                        fontSize: '11px',
+                        color: extraPrompts > 0 ? '#92400e' : '#581c87',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '4px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700 }}>
+                          <span>Pakket: {subscription} ({includedPrompts} prompts standaard)</span>
+                          <span>Totaal nu: {totalPromptsCount} prompt(s){extraPrompts > 0 ? ` (+${extraPrompts} extra)` : ''}</span>
+                        </div>
+                        <span style={{ fontSize: '10.5px', lineHeight: 1.4, fontWeight: 500 }}>
+                          Let op: er geldt geen limiet op het aantal prompts. Het toevoegen van extra prompts brengt wel extra API-/scankosten met zich mee.
+                        </span>
                       </div>
-                    ) : (
-                      <textarea
-                        rows={3}
-                        placeholder={"bijv. Welk online marketing bureau in Arnhem is gespecialiseerd in MKB?\nWat zijn de ervaringen met webdesign bij dit bedrijf?"}
-                        value={customPromptsInput}
-                        onChange={(e) => setCustomPromptsInput(e.target.value)}
-                        disabled={loading}
-                        style={{
-                          width: '100%',
-                          padding: '10px',
-                          borderRadius: 'var(--border-radius-sm)',
-                          border: '1px solid var(--border-medium)',
-                          backgroundColor: 'var(--bg-card)',
-                          color: 'var(--text-primary)',
-                          fontSize: '12px'
-                        }}
-                      />
-                    )}
-                    <span style={{ fontSize: '10px', color: '#6b7280' }}>
-                      Tip: u kunt dit veld ook leeg laten en later in het project per keyword handmatig eigen prompts toevoegen.
-                    </span>
-                  </div>
+                    );
+                  })()}
 
                   <div style={{ display: 'flex', gap: '12px', marginTop: '12px', justifyContent: 'flex-end' }}>
                     <button

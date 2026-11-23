@@ -379,6 +379,216 @@ STRIKTE REGELS:
         ], 201);
     }
 
+    public function update(Request $request, int $id): JsonResponse
+    {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers kunnen prompts bewerken.'], 403);
+        }
+
+        $prompt = Prompt::find($id);
+        if (!$prompt) {
+            return response()->json(['error' => 'Prompt niet gevonden.'], 404);
+        }
+
+        $text = trim((string) $request->input('text', $prompt->prompt_text));
+        if ($text === '') {
+            return response()->json(['error' => 'Prompt tekst mag niet leeg zijn.'], 400);
+        }
+
+        $resetNulmeting = $request->boolean('reset_nulmeting', false);
+        $rescan = $request->boolean('rescan', $resetNulmeting);
+
+        $updateData = [
+            'prompt_text' => $text,
+            'updated_at' => now(),
+        ];
+
+        if ($request->has('keyword_id')) {
+            $kwId = $request->input('keyword_id');
+            $updateData['keyword_id'] = $kwId ? (int) $kwId : null;
+        }
+
+        if ($resetNulmeting) {
+            $resObj = is_array($prompt->results) ? $prompt->results : json_decode($prompt->results ?? '[]', true);
+            if (is_array($resObj)) {
+                $resObj['history'] = [];
+                $updateData['results'] = $resObj;
+            }
+            $updateData['created_at'] = now();
+        }
+
+        if ($rescan) {
+            $updateData['status'] = 'pending';
+        }
+
+        $prompt->update($updateData);
+
+        if ($rescan) {
+            ProcessPromptJob::dispatch($prompt->id);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $resetNulmeting
+                ? 'Prompt bijgewerkt en nieuwe 0-meting gestart.'
+                : 'Prompt succesvol bijgewerkt.',
+            'prompt' => [
+                'id' => $prompt->id,
+                'project_id' => $prompt->project_id,
+                'keyword_id' => $prompt->keyword_id,
+                'text' => $prompt->prompt_text,
+                'status' => $prompt->status,
+            ],
+        ]);
+    }
+
+    /**
+     * Start a new 0-meting (Baseline reset) for specific prompt(s), a keyword, or an entire project.
+     * Clears historical measurement points so the current/new scan becomes the fresh Nulmeting.
+     */
+    public function resetNulmeting(Request $request): JsonResponse
+    {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers kunnen een nieuwe 0-meting starten.'], 403);
+        }
+
+        $projectId = $request->input('project_id');
+        $company = $request->input('company');
+        $keywordId = $request->input('keyword_id');
+        $promptIds = $request->input('prompt_ids', []);
+        $rescan = $request->has('rescan') ? $request->boolean('rescan') : true;
+
+        $project = null;
+        if ($projectId) {
+            $project = Project::find($projectId);
+        } elseif ($company) {
+            $decoded = trim(urldecode((string) $company));
+            $companyKey = AiEngineService::cleanBrandKey($decoded);
+            $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
+                ->first();
+        }
+
+        $promptQuery = Prompt::query();
+        $keywordQuery = Keyword::query();
+
+        if (!empty($promptIds) && is_array($promptIds)) {
+            $promptQuery->whereIn('id', $promptIds);
+            $kwIdsFromPrompts = Prompt::whereIn('id', $promptIds)->whereNotNull('keyword_id')->pluck('keyword_id')->unique()->toArray();
+            if (!empty($kwIdsFromPrompts)) {
+                $keywordQuery->whereIn('id', $kwIdsFromPrompts);
+            } else {
+                $keywordQuery->whereRaw('1 = 0');
+            }
+        } elseif ($keywordId) {
+            $promptQuery->where('keyword_id', (int) $keywordId);
+            $keywordQuery->where('id', (int) $keywordId);
+        } elseif ($project) {
+            $promptQuery->where('project_id', $project->id);
+            $keywordQuery->where('project_id', $project->id)
+                ->where(function ($q) {
+                    $q->where('is_archived', false)->orWhereNull('is_archived');
+                });
+        } else {
+            return response()->json(['error' => 'Geef een geldig project, zoekterm of prompt op voor de nieuwe 0-meting.'], 400);
+        }
+
+        $promptsToReset = $promptQuery->get();
+        $keywordsToReset = $keywordQuery->get();
+
+        $nowStr = now()->format('Y-m-d');
+        $displayDate = now()->format('d M Y');
+        $timeStr = now()->format('H:i');
+
+        foreach ($promptsToReset as $p) {
+            $resObj = !empty($p->results) ? (is_array($p->results) ? $p->results : json_decode($p->results, true)) : [];
+            if (!is_array($resObj)) {
+                $resObj = [];
+            }
+
+            if ($rescan) {
+                // Clear history so the incoming fresh scan becomes history[0] (isBaseline = true, label = Nulmeting)
+                $resObj['history'] = [];
+                $p->update([
+                    'results' => $resObj,
+                    'status' => 'pending',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                ProcessPromptJob::dispatch($p->id);
+            } else {
+                // Immediately set current live result as the sole new Nulmeting snapshot
+                $liveMetrics = AiEngineService::extractLivePromptMetrics($resObj);
+                $resObj['history'] = [[
+                    'date' => $nowStr,
+                    'displayDate' => $displayDate,
+                    'time' => $timeStr,
+                    'isBaseline' => true,
+                    'label' => 'Nulmeting',
+                    'mentioned' => $liveMetrics['mentioned'],
+                    'position' => $liveMetrics['mentioned'] ? (float) ($liveMetrics['position'] ?: 1) : null,
+                    'totalMentions' => (int) $liveMetrics['totalMentions'],
+                    'totalModels' => (int) $liveMetrics['totalModels'],
+                    'overallScore' => (int) $liveMetrics['overallScore'],
+                ]];
+                $p->update([
+                    'results' => $resObj,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        }
+
+        foreach ($keywordsToReset as $kw) {
+            $comps = is_array($kw->competitors_json) ? $kw->competitors_json : json_decode($kw->competitors_json ?? '[]', true);
+            if (is_array($comps) && !empty($comps)) {
+                foreach ($comps as &$cItem) {
+                    if (!empty($cItem['isSelf'])) {
+                        $rankDigits = preg_replace('/[^0-9]/', '', (string) ($cItem['rank'] ?? ''));
+                        $cItem['history'] = [[
+                            'date' => $nowStr,
+                            'displayDate' => $displayDate,
+                            'time' => $timeStr,
+                            'isBaseline' => true,
+                            'label' => 'Nulmeting',
+                            'rank' => $rankDigits !== '' ? (int) $rankDigits : null,
+                            'position' => is_numeric($cItem['position'] ?? null) ? (float) $cItem['position'] : null,
+                            'sov' => (int) ($cItem['sov'] ?? 0),
+                            'citations' => (int) ($cItem['citations'] ?? 0),
+                        ]];
+                    } else {
+                        unset($cItem['history']);
+                    }
+                }
+                unset($cItem);
+                $kw->competitors_json = $comps;
+            }
+            $kw->created_at = now();
+            $kw->updated_at = now();
+            $kw->save();
+
+            if ($rescan) {
+                \App\Jobs\ProcessKeywordCompetitorsJob::dispatch($kw->id, $kw->keyword, $kw->company_key, true);
+            }
+        }
+
+        GeoLog::info("🎯 [NIEUWE 0-METING] Nieuwe nulmeting gestart voor " . $promptsToReset->count() . " prompt(s) en " . $keywordsToReset->count() . " zoekterm(en).");
+
+        return response()->json([
+            'success' => true,
+            'promptsCount' => $promptsToReset->count(),
+            'keywordsCount' => $keywordsToReset->count(),
+            'rescan' => $rescan,
+            'baselineDate' => $displayDate,
+            'message' => $rescan
+                ? "Nieuwe 0-meting gestart! {$promptsToReset->count()} prompt(s) worden nu opnieuw gescand als nieuw startpunt ({$displayDate})."
+                : "Nieuwe 0-meting vastgelegd op {$displayDate} voor {$promptsToReset->count()} prompt(s).",
+        ]);
+    }
+
     public function scan(int $id): JsonResponse
     {
         $promptRecord = Prompt::find($id);

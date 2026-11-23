@@ -297,12 +297,87 @@ class KeywordController extends Controller
             ];
         });
 
+        //Also load standalone prompts (prompts directly linked to the project without a keyword_id)
+        $standalonePrompts = collect();
+        if ($project) {
+            $standalonePrompts = Prompt::where('project_id', $project->id)
+                ->whereNull('keyword_id')
+                ->orderBy('id', 'desc')
+                ->get()
+                ->map(function ($p) {
+                    $resObj = !empty($p->results) ? (is_array($p->results) ? $p->results : json_decode($p->results, true)) : null;
+                    $liveMetrics = \App\Services\AiEngineService::extractLivePromptMetrics($resObj);
+                    $modelMentions = $liveMetrics['modelMentions'];
+                    $citations = $resObj['citations'] ?? ($resObj['sources'] ?? null);
+
+                    $totalMentions = $liveMetrics['totalMentions'];
+                    $totalModels = $liveMetrics['totalModels'];
+                    $isMentioned = $liveMetrics['mentioned'];
+                    $overallScore = $liveMetrics['overallScore'];
+                    $promptPosition = $liveMetrics['position'];
+                    $engines = $liveMetrics['engines'];
+
+                    $status = $p->status ?: 'pending';
+                    if (!empty($resObj)) {
+                        if ($totalModels === 0) {
+                            $status = 'failed';
+                        } else {
+                            $status = $isMentioned ? 'Cited' : 'Not Cited';
+                        }
+                    }
+
+                    $pHistory = ($resObj && !empty($resObj['history']) && is_array($resObj['history'])) ? $resObj['history'] : [];
+                    if (empty($pHistory) && !empty($resObj) && $totalModels > 0) {
+                        $pCreated = $p->created_at ?: now();
+                        $pHistory[] = [
+                            'date' => $pCreated->format('Y-m-d'),
+                            'displayDate' => $pCreated->format('d M Y'),
+                            'time' => $pCreated->format('H:i'),
+                            'isBaseline' => true,
+                            'label' => 'Nulmeting',
+                            'mentioned' => $isMentioned,
+                            'position' => $isMentioned ? (float) ($promptPosition ?: 1) : null,
+                            'totalMentions' => (int) $totalMentions,
+                            'totalModels' => (int) $totalModels,
+                            'overallScore' => (int) $overallScore,
+                        ];
+                    }
+
+                    $summaryText = $totalModels > 0
+                        ? "Aanbevolen door {$totalMentions} van de {$totalModels} live AI-modellen" . ($liveMetrics['failedModelsCount'] > 0 ? " ({$liveMetrics['failedModelsCount']} niet gemeten)" : "") . "."
+                        : (!empty($resObj) ? 'Geen live AI-modellen beschikbaar tijdens deze scan.' : ($p->response_summary ?? ''));
+
+                    return [
+                        'id' => $p->id,
+                        'project_id' => $p->project_id,
+                        'keyword_id' => null,
+                        'keyword_text' => null,
+                        'text' => $p->prompt_text,
+                        'status' => $status,
+                        'mentioned' => $isMentioned,
+                        'position' => $promptPosition,
+                        'totalMentions' => $totalMentions,
+                        'totalModels' => $totalModels,
+                        'failedModelsCount' => $liveMetrics['failedModelsCount'],
+                        'overallScore' => $overallScore,
+                        'engines' => $engines,
+                        'brandsCount' => $totalModels > 0 ? ($resObj['totalBrandsCount'] ?? ($isMentioned ? 1 : 0)) : 0,
+                        'sourcesCount' => $totalModels > 0 ? ($resObj['totalSourcesCount'] ?? ($citations ? count($citations) : 0)) : 0,
+                        'modelMentions' => $modelMentions,
+                        'citations' => $citations,
+                        'responseSummary' => $summaryText,
+                        'history' => $pHistory,
+                        'baseline' => $pHistory[0] ?? null,
+                        'lastUpdated' => ($p->updated_at ?: ($p->created_at ?: now()))->format('d M Y H:i'),
+                    ];
+                });
+        }
+
         $totalPromptsCount = $keywords
             ->filter(fn($k) => empty($k['is_archived']))
-            ->sum(fn($k) => count($k['prompts'] ?? []));
+            ->sum(fn($k) => count($k['prompts'] ?? [])) + $standalonePrompts->count();
 
         if ($project) {
-            // Sync project's prompts_count with active prompts count
             if ((int) $project->prompts_count !== (int) $totalPromptsCount) {
                 $project->update(['prompts_count' => (int) $totalPromptsCount]);
             }
@@ -311,6 +386,7 @@ class KeywordController extends Controller
         return response()->json([
             'success' => true,
             'keywords' => $keywords,
+            'standalonePrompts' => $standalonePrompts->values(),
             'totalUsedPrompts' => $totalPromptsCount,
             'project' => $project ? [
                 'id' => $project->id,
@@ -479,7 +555,10 @@ class KeywordController extends Controller
             ->delete();
 
         $activeCount = Prompt::where('project_id', $projectId)
-            ->whereIn('keyword_id', $activeKeywordIds)
+            ->where(function ($q) use ($activeKeywordIds) {
+                $q->whereIn('keyword_id', $activeKeywordIds)
+                  ->orWhereNull('keyword_id');
+            })
             ->count();
 
         Project::where('id', $projectId)->update(['prompts_count' => $activeCount]);
