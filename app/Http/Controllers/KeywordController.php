@@ -49,20 +49,26 @@ class KeywordController extends Controller
             } else {
                 $query->where(function ($q) use ($companyKey, $cleanKey, $decoded) {
                     $q->where('company_key', $companyKey)
-                      ->orWhere('company_key', $cleanKey)
-                      ->orWhere('company_key', strtolower($decoded));
+                        ->orWhere('company_key', $cleanKey)
+                        ->orWhere('company_key', strtolower($decoded));
                 });
             }
         }
 
-        // Auto-recover stale prompts that timed out or got interrupted (> 5 minutes)
-        Prompt::whereIn('status', ['pending', 'processing', 'crawling'])
-            ->where('updated_at', '<', now()->subMinutes(5))
-            ->update([
-                'status' => 'failed',
-                'logs' => ['[Timeout Herstel] Automatisch gemarkeerd als mislukt na 5 minuten inactiviteit.'],
-                'updated_at' => now(),
-            ]);
+        // Auto-recover stale prompts: active 'processing'/'crawling' > 10m, queued 'pending' > 30m
+        Prompt::where(function ($q) {
+            $q->where(function ($sq) {
+                $sq->whereIn('status', ['processing', 'crawling'])
+                    ->where('updated_at', '<', now()->subMinutes(10));
+            })->orWhere(function ($sq) {
+                $sq->where('status', 'pending')
+                    ->where('updated_at', '<', now()->subMinutes(30));
+            });
+        })->update([
+                    'status' => 'failed',
+                    'logs' => ['[Timeout Herstel] Automatisch gemarkeerd als mislukt wegens overschrijding van maximale verwerkingstijd.'],
+                    'updated_at' => now(),
+                ]);
 
         $keywords = $query->get()->map(function ($k) {
             $kwText = $k->keyword;
@@ -120,13 +126,19 @@ class KeywordController extends Controller
                     }
                 }
 
-                $status = $p->status ?: 'pending';
-                if (!empty($resObj)) {
-                    if ($totalModels === 0) {
-                        $status = 'failed';
-                    } else {
-                        $status = $isMentioned ? 'Cited' : 'Not Cited';
-                    }
+                $rawStatus = strtolower(trim((string) ($p->status ?: 'pending')));
+                $isActivelyScanning = in_array($rawStatus, ['pending', 'processing', 'crawling'], true);
+                $processingElapsedSec = (in_array($rawStatus, ['processing', 'crawling'], true) && $p->updated_at)
+                    ? max(1, (int) abs(now()->diffInSeconds($p->updated_at)))
+                    : 0;
+
+                if ($isActivelyScanning) {
+                    // Preserve active queue/crawl status even when previous scan results exist on the prompt
+                    $status = $rawStatus === 'pending' ? 'pending' : 'processing';
+                } elseif (!empty($resObj)) {
+                    $status = $totalModels === 0 ? 'failed' : ($isMentioned ? 'Cited' : 'Not Cited');
+                } else {
+                    $status = $rawStatus ?: 'pending';
                 }
 
                 // Prompt History (Nulmeting + subsequent scans)
@@ -157,6 +169,7 @@ class KeywordController extends Controller
                     'keyword_id' => $p->keyword_id,
                     'text' => $p->prompt_text,
                     'status' => $status,
+                    'processingElapsedSec' => $processingElapsedSec,
                     'mentioned' => $isMentioned,
                     'position' => $promptPosition,
                     'totalMentions' => $totalMentions,
@@ -317,13 +330,18 @@ class KeywordController extends Controller
                     $promptPosition = $liveMetrics['position'];
                     $engines = $liveMetrics['engines'];
 
-                    $status = $p->status ?: 'pending';
-                    if (!empty($resObj)) {
-                        if ($totalModels === 0) {
-                            $status = 'failed';
-                        } else {
-                            $status = $isMentioned ? 'Cited' : 'Not Cited';
-                        }
+                    $rawStatus = strtolower(trim((string) ($p->status ?: 'pending')));
+                    $isActivelyScanning = in_array($rawStatus, ['pending', 'processing', 'crawling'], true);
+                    $processingElapsedSec = (in_array($rawStatus, ['processing', 'crawling'], true) && $p->updated_at)
+                        ? max(1, (int) abs(now()->diffInSeconds($p->updated_at)))
+                        : 0;
+
+                    if ($isActivelyScanning) {
+                        $status = $rawStatus === 'pending' ? 'pending' : 'processing';
+                    } elseif (!empty($resObj)) {
+                        $status = $totalModels === 0 ? 'failed' : ($isMentioned ? 'Cited' : 'Not Cited');
+                    } else {
+                        $status = $rawStatus ?: 'pending';
                     }
 
                     $pHistory = ($resObj && !empty($resObj['history']) && is_array($resObj['history'])) ? $resObj['history'] : [];
@@ -354,6 +372,7 @@ class KeywordController extends Controller
                         'keyword_text' => null,
                         'text' => $p->prompt_text,
                         'status' => $status,
+                        'processingElapsedSec' => $processingElapsedSec,
                         'mentioned' => $isMentioned,
                         'position' => $promptPosition,
                         'totalMentions' => $totalMentions,
@@ -557,7 +576,7 @@ class KeywordController extends Controller
         $activeCount = Prompt::where('project_id', $projectId)
             ->where(function ($q) use ($activeKeywordIds) {
                 $q->whereIn('keyword_id', $activeKeywordIds)
-                  ->orWhereNull('keyword_id');
+                    ->orWhereNull('keyword_id');
             })
             ->count();
 

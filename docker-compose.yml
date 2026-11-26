@@ -39,7 +39,7 @@ services:
     working_dir: /var/www
     volumes:
       - .:/var/www
-    command: php artisan queue:work --sleep=2 --tries=3 --timeout=180 --max-time=3600 --max-jobs=1000
+    command: php artisan queue:work --sleep=2 --tries=3 --timeout=300 --max-time=3600 --max-jobs=1000
     networks:
       - geo-wizard-network
     depends_on:

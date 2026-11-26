@@ -40,14 +40,20 @@ class ProjectController extends Controller
             });
         }
 
-        // Auto-recover stale prompts that timed out or got interrupted (> 5 minutes)
-        \App\Models\Prompt::whereIn('status', ['pending', 'processing', 'crawling'])
-            ->where('updated_at', '<', now()->subMinutes(5))
-            ->update([
-                'status' => 'failed',
-                'logs' => ['[Timeout Herstel] Automatisch gemarkeerd als mislukt na 5 minuten inactiviteit.'],
-                'updated_at' => now(),
-            ]);
+        // Auto-recover stale prompts: active 'processing'/'crawling' > 10m, queued 'pending' > 30m
+        \App\Models\Prompt::where(function ($q) {
+            $q->where(function ($sq) {
+                $sq->whereIn('status', ['processing', 'crawling'])
+                   ->where('updated_at', '<', now()->subMinutes(10));
+            })->orWhere(function ($sq) {
+                $sq->where('status', 'pending')
+                   ->where('updated_at', '<', now()->subMinutes(30));
+            });
+        })->update([
+            'status' => 'failed',
+            'logs' => ['[Timeout Herstel] Automatisch gemarkeerd als mislukt wegens overschrijding van maximale verwerkingstijd.'],
+            'updated_at' => now(),
+        ]);
 
         $projects = $query->with(['prompts:id,project_id,results,status'])->get();
 

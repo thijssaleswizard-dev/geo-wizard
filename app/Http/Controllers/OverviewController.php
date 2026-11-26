@@ -172,15 +172,21 @@ class OverviewController extends Controller
 
     public function runScraper(Request $request): JsonResponse
     {
+        @set_time_limit(300);
         $prompt = $request->input('prompt', '');
         $company = $request->input('company', 'Saleswizard');
         $promptId = $request->input('promptId');
         $projectId = $request->input('project_id') ?? $request->input('projectId');
 
+        $promptRecord = null;
         if ($promptId) {
             $promptRecord = Prompt::find($promptId);
             if ($promptRecord) {
                 $projectId = $projectId ?: $promptRecord->project_id;
+                $promptRecord->update([
+                    'status' => 'processing',
+                    'updated_at' => now(),
+                ]);
             }
         }
 
@@ -217,12 +223,19 @@ class OverviewController extends Controller
 
             return response()->json($result);
         } catch (\Exception $e) {
+            if ($promptRecord) {
+                $promptRecord->update([
+                    'status' => 'failed',
+                    'updated_at' => now(),
+                ]);
+            }
             return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }
 
     public function syncAll(Request $request): JsonResponse
     {
+        @set_time_limit(300);
         $projectId = $request->input('project_id') ?? $request->input('projectId');
         $company = $request->input('company', 'Saleswizard');
         $companyKey = AiEngineService::cleanBrandKey($company);

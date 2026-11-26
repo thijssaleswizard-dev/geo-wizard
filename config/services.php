@@ -71,7 +71,8 @@ return [
         'location_code' => (int) env('DATAFORSEO_LOCATION_CODE', 2528),
         'language_code' => env('DATAFORSEO_LANGUAGE_CODE', 'nl'),
         'country_iso' => env('DATAFORSEO_COUNTRY_ISO', 'NL'),
-        'timeout' => (int) env('DATAFORSEO_TIMEOUT', 90),
+        'timeout' => (int) env('DATAFORSEO_TIMEOUT', 125),
+        'fallback_timeout' => (int) env('DATAFORSEO_FALLBACK_TIMEOUT', 45),
     ],
 
 ];

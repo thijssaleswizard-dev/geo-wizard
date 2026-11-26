@@ -38,6 +38,9 @@ return [
     |
     */
     'ai_driver' => env('GEO_AI_DRIVER', 'auto'),
+    'dataforseo_prefer_fast_responses' => (bool) env('DATAFORSEO_PREFER_FAST_RESPONSES', false),
+    'dataforseo_chatgpt_model' => env('DATAFORSEO_CHATGPT_MODEL', 'gpt-4.1-mini'),
+    'dataforseo_gemini_model' => env('DATAFORSEO_GEMINI_MODEL', 'gemini-2.5-flash'),
     'dataforseo_include_perplexity' => (bool) env('DATAFORSEO_INCLUDE_PERPLEXITY', true),
     'dataforseo_include_claude' => (bool) env('DATAFORSEO_INCLUDE_CLAUDE', true),
     'dataforseo_perplexity_model' => env('DATAFORSEO_PERPLEXITY_MODEL', 'sonar'),

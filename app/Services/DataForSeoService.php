@@ -55,7 +55,13 @@ class DataForSeoService
 
     public static function getTimeout(): int
     {
-        return max(30, (int) config('services.dataforseo.timeout', 90));
+        // DataForSEO Live LLM Scraper endpoints have an upstream execution window of up to 120 seconds.
+        return max(30, (int) config('services.dataforseo.timeout', 125));
+    }
+
+    public static function getFallbackTimeout(): int
+    {
+        return max(20, (int) config('services.dataforseo.fallback_timeout', 45));
     }
 
     /**
@@ -214,46 +220,84 @@ class DataForSeoService
         $login = self::getLogin();
         $password = self::getPassword();
         $baseUrl = self::getBaseUrl();
-        $timeout = self::getTimeout();
+        $scraperTimeout = self::getTimeout();
+        $fastTimeout = min($scraperTimeout, 75);
+        $fallbackTimeout = self::getFallbackTimeout();
+        $engineLatencies = [];
 
-        $responses = Http::pool(function (Pool $pool) use ($specs, $login, $password, $baseUrl, $timeout) {
+        $responses = Http::pool(function (Pool $pool) use ($specs, $login, $password, $baseUrl, $scraperTimeout, $fastTimeout, &$engineLatencies) {
             $requests = [];
             foreach ($specs as $key => $spec) {
+                $reqTimeout = !empty($spec['isBrowserScraper']) ? $scraperTimeout : $fastTimeout;
                 $requests[$key] = $pool->as($key)
                     ->withBasicAuth($login, $password)
                     ->acceptJson()
                     ->asJson()
-                    ->timeout($timeout)
+                    ->connectTimeout(15)
+                    ->timeout($reqTimeout)
+                    ->withOptions([
+                        'on_stats' => function (\GuzzleHttp\TransferStats $stats) use (&$engineLatencies, $key) {
+                            $engineLatencies[$key] = (int) round($stats->getTransferTime() * 1000);
+                        },
+                    ])
                     ->post($baseUrl . $spec['endpoint'], $spec['payload']);
             }
             return $requests;
         });
 
-        $durationMs = (int) round((microtime(true) - $startTime) * 1000);
+        $poolDurationMs = (int) round((microtime(true) - $startTime) * 1000);
         $results = ['organicCitations' => []];
+
+        // Identify any engines that timed out (cURL 28), hit HTTP 5xx/504, or returned transient/empty scraper errors,
+        // and execute their fallback/retry specs IN PARALLEL so total scan time stays fast and bounded.
+        $fallbackSpecs = [];
+        foreach ($specs as $key => $spec) {
+            $resp = $responses[$key] ?? null;
+            if ($this->shouldFallbackOrRetry($key, $spec, $resp)) {
+                $fbSpec = $this->buildFallbackSpec($key, $spec, $prompt);
+                if ($fbSpec !== null) {
+                    $primaryErr = $this->describeFailureReason($resp);
+                    GeoLog::info("⚠️ [DATAFORSEO FALLBACK] {$spec['logName']} faalde/time-out na " . ($engineLatencies[$key] ?? $poolDurationMs) . "ms ({$primaryErr}) -> overschakelen naar {$fbSpec['endpoint']}...");
+                    $fallbackSpecs[$key] = $fbSpec;
+                }
+            }
+        }
+
+        if (!empty($fallbackSpecs)) {
+            $fbStart = microtime(true);
+            $fbLatencies = [];
+            $fbResponses = Http::pool(function (Pool $pool) use ($fallbackSpecs, $login, $password, $baseUrl, $fallbackTimeout, &$fbLatencies) {
+                $requests = [];
+                foreach ($fallbackSpecs as $key => $fbSpec) {
+                    $requests[$key] = $pool->as($key)
+                        ->withBasicAuth($login, $password)
+                        ->acceptJson()
+                        ->asJson()
+                        ->connectTimeout(10)
+                        ->timeout($fallbackTimeout)
+                        ->withOptions([
+                            'on_stats' => function (\GuzzleHttp\TransferStats $stats) use (&$fbLatencies, $key) {
+                                $fbLatencies[$key] = (int) round($stats->getTransferTime() * 1000);
+                            },
+                        ])
+                        ->post($baseUrl . $fbSpec['endpoint'], $fbSpec['payload']);
+                }
+                return $requests;
+            });
+            $fbPoolMs = (int) round((microtime(true) - $fbStart) * 1000);
+
+            foreach ($fallbackSpecs as $key => $fbSpec) {
+                $responses[$key] = $fbResponses[$key] ?? null;
+                $specs[$key] = $fbSpec;
+                $engineLatencies[$key] = $fbLatencies[$key] ?? $fbPoolMs;
+            }
+        }
 
         foreach ($specs as $key => $spec) {
             $resp = $responses[$key] ?? null;
+            $reqDurationMs = $engineLatencies[$key] ?? $poolDurationMs;
 
-            // Single automatic retry on transient DataForSEO 5xxxx / 40201 "Internal SE Server Error"
-            // For Google AI Overviews, drop load_async_ai_overview on retry so standard organic + inline AIO succeeds.
-            if ($this->isTransientRetryableResponse($resp)) {
-                $retryPayload = $spec['payload'];
-                if ($key === 'aioverviews' && isset($retryPayload[0]['load_async_ai_overview'])) {
-                    unset($retryPayload[0]['load_async_ai_overview']);
-                }
-                try {
-                    $resp = Http::withBasicAuth($login, $password)
-                        ->acceptJson()
-                        ->asJson()
-                        ->timeout($timeout)
-                        ->post($baseUrl . $spec['endpoint'], $retryPayload);
-                } catch (\Throwable $retryEx) {
-                    $resp = $retryEx;
-                }
-            }
-
-            $parsed = $this->handleRawResponse($key, $spec, $resp, $companyName, $durationMs, $projectId, $promptId, $promptSnippet);
+            $parsed = $this->handleRawResponse($key, $spec, $resp, $companyName, $reqDurationMs, $projectId, $promptId, $promptSnippet);
             if ($key === 'aioverviews' && !empty($parsed['organicCitations'])) {
                 $results['organicCitations'] = $parsed['organicCitations'];
             }
@@ -263,21 +307,148 @@ class DataForSeoService
         return $results;
     }
 
-    protected function isTransientRetryableResponse(mixed $resp): bool
+    protected function describeFailureReason(mixed $resp): string
     {
-        if (!($resp instanceof Response) || !$resp->successful()) {
-            return false;
+        if ($resp instanceof \Throwable) {
+            return mb_substr($resp->getMessage(), 0, 140);
         }
+        if ($resp instanceof Response) {
+            if (!$resp->successful()) {
+                return "HTTP {$resp->status()}";
+            }
+            $json = $resp->json();
+            $code = $json['tasks'][0]['status_code'] ?? $json['status_code'] ?? '?';
+            $msg = $json['tasks'][0]['status_message'] ?? $json['status_message'] ?? 'Leeg/ongeldig resultaat';
+            return "{$code}: {$msg}";
+        }
+        return 'Geen HTTP-respons';
+    }
+
+    /**
+     * Determine if a primary DataForSEO call timed out (e.g. cURL error 28 after 90-125s),
+     * returned HTTP 5xx/504/429, or returned a transient/empty scraper payload — warranting fallback/retry.
+     * Account-level errors (40200 empty balance) are NEVER retried.
+     */
+    protected function shouldFallbackOrRetry(string $key, array $spec, mixed $resp): bool
+    {
+        if ($resp instanceof \Throwable) {
+            return true;
+        }
+
+        if (!($resp instanceof Response)) {
+            return true;
+        }
+
+        if (!$resp->successful()) {
+            $status = $resp->status();
+            if ($status === 402 || $status === 401 || $status === 403) {
+                return false;
+            }
+            return $status >= 500 || $status === 429 || $status === 408 || !empty($spec['isBrowserScraper']);
+        }
+
         $json = $resp->json();
         if (!is_array($json)) {
+            return true;
+        }
+
+        $topCode = (int) ($json['status_code'] ?? 0);
+        $topMsg = (string) ($json['status_message'] ?? '');
+        if (self::isAccountLevelCircuitBreakerError($topCode, $topMsg)) {
             return false;
         }
-        $taskCode = (int) ($json['tasks'][0]['status_code'] ?? 0);
-        $taskMsg = strtolower((string) ($json['tasks'][0]['status_message'] ?? ''));
 
-        return $taskCode >= 50000
-            || str_contains($taskMsg, 'internal se server error')
-            || str_contains($taskMsg, 'internal error');
+        $task = $json['tasks'][0] ?? null;
+        $taskCode = is_array($task) ? (int) ($task['status_code'] ?? 0) : 50000;
+        $taskMsg = is_array($task) ? (string) ($task['status_message'] ?? '') : '';
+
+        if (self::isAccountLevelCircuitBreakerError($taskCode, $taskMsg)) {
+            return false;
+        }
+
+        // Transient DataForSEO errors (50000+, 50401 Timeout, 40201 Internal SE Server Error)
+        $msgLower = strtolower($taskMsg);
+        if ($taskCode >= 50000
+            || $taskCode === 40201
+            || str_contains($msgLower, 'timeout')
+            || str_contains($msgLower, 'internal se server error')
+            || str_contains($msgLower, 'internal error')) {
+            return true;
+        }
+
+        // For ChatGPT / Gemini browser scrapers, also fall back to llm_responses/live if scraper returned non-20000 or empty text
+        if (!empty($spec['isBrowserScraper'])) {
+            if ($taskCode !== 20000) {
+                return true;
+            }
+            $res = $task['result'][0] ?? [];
+            if (empty($res['markdown']) && empty($res['items'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Build the fast fallback or retry specification for an engine whose primary request timed out or failed.
+     * ChatGPT & Gemini browser scrapers seamlessly fall back to DataForSEO llm_responses/live with web_search=true.
+     */
+    protected function buildFallbackSpec(string $key, array $primarySpec, string $prompt): ?array
+    {
+        $shortPrompt = mb_substr(trim($prompt), 0, 500);
+        $countryIso = self::getCountryIso();
+
+        if ($key === 'chatgpt' && !empty($primarySpec['isBrowserScraper'])) {
+            $chatModel = (string) config('geo.dataforseo_chatgpt_model', 'gpt-4.1-mini');
+            return [
+                'endpoint' => '/ai_optimization/chat_gpt/llm_responses/live',
+                'parserType' => 'llm_responses',
+                'isBrowserScraper' => false,
+                'payload' => [[
+                    'user_prompt' => $shortPrompt,
+                    'model_name' => $chatModel,
+                    'web_search' => true,
+                    'force_web_search' => true,
+                    'web_search_country_iso_code' => $countryIso,
+                ]],
+                'logEngine' => 'openai',
+                'logModel' => 'dataforseo-chatgpt-' . $chatModel,
+                'operation' => 'web_client_scan_fallback',
+                'logName' => 'ChatGPT Web (DataForSEO Fallback)',
+                'displayName' => 'ChatGPT Web',
+                'methodLabel' => "ChatGPT Live Web Search (DataForSEO · {$chatModel})",
+            ];
+        }
+
+        if ($key === 'gemini' && !empty($primarySpec['isBrowserScraper'])) {
+            $gemModel = (string) config('geo.dataforseo_gemini_model', 'gemini-2.5-flash');
+            return [
+                'endpoint' => '/ai_optimization/gemini/llm_responses/live',
+                'parserType' => 'llm_responses',
+                'isBrowserScraper' => false,
+                'payload' => [[
+                    'user_prompt' => $shortPrompt,
+                    'model_name' => $gemModel,
+                    'web_search' => true,
+                    'max_output_tokens' => 2048,
+                ]],
+                'logEngine' => 'gemini',
+                'logModel' => 'dataforseo-' . $gemModel,
+                'operation' => 'web_client_scan_fallback',
+                'logName' => 'Gemini Web (DataForSEO Fallback)',
+                'displayName' => 'Google Gemini',
+                'methodLabel' => "Google Gemini Live Web Search (DataForSEO · {$gemModel})",
+            ];
+        }
+
+        // Standard transient retry for aioverviews / aimode / perplexity / claude
+        $retrySpec = $primarySpec;
+        $retrySpec['isBrowserScraper'] = false;
+        if ($key === 'aioverviews' && isset($retrySpec['payload'][0]['load_async_ai_overview'])) {
+            unset($retrySpec['payload'][0]['load_async_ai_overview']);
+        }
+        return $retrySpec;
     }
 
     public function queryChatGptWeb(string $prompt, string $companyName, ?int $projectId = null, ?int $promptId = null): array
@@ -333,13 +504,35 @@ class DataForSeoService
         GeoLog::aiCall($spec['logName'], $spec['logModel'], $promptSnippet, 'START', null, "DataForSEO live aanroep ({$spec['endpoint']}) voor [{$companyName}]");
 
         try {
+            $reqTimeout = !empty($spec['isBrowserScraper']) ? self::getTimeout() : min(self::getTimeout(), 75);
             $resp = Http::withBasicAuth(self::getLogin(), self::getPassword())
                 ->acceptJson()
                 ->asJson()
-                ->timeout(self::getTimeout())
+                ->connectTimeout(15)
+                ->timeout($reqTimeout)
                 ->post(self::getBaseUrl() . $spec['endpoint'], $spec['payload']);
         } catch (\Throwable $e) {
             $resp = $e;
+        }
+
+        if ($this->shouldFallbackOrRetry($key, $spec, $resp)) {
+            $fbSpec = $this->buildFallbackSpec($key, $spec, $prompt);
+            if ($fbSpec !== null) {
+                $primaryErr = $this->describeFailureReason($resp);
+                GeoLog::info("⚠️ [DATAFORSEO FALLBACK] {$spec['logName']} faalde/time-out ({$primaryErr}) -> overschakelen naar {$fbSpec['endpoint']}...");
+                $startTime = microtime(true);
+                $spec = $fbSpec;
+                try {
+                    $resp = Http::withBasicAuth(self::getLogin(), self::getPassword())
+                        ->acceptJson()
+                        ->asJson()
+                        ->connectTimeout(10)
+                        ->timeout(self::getFallbackTimeout())
+                        ->post(self::getBaseUrl() . $spec['endpoint'], $spec['payload']);
+                } catch (\Throwable $fbEx) {
+                    $resp = $fbEx;
+                }
+            }
         }
 
         $durationMs = (int) round((microtime(true) - $startTime) * 1000);
@@ -352,43 +545,91 @@ class DataForSeoService
         $lang = self::getLanguageCode();
         $countryIso = self::getCountryIso();
         $shortPrompt = mb_substr(trim($prompt), 0, 500);
+        $preferFastResponses = (bool) config('geo.dataforseo_prefer_fast_responses', false);
+        $chatModel = (string) config('geo.dataforseo_chatgpt_model', 'gpt-4.1-mini');
+        $gemModel = (string) config('geo.dataforseo_gemini_model', 'gemini-2.5-flash');
         $pplxModel = (string) config('geo.dataforseo_perplexity_model', 'sonar');
         $claudeModel = (string) config('geo.dataforseo_claude_model', 'claude-haiku-4-5');
         $claudeWebSearch = (bool) config('geo.dataforseo_claude_web_search', true);
 
         $specs = [];
         if ($includeChatGpt) {
-            $specs['chatgpt'] = [
-                'endpoint' => '/ai_optimization/chat_gpt/llm_scraper/live/advanced',
+            if ($preferFastResponses) {
+                $specs['chatgpt'] = [
+                    'endpoint' => '/ai_optimization/chat_gpt/llm_responses/live',
+                    'parserType' => 'llm_responses',
+                    'isBrowserScraper' => false,
+                    'payload' => [[
+                        'user_prompt' => $shortPrompt,
+                        'model_name' => $chatModel,
+                        'web_search' => true,
+                        'force_web_search' => true,
+                        'web_search_country_iso_code' => $countryIso,
+                    ]],
+                    'logEngine' => 'openai',
+                    'logModel' => 'dataforseo-chatgpt-' . $chatModel,
+                    'operation' => 'web_client_scan',
+                    'logName' => 'ChatGPT Web (DataForSEO)',
+                    'displayName' => 'ChatGPT Web',
+                    'methodLabel' => "ChatGPT Live Web Search (DataForSEO · {$chatModel})",
+                ];
+            } else {
+                $specs['chatgpt'] = [
+                    'endpoint' => '/ai_optimization/chat_gpt/llm_scraper/live/advanced',
+                    'parserType' => 'chatgpt_scraper',
+                    'isBrowserScraper' => true,
+                    'payload' => [[
+                        'keyword' => $prompt,
+                        'location_code' => $loc,
+                        'language_code' => $lang,
+                        'force_web_search' => true,
+                    ]],
+                    'logEngine' => 'openai',
+                    'logModel' => 'chatgpt-web-client',
+                    'operation' => 'web_client_scan',
+                    'logName' => 'ChatGPT Web (DataForSEO)',
+                    'displayName' => 'ChatGPT Web',
+                    'methodLabel' => 'ChatGPT Web UI (DataForSEO Live Web Search)',
+                ];
+            }
+        }
+
+        if ($preferFastResponses) {
+            $specs['gemini'] = [
+                'endpoint' => '/ai_optimization/gemini/llm_responses/live',
+                'parserType' => 'llm_responses',
+                'isBrowserScraper' => false,
+                'payload' => [[
+                    'user_prompt' => $shortPrompt,
+                    'model_name' => $gemModel,
+                    'web_search' => true,
+                    'max_output_tokens' => 2048,
+                ]],
+                'logEngine' => 'gemini',
+                'logModel' => 'dataforseo-' . $gemModel,
+                'operation' => 'web_client_scan',
+                'logName' => 'Gemini Web (DataForSEO)',
+                'displayName' => 'Google Gemini',
+                'methodLabel' => "Google Gemini Live Web Search (DataForSEO · {$gemModel})",
+            ];
+        } else {
+            $specs['gemini'] = [
+                'endpoint' => '/ai_optimization/gemini/llm_scraper/live/advanced',
+                'parserType' => 'gemini_scraper',
+                'isBrowserScraper' => true,
                 'payload' => [[
                     'keyword' => $prompt,
                     'location_code' => $loc,
                     'language_code' => $lang,
-                    'force_web_search' => true,
                 ]],
-                'logEngine' => 'openai',
-                'logModel' => 'chatgpt-web-client',
+                'logEngine' => 'gemini',
+                'logModel' => 'gemini-web-client',
                 'operation' => 'web_client_scan',
-                'logName' => 'ChatGPT Web (DataForSEO)',
-                'displayName' => 'ChatGPT Web',
-                'methodLabel' => 'ChatGPT Web UI (DataForSEO Live Web Search)',
+                'logName' => 'Gemini Web (DataForSEO)',
+                'displayName' => 'Google Gemini',
+                'methodLabel' => 'Google Gemini Web UI (DataForSEO Live)',
             ];
         }
-
-        $specs['gemini'] = [
-            'endpoint' => '/ai_optimization/gemini/llm_scraper/live/advanced',
-            'payload' => [[
-                'keyword' => $prompt,
-                'location_code' => $loc,
-                'language_code' => $lang,
-            ]],
-            'logEngine' => 'gemini',
-            'logModel' => 'gemini-web-client',
-            'operation' => 'web_client_scan',
-            'logName' => 'Gemini Web (DataForSEO)',
-            'displayName' => 'Google Gemini',
-            'methodLabel' => 'Google Gemini Web UI (DataForSEO Live)',
-        ];
         $specs['aioverviews'] = [
             'endpoint' => '/serp/google/organic/live/advanced',
             'payload' => [[
@@ -501,15 +742,20 @@ class DataForSeoService
             return $this->buildUnavailableResult($spec['displayName'], $errMsg);
         }
 
-        $parsed = match ($key) {
-            'chatgpt' => $this->parseChatGptResponse($json, $companyName),
-            'gemini' => $this->parseGeminiResponse($json, $companyName),
-            'aioverviews' => $this->parseGoogleOrganicAiOverviewResponse($json, $companyName),
-            'aimode' => $this->parseGoogleAiModeResponse($json, $companyName),
-            'perplexity' => $this->parseLlmResponsesResponse($json, $companyName, $spec['displayName'], $spec['methodLabel'], 'perplexity'),
-            'claude' => $this->parseLlmResponsesResponse($json, $companyName, $spec['displayName'], $spec['methodLabel'], 'claude'),
-            default => $this->buildUnavailableResult($spec['displayName'], "Geen parser voor {$key}"),
-        };
+        $parserType = $spec['parserType'] ?? null;
+        if ($parserType === 'llm_responses') {
+            $parsed = $this->parseLlmResponsesResponse($json, $companyName, $spec['displayName'], $spec['methodLabel'], $key);
+        } else {
+            $parsed = match ($key) {
+                'chatgpt' => $this->parseChatGptResponse($json, $companyName),
+                'gemini' => $this->parseGeminiResponse($json, $companyName),
+                'aioverviews' => $this->parseGoogleOrganicAiOverviewResponse($json, $companyName),
+                'aimode' => $this->parseGoogleAiModeResponse($json, $companyName),
+                'perplexity' => $this->parseLlmResponsesResponse($json, $companyName, $spec['displayName'], $spec['methodLabel'], 'perplexity'),
+                'claude' => $this->parseLlmResponsesResponse($json, $companyName, $spec['displayName'], $spec['methodLabel'], 'claude'),
+                default => $this->buildUnavailableResult($spec['displayName'], "Geen parser voor {$key}"),
+            };
+        }
 
         if (!empty($parsed['failed']) || empty($parsed['available'])) {
             $statusCode = $parsed['statusCode'] ?? null;

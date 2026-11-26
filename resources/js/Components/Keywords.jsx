@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import PromptReport from './PromptReport';
 import {
   ChevronRight, ChevronDown, ChevronUp, Plus, Search, Trash2, Archive, RotateCcw,
@@ -580,6 +580,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const [nulmetingBanner, setNulmetingBanner] = useState(null);
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [reportKeywordId, setReportKeywordId] = useState(null);
+  const [addingPromptsBusy, setAddingPromptsBusy] = useState(false);
+  const [bulkRescrapingBusy, setBulkRescrapingBusy] = useState(false);
+  const [progressTick, setProgressTick] = useState(() => Date.now());
+  const [crawlFinishedFlash, setCrawlFinishedFlash] = useState(null);
+
+  const scanStartedAtRef = useRef({});
+  const sessionPromptIdsRef = useRef(new Set());
+  const sessionMaxPctRef = useRef(0);
+  const sessionPrepStartedAtRef = useRef(null);
+  const pollInFlightRef = useRef(false);
+  const wasWorkActiveRef = useRef(false);
+  const wasActionInFlightRef = useRef(false);
 
   const formatPromptFromApi = (p) => ({
     id: p.id,
@@ -587,6 +599,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     keyword_text: p.keyword_text || null,
     text: p.prompt_text || p.text || '',
     status: p.status || (p.results ? (p.brand_mentioned ? 'Cited' : 'Not Cited') : 'pending'),
+    processingElapsedSec: Number(p.processingElapsedSec || 0),
     mentioned: Boolean(p.mentioned ?? p.brand_mentioned ?? (p.status === 'Cited')),
     position: p.position || '-',
     totalMentions: p.totalMentions ?? 0,
@@ -765,6 +778,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
   const handleBulkRescrapeKeywords = async () => {
     if (selectedKeywordIds.length === 0) return;
+    setBulkRescrapingBusy(true);
     try {
       const response = await fetch('/api/keywords/bulk-rescrape', {
         method: 'POST',
@@ -778,7 +792,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             return {
               ...k,
               is_crawling: true,
-              prompts: (k.prompts || []).map(p => ({ ...p, status: 'pending' }))
+              prompts: (k.prompts || []).map(p => ({ ...p, status: 'pending', processingElapsedSec: 0 }))
             };
           }
           return k;
@@ -794,6 +808,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     } catch (err) {
       console.error('Bulk rescrape error:', err);
       alert('Kan geen verbinding maken met de server.');
+    } finally {
+      setBulkRescrapingBusy(false);
     }
   };
 
@@ -895,88 +911,185 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
   };
 
-  // Smart background polling when prompts are being crawled / analyzed
-  useEffect(() => {
-    let interval = null;
-    const hasPendingKw = (keywords || []).some(k => k.is_crawling || (k.prompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]));
-    const hasPendingStandalone = (standalonePrompts || []).some(p => p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]);
-    const hasPending = hasPendingKw || hasPendingStandalone;
+  const isPromptActivelyCrawling = (p) => Boolean(
+    p && (
+      scanningPrompts[p.id] ||
+      p.status === 'pending' ||
+      p.status === 'processing' ||
+      p.status === 'crawling'
+    )
+  );
 
-    if (hasPending) {
-      let pendingCount = 0;
-      let totalCount = 0;
-      keywords.forEach(k => {
-        (k.prompts || []).forEach(p => {
-          totalCount++;
-          if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
-            pendingCount++;
-          }
-        });
+  const allUniquePromptsMap = (() => {
+    const map = new Map();
+    (standalonePrompts || []).forEach(p => {
+      if (p?.id) map.set(p.id, p);
+    });
+    (keywords || []).forEach(k => {
+      (k.prompts || []).forEach(p => {
+        if (p?.id) map.set(p.id, p);
       });
-      (standalonePrompts || []).forEach(p => {
-        totalCount++;
-        if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
-          pendingCount++;
-        }
-      });
+    });
+    return map;
+  })();
 
-      setCrawlingStatus({
-        active: true,
-        pending: pendingCount,
-        completed: Math.max(0, totalCount - pendingCount),
-        total: totalCount,
-        message: `${pendingCount || 'Zoek'} prompt(s) worden gecrawld over ChatGPT, Gemini en Perplexity...`
-      });
+  const activeCrawlingPrompts = Array.from(allUniquePromptsMap.values()).filter(isPromptActivelyCrawling);
+  const hasAnyKeywordCrawling = (keywords || []).some(k => Boolean(k?.is_crawling));
+  const hasAnyActionInFlight = Boolean(
+    addingPromptsBusy ||
+    bulkRescrapingBusy ||
+    resettingNulmeting ||
+    savingEditedPrompt ||
+    Object.values(scanningPrompts || {}).some(Boolean) ||
+    Object.values(rescrapingKeywords || {}).some(Boolean) ||
+    Object.values(generatingPromptsForKw || {}).some(Boolean)
+  );
+  const isAnyWorkActive = activeCrawlingPrompts.length > 0 || hasAnyKeywordCrawling || hasAnyActionInFlight;
 
-      let pollCount = 0;
-      const maxPolls = 60; // Max 90s safety timeout
-
-      interval = setInterval(() => {
-        pollCount++;
-        if (pollCount > maxPolls) {
-          clearInterval(interval);
-          setCrawlingStatus(null);
-          return;
-        }
-
-        const workspace = activeWorkspace || 'Saleswizard.nl';
-        fetch(`/api/keywords?company=${encodeURIComponent(workspace)}`)
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              if (data.project) {
-                setProjectInfo(data.project);
-              }
-              const formatted = (data.keywords || []).map(formatKeywordFromApi);
-              const formattedStandalone = (data.standalonePrompts || []).map(formatPromptFromApi);
-              setKeywords(formatted);
-              setStandalonePrompts(formattedStandalone);
-              setSelectedKeyword(prev => prev ? (formatted.find(f => f.id === prev.id) || prev) : null);
-              const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0) + formattedStandalone.length;
-              setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
-            }
-          })
-          .catch(err => console.error('Polling error:', err));
-      }, 1500);
-    } else if (crawlingStatus?.active) {
-      setCrawlingStatus({
-        active: false,
-        done: true,
-        message: 'Alle AI zoekmachine scans zijn succesvol voltooid!'
-      });
-      setTimeout(() => setCrawlingStatus(null), 4000);
+  const getPromptLiveProgress = (p) => {
+    if (!p || !isPromptActivelyCrawling(p)) {
+      return { active: false, mode: 'done', pct: 100, label: 'Voltooid' };
+    }
+    const isProcessingNow = Boolean(
+      scanningPrompts[p.id] ||
+      p.status === 'processing' ||
+      p.status === 'crawling'
+    );
+    if (!isProcessingNow) {
+      return { active: true, mode: 'pending', pct: 6, label: 'In wachtrij' };
     }
 
+    const serverElapsedMs = Math.max(0, Number(p.processingElapsedSec || 0) * 1000);
+    const nowMs = Math.max(Date.now(), progressTick);
+    const existingStart = scanStartedAtRef.current[p.id];
+    const impliedStartFromServer = nowMs - serverElapsedMs;
+    const startMs = existingStart
+      ? Math.min(existingStart, impliedStartFromServer)
+      : impliedStartFromServer;
+    scanStartedAtRef.current[p.id] = startMs;
+
+    const elapsedSec = Math.max(0, (nowMs - startMs) / 1000);
+    // Smooth asymptotic curve: starts at 10%, ~40% at 12s, ~65% at 30s, ~86% at 65s, caps at 94% until server reports completion
+    const pct = Math.min(94, Math.max(10, Math.round(10 + 84 * (1 - Math.exp(-elapsedSec / 28)))));
+    return { active: true, mode: 'processing', pct, label: 'Live crawlen' };
+  };
+
+  // Keep per-prompt start timestamps & session batch set synchronized
+  useEffect(() => {
+    const prevSize = sessionPromptIdsRef.current.size;
+    activeCrawlingPrompts.forEach(p => {
+      if (p?.id) sessionPromptIdsRef.current.add(p.id);
+    });
+    const newSize = sessionPromptIdsRef.current.size;
+    if (prevSize > 0 && newSize > prevSize && sessionMaxPctRef.current > 0) {
+      sessionMaxPctRef.current = Math.max(5, Math.round(sessionMaxPctRef.current * (prevSize / newSize)));
+    }
+
+    Object.keys(scanStartedAtRef.current).forEach(pid => {
+      const numId = Number(pid);
+      const pObj = allUniquePromptsMap.get(numId) || allUniquePromptsMap.get(pid);
+      if (!pObj || !isPromptActivelyCrawling(pObj)) {
+        delete scanStartedAtRef.current[pid];
+      }
+    });
+  }, [keywords, standalonePrompts, scanningPrompts]);
+
+  // Smooth 500ms progress animation tick + 100% completion flash when crawl finishes
+  useEffect(() => {
+    if (isAnyWorkActive) {
+      if (!wasWorkActiveRef.current) {
+        wasWorkActiveRef.current = true;
+        sessionPrepStartedAtRef.current = Date.now();
+        setCrawlFinishedFlash(null);
+      }
+      setProgressTick(Date.now());
+      const tickInterval = setInterval(() => {
+        setProgressTick(Date.now());
+      }, 500);
+      return () => clearInterval(tickInterval);
+    }
+
+    if (wasWorkActiveRef.current) {
+      const completedTotal = Math.max(1, sessionPromptIdsRef.current.size);
+      wasWorkActiveRef.current = false;
+      sessionPromptIdsRef.current = new Set();
+      sessionMaxPctRef.current = 0;
+      sessionPrepStartedAtRef.current = null;
+      scanStartedAtRef.current = {};
+      setCrawlingStatus(null);
+      setCrawlFinishedFlash({
+        count: completedTotal,
+        message: `Alle AI crawls & merk-analyses zijn voltooid (${completedTotal} prompt${completedTotal === 1 ? '' : 's'})`
+      });
+      const clearTimer = setTimeout(() => setCrawlFinishedFlash(null), 4500);
+      return () => clearTimeout(clearTimer);
+    }
+  }, [isAnyWorkActive]);
+
+  const pollWorkspaceKeywords = async (workspaceName) => {
+    if (pollInFlightRef.current) return;
+    pollInFlightRef.current = true;
+    try {
+      const res = await fetch(`/api/keywords?company=${encodeURIComponent(workspaceName)}`);
+      const data = await res.json();
+      if (data.success) {
+        if (data.project) {
+          setProjectInfo(data.project);
+        }
+        const formatted = (data.keywords || []).map(formatKeywordFromApi);
+        const formattedStandalone = (data.standalonePrompts || []).map(formatPromptFromApi);
+        setKeywords(formatted);
+        setStandalonePrompts(formattedStandalone);
+        setSelectedKeyword(prev => prev ? (formatted.find(f => f.id === prev.id) || prev) : null);
+        const activeCount = formatted.filter(f => !f.is_archived).reduce((acc, f) => acc + (f.prompts || []).length, 0) + formattedStandalone.length;
+        setTotalUsedPrompts(typeof data.totalUsedPrompts === 'number' ? data.totalUsedPrompts : activeCount);
+      }
+    } catch (err) {
+      console.error('Polling error:', err);
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  };
+
+  // Continuous background polling FOR AS LONG AS any prompt crawl, keyword scrape, or setup action is active
+  useEffect(() => {
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    if (!isAnyWorkActive) return;
+
+    const initialKick = setTimeout(() => {
+      pollWorkspaceKeywords(workspace);
+    }, 800);
+
+    const interval = setInterval(() => {
+      pollWorkspaceKeywords(workspace);
+    }, 2000);
+
     return () => {
-      if (interval) clearInterval(interval);
+      clearTimeout(initialKick);
+      clearInterval(interval);
     };
-  }, [keywords, standalonePrompts, scanningPrompts, activeWorkspace]);
+  }, [isAnyWorkActive, activeWorkspace]);
 
+  // Trigger an immediate refresh when an in-flight setup/rescrape request finishes so newly queued prompts are picked up immediately
+  useEffect(() => {
+    if (wasActionInFlightRef.current && !hasAnyActionInFlight) {
+      const workspace = activeWorkspace || 'Saleswizard.nl';
+      pollWorkspaceKeywords(workspace);
+    }
+    wasActionInFlightRef.current = hasAnyActionInFlight;
+  }, [hasAnyActionInFlight, activeWorkspace]);
 
-  // Fetch active keywords & standalone prompts from DB
+  // Fetch active keywords & standalone prompts from DB when switching workspace
   useEffect(() => {
     setLoading(true);
     setSelectedKeyword(null);
+    sessionPromptIdsRef.current = new Set();
+    sessionMaxPctRef.current = 0;
+    sessionPrepStartedAtRef.current = null;
+    scanStartedAtRef.current = {};
+    wasWorkActiveRef.current = false;
+    setCrawlFinishedFlash(null);
+
     const workspace = activeWorkspace || 'Saleswizard.nl';
     fetch(`/api/keywords?company=${encodeURIComponent(workspace)}`)
       .then(res => res.json())
@@ -1330,6 +1443,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     const workspace = activeWorkspace || 'Saleswizard.nl';
     const targetExistingKwId = directPromptKeywordId ? Number(directPromptKeywordId) : null;
 
+    setAddingPromptsBusy(true);
     try {
       setIsAdding(false);
       setKeywordInput('');
@@ -1466,6 +1580,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       }
     } catch (err) {
       console.error('Failed to add keywords and prompts:', err);
+    } finally {
+      setAddingPromptsBusy(false);
     }
   };
 
@@ -1636,6 +1752,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     if (lines.length === 0) return;
 
     setLimitAlert(null);
+    setAddingPromptsBusy(true);
 
     const workspace = activeWorkspace || 'Saleswizard.nl';
     try {
@@ -1703,6 +1820,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setAddingPromptsBusy(false);
     }
   };
 
@@ -2064,10 +2183,241 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     );
   };
 
+  const renderLiveCrawlProgressBanner = () => {
+    if (!isAnyWorkActive && !crawlFinishedFlash) return null;
+
+    if (!isAnyWorkActive && crawlFinishedFlash) {
+      return (
+        <div style={{
+          position: 'sticky',
+          top: '12px',
+          zIndex: 30,
+          backgroundColor: '#f0fdf4',
+          border: '1px solid #86efac',
+          borderRadius: '12px',
+          padding: '14px 20px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#15803d', fontSize: '13px', fontWeight: 800 }}>
+              <span style={{
+                width: '24px',
+                height: '24px',
+                borderRadius: '50%',
+                backgroundColor: '#dcfce7',
+                color: '#16a34a',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 900
+              }}>✓</span>
+              <span>{crawlFinishedFlash.message}</span>
+            </div>
+            <span style={{
+              fontSize: '14px',
+              fontWeight: 900,
+              color: '#15803d',
+              fontVariantNumeric: 'tabular-nums'
+            }}>
+              100%
+            </span>
+          </div>
+          <div style={{
+            width: '100%',
+            height: '8px',
+            borderRadius: '999px',
+            backgroundColor: '#dcfce7',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              width: '100%',
+              height: '100%',
+              borderRadius: '999px',
+              background: 'linear-gradient(90deg, #22c55e 0%, #16a34a 100%)',
+              transition: 'width 0.35s ease'
+            }} />
+          </div>
+        </div>
+      );
+    }
+
+    // Active crawl / scrape / prompt setup computation
+    const sessionIds = Array.from(sessionPromptIdsRef.current);
+    activeCrawlingPrompts.forEach(p => {
+      if (p?.id && !sessionIds.includes(p.id)) {
+        sessionIds.push(p.id);
+      }
+    });
+
+    const sessionTotal = sessionIds.length;
+    let processingCount = 0;
+    let pendingCount = 0;
+    let completedInSession = 0;
+    let sumPct = 0;
+
+    sessionIds.forEach(pid => {
+      const pObj = allUniquePromptsMap.get(pid);
+      if (!pObj || !isPromptActivelyCrawling(pObj)) {
+        completedInSession++;
+        sumPct += 100;
+      } else {
+        const prog = getPromptLiveProgress(pObj);
+        sumPct += prog.pct;
+        if (prog.mode === 'processing') processingCount++;
+        else pendingCount++;
+      }
+    });
+
+    let computedPct = 8;
+    if (sessionTotal > 0) {
+      computedPct = Math.min(96, Math.max(6, Math.round(sumPct / sessionTotal)));
+    } else {
+      const prepStart = sessionPrepStartedAtRef.current || Date.now();
+      const prepSec = Math.max(0, (Math.max(Date.now(), progressTick) - prepStart) / 1000);
+      computedPct = Math.min(28, Math.max(6, Math.round(6 + 22 * (1 - Math.exp(-prepSec / 8)))));
+    }
+
+    const displayPct = Math.min(96, Math.max(sessionMaxPctRef.current, computedPct));
+    sessionMaxPctRef.current = displayPct;
+
+    let headline = 'Live AI Crawl & Scrape bezig...';
+    let subline = 'ChatGPT, Gemini, Google AI Mode, AI Overviews, Perplexity & Claude analyseren live het web. Resultaten worden elke 2s automatisch bijgewerkt.';
+
+    if (sessionTotal === 0) {
+      if (resettingNulmeting) {
+        headline = 'Nieuwe 0-meting wordt gestart & ingepland...';
+      } else if (addingPromptsBusy || Object.values(generatingPromptsForKw || {}).some(Boolean)) {
+        headline = 'Prompts & SERP-concurrenten worden voorbereid en ingepland...';
+      } else if (bulkRescrapingBusy || Object.values(rescrapingKeywords || {}).some(Boolean)) {
+        headline = 'Zoektermen & AI-prompts worden opnieuw ingeladen voor live scan...';
+      }
+    } else if (sessionTotal === 1) {
+      headline = processingCount > 0
+        ? '1 prompt wordt nu live gecrawld & gescrapet in de AI-zoekmachines'
+        : '1 prompt staat in de wachtrij en start elk moment met crawlen';
+    } else {
+      const parts = [];
+      if (processingCount > 0) parts.push(`${processingCount} nu live aan het scannen`);
+      if (pendingCount > 0) parts.push(`${pendingCount} in wachtrij`);
+      headline = `AI Crawl & Scrape bezig — ${completedInSession} van ${sessionTotal} prompts voltooid${parts.length ? ` (${parts.join(' · ')})` : ''}`;
+    }
+
+    return (
+      <div style={{
+        position: 'sticky',
+        top: '12px',
+        zIndex: 30,
+        backgroundColor: '#eff6ff',
+        border: '1px solid #93c5fd',
+        borderRadius: '12px',
+        padding: '14px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        boxShadow: '0 4px 16px rgba(37, 99, 235, 0.12)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '240px' }}>
+            <div style={{
+              width: '34px',
+              height: '34px',
+              borderRadius: '50%',
+              backgroundColor: '#dbeafe',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#2563eb',
+              flexShrink: 0
+            }}>
+              <Loader2 size={18} className="spin" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '13px', fontWeight: 800, color: '#1e3a8a' }}>
+                  {headline}
+                </span>
+                <span style={{
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  color: '#1d4ed8',
+                  backgroundColor: '#ffffff',
+                  padding: '2px 9px',
+                  borderRadius: '999px',
+                  border: '1px solid #bfdbfe',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}>
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: '#2563eb',
+                    display: 'inline-block'
+                  }} />
+                  Live polling actief
+                </span>
+              </div>
+              <span style={{ fontSize: '11.5px', color: '#3b82f6', fontWeight: 500 }}>
+                {subline}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+            {sessionTotal > 1 && (
+              <span style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#1e40af',
+                backgroundColor: '#dbeafe',
+                padding: '3px 10px',
+                borderRadius: '999px',
+                fontVariantNumeric: 'tabular-nums'
+              }}>
+                {completedInSession} / {sessionTotal} gereed
+              </span>
+            )}
+            <span style={{
+              fontSize: '18px',
+              fontWeight: 900,
+              color: '#1d4ed8',
+              fontVariantNumeric: 'tabular-nums',
+              minWidth: '46px',
+              textAlign: 'right'
+            }}>
+              {displayPct}%
+            </span>
+          </div>
+        </div>
+
+        <div style={{
+          width: '100%',
+          height: '8px',
+          borderRadius: '999px',
+          backgroundColor: '#dbeafe',
+          overflow: 'hidden'
+        }}>
+          <div style={{
+            width: `${displayPct}%`,
+            height: '100%',
+            borderRadius: '999px',
+            background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 55%, #3b82f6 100%)',
+            transition: 'width 0.45s ease'
+          }} />
+        </div>
+      </div>
+    );
+  };
+
   const renderSinglePromptCard = (p, pIdx, kwContext = null, showEditActions = false) => {
     const promptKey = p.id || `p_${pIdx}`;
     const isOpen = !!expandedPrompts[promptKey];
-    const isCrawling = !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling';
+    const isCrawling = isPromptActivelyCrawling(p);
+    const liveProg = getPromptLiveProgress(p);
     const isMentioned = p.status === 'Cited' || p.mentioned;
     const brandsCount = p.brandsCount || (isMentioned ? (p.citations ? p.citations.length + 3 : 5) : 0);
     const sourcesCount = p.sourcesCount || (p.citations ? p.citations.length : 0);
@@ -2302,9 +2652,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '5px',
-                    border: '1px solid #bfdbfe'
+                    border: '1px solid #bfdbfe',
+                    fontVariantNumeric: 'tabular-nums'
                   }}>
-                    <Loader2 size={11} className="spin" /> AI Crawl & Grounding actief
+                    <Loader2 size={11} className="spin" />
+                    {liveProg.mode === 'processing' ? `Live crawlen · ${liveProg.pct}%` : `In wachtrij · ${liveProg.pct}%`}
                   </span>
                 )}
               </>
@@ -2313,17 +2665,39 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             {isCrawling ? (
-              <span style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: '#2563eb',
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
                 backgroundColor: '#eff6ff',
-                padding: '3px 12px',
+                padding: '4px 12px',
                 borderRadius: '16px',
                 border: '1px solid #bfdbfe'
               }}>
-                Wachten op AI modellen...
-              </span>
+                <div style={{
+                  width: '64px',
+                  height: '6px',
+                  borderRadius: '999px',
+                  backgroundColor: '#dbeafe',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    width: `${liveProg.pct}%`,
+                    height: '100%',
+                    borderRadius: '999px',
+                    background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 100%)',
+                    transition: 'width 0.45s ease'
+                  }} />
+                </div>
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  color: '#1d4ed8',
+                  fontVariantNumeric: 'tabular-nums'
+                }}>
+                  {liveProg.pct}%
+                </span>
+              </div>
             ) : (
               <>
                 {p.status === 'failed' ? (
@@ -2456,7 +2830,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   style={{
                     padding: '5px 11px',
                     borderRadius: '6px',
-                    backgroundColor: isCrawling ? '#93c5fd' : '#000000',
+                    backgroundColor: isCrawling ? '#2563eb' : '#000000',
                     color: '#ffffff',
                     fontSize: '11px',
                     fontWeight: 700,
@@ -2465,11 +2839,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     gap: '5px',
                     cursor: isCrawling ? 'not-allowed' : 'pointer',
                     border: 'none',
-                    opacity: isCrawling ? 0.8 : 1
+                    opacity: isCrawling ? 0.9 : 1,
+                    fontVariantNumeric: 'tabular-nums'
                   }}
                 >
                   {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
-                  {isCrawling ? 'Crawling...' : 'Crawl'}
+                  {isCrawling ? `${liveProg.pct}%` : 'Crawl'}
                 </button>
                 <button
                   type="button"
@@ -2497,6 +2872,23 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             </div>
           </div>
         </div>
+
+        {/* Full-width per-prompt progress bar along bottom of header whenever actively crawling */}
+        {isCrawling && (
+          <div style={{
+            width: '100%',
+            height: '4px',
+            backgroundColor: '#dbeafe',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              width: `${liveProg.pct}%`,
+              height: '100%',
+              background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 60%, #3b82f6 100%)',
+              transition: 'width 0.45s ease'
+            }} />
+          </div>
+        )}
 
         {/* Engine Breakdown Rows + Per-Prompt History */}
         {isOpen && (
@@ -2601,17 +2993,52 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               </div>
             </div>
 
-            {isCrawling && !p.modelMentions ? (
-              <div style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', backgroundColor: '#f8fafc' }}>
-                <Loader2 size={24} className="spin" style={{ color: '#2563eb' }} />
-                <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e293b' }}>
-                  Prompt wordt momenteel live uitgevoerd in AI zoekmachines...
-                </span>
-                <span style={{ fontSize: '12px', color: '#64748b', textAlign: 'center', maxWidth: '480px' }}>
-                  OpenAI SearchGPT, Google AI Mode, Gemini en Perplexity analyseren het web op zoek naar actuele citaties, reviews en merkvermeldingen. Resultaten verschijnen automatisch zodra de scan gereed is.
+            {isCrawling && (
+              <div style={{
+                margin: '12px 20px',
+                padding: '16px 18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                backgroundColor: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                borderRadius: '10px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <Loader2 size={18} className="spin" style={{ color: '#2563eb', flexShrink: 0 }} />
+                    <span style={{ fontSize: '13px', fontWeight: 800, color: '#1e3a8a' }}>
+                      {liveProg.mode === 'processing'
+                        ? 'Prompt wordt nu live uitgevoerd over alle gekoppelde AI-zoekmachines...'
+                        : 'Prompt staat in de wachtrij en wordt zo dadelijk live gecrawld...'}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '14px', fontWeight: 900, color: '#1d4ed8', fontVariantNumeric: 'tabular-nums' }}>
+                    {liveProg.pct}%
+                  </span>
+                </div>
+                <div style={{
+                  width: '100%',
+                  height: '7px',
+                  borderRadius: '999px',
+                  backgroundColor: '#dbeafe',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    width: `${liveProg.pct}%`,
+                    height: '100%',
+                    borderRadius: '999px',
+                    background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 60%, #3b82f6 100%)',
+                    transition: 'width 0.45s ease'
+                  }} />
+                </div>
+                <span style={{ fontSize: '11.5px', color: '#3b82f6' }}>
+                  ChatGPT, Gemini, Google AI Mode, AI Overviews, Perplexity en Claude analyseren actuele citaties en merkvermeldingen.{p.modelMentions ? ' Hieronder ziet u nog de vorige meting tot de nieuwe scan op 100% staat.' : ' Resultaten verschijnen automatisch zodra de scan op 100% staat.'}
                 </span>
               </div>
-            ) : (
+            )}
+
+            {(!isCrawling || p.modelMentions) && (
               enginesList.map((eng, engIdx) => {
                 const engKey = `${promptKey}_${eng.id}`;
                 const isEngExpanded = !!expandedEngines[engKey];
@@ -2924,6 +3351,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         )}
         {renderPromptLimitAlert()}
         {renderNulmetingBanner()}
+        {renderLiveCrawlProgressBanner()}
 
         {/* Detail Top Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -4045,32 +4473,6 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {(() => {
-                const kwCrawlingCount = (kw.prompts || []).filter(p => !!scanningPrompts[p.id] || p.status === 'processing' || p.status === 'pending' || p.status === 'crawling').length;
-                return kwCrawlingCount > 0 ? (
-                  <div style={{
-                    backgroundColor: '#eff6ff',
-                    border: '1px solid #bfdbfe',
-                    borderRadius: '10px',
-                    padding: '12px 18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '12px'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <Loader2 size={18} className="spin" style={{ color: '#2563eb' }} />
-                      <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e40af' }}>
-                        AI Zoekmachines doorzoeken... ({kwCrawlingCount} prompt{kwCrawlingCount === 1 ? '' : 's'} actief aan het crawlen)
-                      </span>
-                    </div>
-                    <span style={{ fontSize: '11px', color: '#2563eb', fontWeight: 700, backgroundColor: '#ffffff', padding: '4px 10px', borderRadius: '12px', border: '1px solid #bfdbfe' }}>
-                      Live Scannen
-                    </span>
-                  </div>
-                ) : null;
-              })()}
-
               {(kw.prompts || []).map((p, pIdx) => renderSinglePromptCard(p, pIdx, kw, isEditMode))}
               {(kw.prompts || []).length === 0 && (
                 <div style={{
@@ -4626,66 +5028,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         </form>
       )}
 
-      {/* Active Crawl Status Banner */}
-      {(() => {
-        let totalActive = 0;
-        (keywords || []).forEach(k => {
-          (k.prompts || []).forEach(p => {
-            if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
-              totalActive++;
-            }
-          });
-        });
-        (standalonePrompts || []).forEach(p => {
-          if (p.status === 'pending' || p.status === 'processing' || p.status === 'crawling' || scanningPrompts[p.id]) {
-            totalActive++;
-          }
-        });
-
-        if (totalActive > 0) {
-          return (
-            <div style={{
-              backgroundColor: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              borderRadius: '12px',
-              padding: '14px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '16px',
-              boxShadow: '0 2px 8px rgba(37, 99, 235, 0.08)'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  backgroundColor: '#dbeafe',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#2563eb',
-                  flexShrink: 0
-                }}>
-                  <Loader2 size={18} className="spin" />
-                </div>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#1e40af' }}>
-                    AI Zoekmachines doorzoeken... ({totalActive} prompt{totalActive === 1 ? '' : 's'} actief aan het crawlen)
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#3b82f6', marginTop: '2px' }}>
-                    ChatGPT (SearchGPT), Google AI Mode, Gemini en Perplexity analyseren het live web. Resultaten en Share of Voice worden automatisch bijgewerkt.
-                  </div>
-                </div>
-              </div>
-              <span style={{ fontSize: '11px', fontWeight: 700, color: '#1d4ed8', backgroundColor: '#ffffff', padding: '4px 12px', borderRadius: '12px', border: '1px solid #bfdbfe', whiteSpace: 'nowrap' }}>
-                Live Scannen
-              </span>
-            </div>
-          );
-        }
-        return null;
-      })()}
+      {/* Live Crawl & Scrape Progress Banner */}
+      {renderLiveCrawlProgressBanner()}
 
       {/* Main View Switcher Tabs: 1. Alle Prompts (Totaaloverzicht) | 2. Zoektermen & Concurrenten */}
       <div style={{
