@@ -20,7 +20,7 @@ export default function AccountManagement({ currentUser, activeClient, onUpdateS
         'Max 1,5 uur support p/m',
         'Jaarlijkse evaluatie'
       ],
-      color: '#06b6d4', // Cyan
+      color: '#64748b',
       badge: 'Instap'
     },
     {
@@ -41,7 +41,7 @@ export default function AccountManagement({ currentUser, activeClient, onUpdateS
         'Max 4 uur support p/m',
         'Halfjaarlijkse evaluatie'
       ],
-      color: '#440099', // Saleswizard Purple
+      color: '#0f172a',
       badge: 'Populair',
       popular: true
     },
@@ -63,7 +63,7 @@ export default function AccountManagement({ currentUser, activeClient, onUpdateS
         'Max 8 uur support p/m',
         'Kwartaalevaluatie'
       ],
-      color: '#ec4899', // Pink
+      color: '#334155',
       badge: 'Maatwerk'
     }
   ];
@@ -208,7 +208,7 @@ export default function AccountManagement({ currentUser, activeClient, onUpdateS
                 style={{
                   padding: '14px',
                   borderRadius: 'var(--border-radius-sm)',
-                  backgroundColor: isSelected ? 'rgba(68, 0, 153, 0.04)' : 'var(--bg-app)',
+                  backgroundColor: isSelected ? '#f8fafc' : 'var(--bg-app)',
                   border: isSelected ? '2px solid var(--brand-primary)' : '1px solid var(--border-medium)',
                   textAlign: 'left',
                   cursor: 'pointer',

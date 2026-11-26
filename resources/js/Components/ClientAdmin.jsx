@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal, Sparkles } from 'lucide-react';
+import { Plus, Search, X, Loader2, Trash2, Edit2, Activity, Terminal, Sparkles, Users } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
   const [error, setError] = React.useState(false);
@@ -441,53 +441,73 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
             </p>
           </div>
 
-          <div data-tour="projects-create-btn" style={{ display: 'flex', gap: '10px' }}>
+          <div data-tour="projects-create-btn" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {onNavigateTab && (
+              <button
+                type="button"
+                onClick={() => onNavigateTab('users')}
+                style={{
+                  backgroundColor: '#ffffff',
+                  color: '#334155',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  padding: '8px 14px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8fafc'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; }}
+              >
+                <Users size={15} style={{ color: '#64748b' }} />
+                Gebruikers
+              </button>
+            )}
             <button
               onClick={() => { fetchApiMonitorData(); setShowMonitorModal(true); }}
               style={{
                 backgroundColor: '#ffffff',
-                color: '#374151',
-                border: '1px solid #d1d5db',
-                borderRadius: '24px',
-                padding: '10px 20px',
+                color: '#334155',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                padding: '8px 14px',
                 fontSize: '13px',
-                fontWeight: 700,
+                fontWeight: 600,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                transition: 'all 0.15s ease'
+                gap: '6px'
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f9fafb'; e.currentTarget.style.borderColor = '#9ca3af'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; e.currentTarget.style.borderColor = '#d1d5db'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8fafc'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; }}
             >
-              <Activity size={14} />
+              <Activity size={15} style={{ color: '#64748b' }} />
               API Status
             </button>
 
             <button
               onClick={handleOpenCreateModal}
               style={{
-                backgroundColor: '#000000',
+                backgroundColor: '#440099',
                 color: '#ffffff',
                 border: 'none',
-                borderRadius: '24px',
-                padding: '10px 20px',
+                borderRadius: '8px',
+                padding: '8px 16px',
                 fontSize: '13px',
-                fontWeight: 700,
+                fontWeight: 600,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                transition: 'background-color 0.15s ease'
+                gap: '6px'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#5a1bb8'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#440099'}
             >
-              <Plus size={14} strokeWidth={3} />
-              Create Project
+              <Plus size={15} />
+              Nieuw Project
             </button>
           </div>
         </div>
@@ -524,17 +544,8 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
               ? client.company.toLowerCase()
               : `${client.company.toLowerCase()}.nl`;
 
-            // Generate a premium colored icon based on company name
-            const colors = [
-              { bg: '#fee2e2', text: '#ef4444' }, // Red
-              { bg: '#e0e7ff', text: '#6366f1' }, // Indigo
-              { bg: '#dcfce7', text: '#22c55e' }, // Green
-              { bg: '#fef9c3', text: '#eab308' }, // Yellow
-              { bg: '#f3e8ff', text: '#a855f7' }, // Purple
-              { bg: '#ecfeff', text: '#06b6d4' }  // Cyan
-            ];
-            const colorIdx = client.company.charCodeAt(0) % colors.length;
-            const logoColor = colors[colorIdx];
+            // Calm neutral fallback icon style
+            const logoColor = { bg: '#f1f5f9', text: '#475569' };
 
             return (
               <div
@@ -1554,23 +1565,27 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
                 flexWrap: 'wrap',
                 gap: '12px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                  {dataForSeoInfo?.balanceEur != null && (
+                    <>
+                      <div>
+                        <span style={{ fontSize: '11px', color: '#047857', display: 'block', fontWeight: 700 }}>DataForSEO Saldo</span>
+                        <span style={{ fontSize: '18px', fontWeight: 800, color: '#065f46', fontFamily: "'Outfit', sans-serif" }}>
+                          € {Number(dataForSeoInfo.balanceEur).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div style={{ width: '1px', height: '28px', backgroundColor: '#e5e7eb' }} />
+                    </>
+                  )}
                   <div>
-                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Totale LLM Kosten</span>
+                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Verbruikt (DataForSEO)</span>
                     <span style={{ fontSize: '18px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
                       € {Number(costSummary.totalCostEur || 0).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div style={{ width: '1px', height: '28px', backgroundColor: '#e5e7eb' }} />
                   <div>
-                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Totaal Tokens</span>
-                    <span style={{ fontSize: '15px', fontWeight: 700, color: '#4b5563' }}>
-                      {Number(costSummary.totalTokens || 0).toLocaleString('nl-NL')}
-                    </span>
-                  </div>
-                  <div style={{ width: '1px', height: '28px', backgroundColor: '#e5e7eb' }} />
-                  <div>
-                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>Aanroepen</span>
+                    <span style={{ fontSize: '11px', color: '#6b7280', display: 'block', fontWeight: 600 }}>API Aanroepen</span>
                     <span style={{ fontSize: '15px', fontWeight: 700, color: '#4b5563' }}>
                       {costSummary.totalRequests || 0}
                     </span>
@@ -1742,7 +1757,7 @@ export default function ClientAdmin({ currentUser, clients, onSelectClient, onUp
               </div>
 
               <div style={{
-                backgroundColor: '#0f172a',
+                backgroundColor: '#440099',
                 borderRadius: '8px',
                 padding: '16px',
                 fontFamily: "'Courier New', Courier, monospace",

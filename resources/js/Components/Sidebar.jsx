@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { 
-  ChevronDown, ChevronUp, LayoutDashboard, Search, Eye, 
-  Settings, Award, RefreshCw, BarChart2, Compass, AlertCircle, 
-  HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck, Coins, FileText
+import {
+  ChevronDown, ChevronUp, LayoutDashboard, Search, Eye,
+  Settings, Award, RefreshCw, BarChart2, Compass, AlertCircle,
+  HelpCircle, Sliders, Users, Key, ExternalLink, LogOut, ShieldCheck, Coins, FileText, NewReleases, Globe
 } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -50,36 +50,39 @@ const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size =
   );
 };
 
-export default function Sidebar({ 
-  activeTab, 
-  setActiveTab, 
-  currentUser, 
-  activeWorkspace, 
-  onWorkspaceChange, 
+export default function Sidebar({
+  activeTab,
+  setActiveTab,
+  currentUser,
+  activeWorkspace,
+  onWorkspaceChange,
   onLogout,
   clients = [],
   onOpenGuide,
   onStartTour
 }) {
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+  const isStaff = currentUser.role === 'medewerker' || currentUser.role === 'admin';
 
   const brandReportItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'report', label: 'Rapportage', icon: FileText }
   ];
 
-  const generalItems = currentUser.role === 'medewerker'
+  const generalItems = isStaff
     ? [
-        { id: 'prompt_research', label: 'AI Prompt Research', icon: Compass },
-        { id: 'llm_costs', label: 'LLM Kosten & Verbruik', icon: Coins }
-      ]
+      { id: 'prompt_research', label: 'AI Prompt Research', icon: Compass },
+      { id: 'llm_costs', label: 'DataForSEO Kosten', icon: Coins },
+      { id: 'whats_new', label: "What's New", icon: NewReleases, badge: 'v2.6' }
+    ]
     : [];
 
   // Admin menu links vary by role
   const getAdminItems = () => {
-    if (currentUser.role === 'medewerker') {
+    if (isStaff) {
       return [
-        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard }
+        { id: 'client_admin', label: 'Projects', icon: LayoutDashboard },
+        { id: 'users', label: 'Gebruikers & Toegang', icon: Users }
       ];
     }
     return [
@@ -104,64 +107,62 @@ export default function Sidebar({
       borderRight: '1px solid rgba(255, 255, 255, 0.05)',
       overflowY: 'auto'
     }} className="sidebar-nav">
-      
+
       {/* Saleswizard Brand Header */}
       <div style={{
-        padding: '24px 20px',
+        padding: '22px 20px',
         display: 'flex',
         alignItems: 'center',
-        gap: '12px',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
+        gap: '11px',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
       }}>
         <div style={{
-          width: '36px',
-          height: '36px',
-          background: 'var(--brand-accent-gradient)',
-          borderRadius: '8px',
+          width: '32px',
+          height: '32px',
+          backgroundColor: '#440099',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: '7px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: 'white',
+          color: '#ffffff',
           fontWeight: 800,
-          fontSize: '20px',
+          fontSize: '16px',
           fontFamily: "'Outfit', sans-serif"
         }}>
           S
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span style={{
-            fontSize: '18px',
+            fontSize: '16px',
             fontFamily: "'Outfit', sans-serif",
-            fontWeight: 800,
-            letterSpacing: '-0.5px',
-            background: 'linear-gradient(to right, #ffffff, #d8b4fe)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent'
+            fontWeight: 700,
+            letterSpacing: '-0.3px',
+            color: '#ffffff'
           }}>
             Saleswizard
           </span>
           <span style={{
-            fontSize: '9px',
-            fontWeight: 700,
-            color: '#a78bfa',
-            textTransform: 'uppercase',
-            letterSpacing: '1.5px',
-            marginTop: '-2px'
+            fontSize: '10px',
+            fontWeight: 600,
+            color: 'rgba(255, 255, 255, 0.45)',
+            letterSpacing: '0.6px',
+            marginTop: '-1px'
           }}>
             GEO Wizard
           </span>
         </div>
       </div>
 
-      {/* Workspace Selector (Enabled only for Medewerker, Locked for Klant) */}
+      {/* Workspace Selector (Enabled for Staff or multi-project Klant, Locked for single-project Klant) */}
       <div data-tour="sidebar-workspace" style={{ padding: '16px 16px 8px', position: 'relative' }}>
         <button
           onClick={() => {
-            if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) {
+            if (isStaff || (clients && clients.length > 1)) {
               setIsWorkspaceOpen(!isWorkspaceOpen);
             }
           }}
-          disabled={!(currentUser.role === 'medewerker' || (clients && clients.length > 1))}
+          disabled={!(isStaff || (clients && clients.length > 1))}
           style={{
             width: '100%',
             padding: '10px 12px',
@@ -173,51 +174,53 @@ export default function Sidebar({
             justifyContent: 'between',
             gap: '8px',
             textAlign: 'left',
-            cursor: (currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? 'pointer' : 'default'
+            cursor: (isStaff || (clients && clients.length > 1)) ? 'pointer' : 'default'
           }}
           onMouseEnter={(e) => {
-            if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+            if (isStaff || (clients && clients.length > 1)) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
           }}
           onMouseLeave={(e) => {
-            if (currentUser.role === 'medewerker' || (clients && clients.length > 1)) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
+            if (isStaff || (clients && clients.length > 1)) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
           }}
         >
           <FaviconImage
             domain={activeWorkspace}
             fallbackLabel={activeWorkspace || 'P'}
-            fallbackBg={(currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? '#ec4899' : '#8b5cf6'}
+            fallbackBg="#334155"
             fallbackColor="white"
             size={24}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              {(currentUser.role === 'medewerker' || (clients && clients.length > 1)) ? 'Actief Project' : 'Uw Project'}
+              {isStaff ? 'Actief Project' : 'Uw Project'}
             </div>
             <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeWorkspace ? 'white' : 'rgba(255,255,255,0.8)' }}>
-              {activeWorkspace || (currentUser.role === 'medewerker' ? 'Alle Projecten (Totaal)' : 'Select a project')}
+              {activeWorkspace || (isStaff ? 'Alle Projecten (Totaal)' : 'Geen project gekoppeld')}
             </div>
           </div>
-          {(currentUser.role === 'medewerker' || (clients && clients.length > 1)) && (
+          {(isStaff || (clients && clients.length > 1)) && (
             isWorkspaceOpen ? <ChevronUp size={16} style={{ opacity: 0.6 }} /> : <ChevronDown size={16} style={{ opacity: 0.6 }} />
           )}
         </button>
 
         {/* Workspace Dropdown */}
-        {isWorkspaceOpen && (currentUser.role === 'medewerker' || (clients && clients.length > 1)) && (
+        {isWorkspaceOpen && (isStaff || (clients && clients.length > 1)) && (
           <div style={{
             position: 'absolute',
             top: '100%',
             left: 16,
             right: 16,
-            backgroundColor: '#150f24',
+            backgroundColor: '#1d0840',
             border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: 'var(--border-radius-sm)',
-            boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)',
+            borderRadius: '8px',
+            boxShadow: '0 10px 20px rgba(0,0,0,0.4)',
             zIndex: 10,
             marginTop: '4px',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            maxHeight: '320px',
+            overflowY: 'auto'
           }}>
-            {currentUser.role === 'medewerker' && (
+            {isStaff && (
               <button
                 onClick={() => {
                   onWorkspaceChange(null);
@@ -228,13 +231,13 @@ export default function Sidebar({
                   padding: '10px 12px',
                   textAlign: 'left',
                   fontSize: '13px',
-                  fontWeight: !activeWorkspace ? 700 : 500,
+                  fontWeight: !activeWorkspace ? 600 : 400,
                   backgroundColor: !activeWorkspace ? 'rgba(255,255,255,0.08)' : 'transparent',
-                  color: !activeWorkspace ? '#c084fc' : 'rgba(255,255,255,0.85)',
+                  color: !activeWorkspace ? '#ffffff' : 'rgba(255,255,255,0.8)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+                  borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
                 }}
                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'}
                 onMouseLeave={(e) => e.currentTarget.style.backgroundColor = !activeWorkspace ? 'rgba(255,255,255,0.08)' : 'transparent'}
@@ -243,17 +246,16 @@ export default function Sidebar({
                   width: '18px',
                   height: '18px',
                   borderRadius: '4px',
-                  backgroundColor: 'rgba(192, 132, 252, 0.2)',
-                  color: '#c084fc',
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  color: '#ffffff',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '11px',
-                  fontWeight: 800
+                  fontSize: '11px'
                 }}>
-                  🌐
+                  <Globe size={13} />
                 </div>
-                <span>Alle Projecten (Totaal overzicht)</span>
+                <span>Alle projecten</span>
               </button>
             )}
             {clients.map((client) => (
@@ -294,76 +296,55 @@ export default function Sidebar({
 
       {/* Navigation Groups */}
       <div style={{ flex: 1, padding: '12px' }}>
-        
+
         {!activeWorkspace ? (
-          /* Medewerker Initial state menu (Only Organization & Projects) */
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <button
-              onClick={() => setActiveTab('client_admin')}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 'var(--border-radius-sm)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                fontSize: '13px',
-                fontWeight: activeTab === 'organization' ? 600 : 400,
-                color: activeTab === 'organization' ? '#f8fafc' : 'rgba(255,255,255,0.65)',
-                backgroundColor: activeTab === 'organization' ? 'rgba(255,255,255,0.05)' : 'transparent',
-                textAlign: 'left',
-                border: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <Users size={16} style={{ color: 'rgba(255,255,255,0.4)' }} />
-              Organization
-            </button>
-            <button
-              onClick={() => setActiveTab('client_admin')}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 'var(--border-radius-sm)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                fontSize: '13px',
-                fontWeight: activeTab === 'client_admin' ? 600 : 400,
-                color: activeTab === 'client_admin' ? '#f8fafc' : 'rgba(255,255,255,0.85)',
-                backgroundColor: activeTab === 'client_admin' ? 'rgba(255,255,255,0.08)' : 'transparent',
-                textAlign: 'left',
-                border: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <LayoutDashboard size={16} style={{ color: '#c084fc' }} />
-              Projects
-            </button>
-            <button
-              onClick={() => setActiveTab('llm_costs')}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 'var(--border-radius-sm)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                fontSize: '13px',
-                fontWeight: activeTab === 'llm_costs' ? 600 : 400,
-                color: activeTab === 'llm_costs' ? '#f8fafc' : 'rgba(255,255,255,0.85)',
-                backgroundColor: activeTab === 'llm_costs' ? 'rgba(139, 92, 246, 0.2)' : 'transparent',
-                borderLeft: activeTab === 'llm_costs' ? '3px solid #a78bfa' : '3px solid transparent',
-                textAlign: 'left',
-                borderTop: 'none',
-                borderRight: 'none',
-                borderBottom: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <Coins size={16} style={{ color: '#fbbf24' }} />
-              Totale LLM Kosten
-            </button>
+          /* Staff Initial state menu (Projects, Users, DataForSEO Costs & What's New) */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+            {[
+              { id: 'client_admin', label: 'Projects', icon: LayoutDashboard },
+              { id: 'users', label: 'Gebruikers & Toegang', icon: Users },
+              { id: 'llm_costs', label: 'DataForSEO Kosten', icon: Coins },
+              { id: 'whats_new', label: "What's New", icon: NewReleases, badge: 'v2.6' }
+            ].map(nav => {
+              const NavIcon = nav.icon;
+              const isAct = activeTab === nav.id;
+              return (
+                <button
+                  key={nav.id}
+                  onClick={() => setActiveTab(nav.id)}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    fontSize: '13px',
+                    fontWeight: isAct ? 600 : 400,
+                    color: isAct ? '#ffffff' : 'rgba(255,255,255,0.72)',
+                    backgroundColor: isAct ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    textAlign: 'left',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <NavIcon size={17} style={{ color: isAct ? '#ffffff' : 'rgba(255,255,255,0.55)' }} />
+                  <span style={{ flex: 1 }}>{nav.label}</span>
+                  {nav.badge && (
+                    <span style={{
+                      fontSize: '10px',
+                      padding: '1px 6px',
+                      borderRadius: '6px',
+                      backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                      color: 'rgba(255, 255, 255, 0.8)',
+                      fontWeight: 600
+                    }}>
+                      {nav.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         ) : (
           /* Normal Project menus */
@@ -382,7 +363,7 @@ export default function Sidebar({
               }}>
                 Brand Report
               </div>
-              
+
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
                 <div style={{
                   fontSize: '11px',
@@ -393,7 +374,7 @@ export default function Sidebar({
                   alignItems: 'center',
                   gap: '8px'
                 }}>
-                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#a78bfa' }}></div>
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#47ca9b' }}></div>
                   {activeWorkspace}
                 </div>
                 {brandReportItems.map((item) => {
@@ -412,20 +393,19 @@ export default function Sidebar({
                         gap: '10px',
                         fontSize: '13px',
                         fontWeight: isActive ? 600 : 400,
-                        color: isActive ? '#f8fafc' : 'rgba(255,255,255,0.65)',
-                        backgroundColor: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-                        borderLeft: isActive ? '3px solid #a78bfa' : '3px solid transparent',
+                        color: isActive ? '#ffffff' : 'rgba(255,255,255,0.68)',
+                        backgroundColor: isActive ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                         textAlign: 'left',
                         cursor: 'pointer'
                       }}
                       onMouseEnter={(e) => {
-                        if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
+                        if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
                       }}
                       onMouseLeave={(e) => {
                         if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
                       }}
                     >
-                      <Icon size={16} style={{ color: isActive ? '#c084fc' : 'rgba(255,255,255,0.4)' }} />
+                      <Icon size={16} style={{ color: isActive ? '#ffffff' : 'rgba(255,255,255,0.5)' }} />
                       {item.label}
                     </button>
                   );
@@ -433,165 +413,162 @@ export default function Sidebar({
               </div>
             </div>
 
-        {/* GENERAL SECTION */}
-        {generalItems.length > 0 && (
-        <div style={{ marginTop: '18px' }}>
-          <div style={{
-            padding: '8px',
-            fontSize: '10px',
-            fontWeight: 800,
-            color: 'rgba(255,255,255,0.4)',
-            textTransform: 'uppercase',
-            letterSpacing: '1px'
-          }}>
-            General
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
-            {generalItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--border-radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    fontSize: '13px',
-                    fontWeight: isActive ? 600 : 400,
-                    color: isActive ? '#f8fafc' : 'rgba(255,255,255,0.65)',
-                    backgroundColor: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-                    borderLeft: isActive ? '3px solid #a78bfa' : '3px solid transparent',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
-                  }}
-                >
-                  <Icon size={16} style={{ color: isActive ? '#c084fc' : 'rgba(255,255,255,0.4)' }} />
-                  <span style={{ flex: 1 }}>{item.label}</span>
-                  {item.badge && (
-                    <span style={{
-                      fontSize: '9px',
-                      padding: '2px 6px',
-                      borderRadius: '8px',
-                      backgroundColor: '#a78bfa',
-                      color: 'white',
-                      fontWeight: 700
-                    }}>
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        )}
+            {/* GENERAL SECTION */}
+            {generalItems.length > 0 && (
+              <div style={{ marginTop: '18px' }}>
+                <div style={{
+                  padding: '8px',
+                  fontSize: '10px',
+                  fontWeight: 800,
+                  color: 'rgba(255,255,255,0.4)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '1px'
+                }}>
+                  General
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
+                  {generalItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeTab === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveTab(item.id)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          borderRadius: 'var(--border-radius-sm)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          fontSize: '13px',
+                          fontWeight: isActive ? 600 : 400,
+                          color: isActive ? '#ffffff' : 'rgba(255,255,255,0.68)',
+                          backgroundColor: isActive ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                          textAlign: 'left'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
+                        }}
+                      >
+                        <Icon size={16} style={{ color: isActive ? '#ffffff' : 'rgba(255,255,255,0.5)' }} />
+                        <span style={{ flex: 1 }}>{item.label}</span>
+                        {item.badge && (
+                          <span style={{
+                            fontSize: '10px',
+                            padding: '1px 6px',
+                            borderRadius: '6px',
+                            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                            color: 'rgba(255, 255, 255, 0.8)',
+                            fontWeight: 600
+                          }}>
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-        {/* ADMIN / ACCOUNT SECTION */}
-        <div style={{ marginTop: '18px' }}>
-          <div style={{
-            padding: '8px',
-            fontSize: '10px',
-            fontWeight: 800,
-            color: 'rgba(255,255,255,0.4)',
-            textTransform: 'uppercase',
-            letterSpacing: '1px'
-          }}>
-            {currentUser.role === 'medewerker' ? 'Admin' : 'Mijn Account'}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
-            {adminItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    if (item.id === 'client_admin') {
-                      onWorkspaceChange(null);
-                    }
-                    setActiveTab(item.id);
-                  }}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--border-radius-sm)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    fontSize: '13px',
-                    fontWeight: isActive ? 600 : 400,
-                    color: isActive ? '#f8fafc' : 'rgba(255,255,255,0.65)',
-                    backgroundColor: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-                    borderLeft: isActive ? '3px solid #a78bfa' : '3px solid transparent',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
-                  }}
-                >
-                  <Icon size={16} style={{ color: isActive ? '#c084fc' : 'rgba(255,255,255,0.4)' }} />
-                  <span style={{ flex: 1 }}>{item.label}</span>
-                  {item.badge && (
-                    <span style={{
-                      fontSize: '9px',
-                      padding: '2px 6px',
-                      borderRadius: '8px',
-                      backgroundColor: 'rgba(236, 72, 153, 0.2)',
-                      color: '#ec4899',
-                      fontWeight: 700
-                    }}>
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </>
-    )}
+            {/* ADMIN / ACCOUNT SECTION */}
+            <div style={{ marginTop: '18px' }}>
+              <div style={{
+                padding: '8px',
+                fontSize: '10px',
+                fontWeight: 800,
+                color: 'rgba(255,255,255,0.4)',
+                textTransform: 'uppercase',
+                letterSpacing: '1px'
+              }}>
+                {isStaff ? 'Admin' : 'Mijn Account'}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '4px', marginTop: '4px' }}>
+                {adminItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        if (item.id === 'client_admin') {
+                          onWorkspaceChange(null);
+                        }
+                        setActiveTab(item.id);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        borderRadius: 'var(--border-radius-sm)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontSize: '13px',
+                        fontWeight: isActive ? 600 : 400,
+                        color: isActive ? '#ffffff' : 'rgba(255,255,255,0.68)',
+                        backgroundColor: isActive ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                        textAlign: 'left'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.04)';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
+                      }}
+                    >
+                      <Icon size={16} style={{ color: isActive ? '#ffffff' : 'rgba(255,255,255,0.5)' }} />
+                      <span style={{ flex: 1 }}>{item.label}</span>
+                      {item.badge && (
+                        <span style={{
+                          fontSize: '10px',
+                          padding: '1px 6px',
+                          borderRadius: '6px',
+                          backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                          color: 'rgba(255, 255, 255, 0.8)',
+                          fontWeight: 600
+                        }}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
 
       </div>
 
       {/* Handleiding & Rondleiding Quick Access in Sidebar */}
-      <div style={{ padding: '8px 16px 12px' }}>
+      <div style={{ padding: '8px 16px 14px' }}>
         <button
           type="button"
           onClick={() => onOpenGuide && onOpenGuide()}
           style={{
             width: '100%',
-            padding: '10px 12px',
-            borderRadius: 'var(--border-radius-sm)',
-            backgroundColor: 'rgba(167, 139, 250, 0.1)',
-            border: '1px solid rgba(167, 139, 250, 0.22)',
-            color: '#e9d5ff',
+            padding: '9px 12px',
+            borderRadius: '6px',
+            backgroundColor: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            color: 'rgba(255, 255, 255, 0.72)',
             fontSize: '12px',
-            fontWeight: 700,
+            fontWeight: 500,
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
             cursor: 'pointer',
-            textAlign: 'left',
-            transition: 'all 0.15s ease'
+            textAlign: 'left'
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.18)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.1)'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.07)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)'; }}
         >
-          <HelpCircle size={15} style={{ color: '#c084fc', flexShrink: 0 }} />
-          <span>Handleiding & Rondleiding</span>
+          <HelpCircle size={15} style={{ color: 'rgba(255,255,255,0.5)', flexShrink: 0 }} />
+          <span>Handleiding &amp; Rondleiding</span>
         </button>
       </div>
 

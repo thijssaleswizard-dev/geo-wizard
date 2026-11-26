@@ -9,12 +9,19 @@ use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\PromptController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\UserController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 // Auth Routes
 Route::post('/auth/login', [AuthApiController::class, 'login']);
 Route::post('/auth/register', [AuthApiController::class, 'register']);
+
+// Users & Roles Management Routes (Staff/Admin only)
+Route::get('/users', [UserController::class, 'index']);
+Route::post('/users', [UserController::class, 'store']);
+Route::put('/users/{id}', [UserController::class, 'update']);
+Route::delete('/users/{id}', [UserController::class, 'destroy']);
 
 // Projects Routes
 Route::get('/projects', [ProjectController::class, 'index']);
@@ -40,6 +47,7 @@ Route::get('/prompts', [PromptController::class, 'index']);
 Route::post('/prompts', [PromptController::class, 'store']);
 Route::put('/prompts/{id}', [PromptController::class, 'update']);
 Route::post('/prompts/generate', [PromptController::class, 'generate']);
+Route::post('/prompts/rescrape-all', [PromptController::class, 'rescrapeAll']);
 Route::post('/prompts/reset-nulmeting', [PromptController::class, 'resetNulmeting']);
 Route::post('/prompts/{id}/scan', [PromptController::class, 'scan']);
 Route::delete('/prompts/{id}', [PromptController::class, 'destroy']);
@@ -53,7 +61,7 @@ Route::get('/notifications', [OverviewController::class, 'notifications']);
 Route::get('/agents-analytics', [OverviewController::class, 'agentsAnalytics']);
 Route::get('/llm-costs', [LlmCostController::class, 'index']);
 Route::post('/llm-costs/invoice', [LlmCostController::class, 'storeInvoice']);
-Route::post('/llm-costs/sync-ai-studio', [LlmCostController::class, 'syncAiStudio']);
+Route::post('/llm-costs/cleanup-legacy', [LlmCostController::class, 'cleanupLegacy']);
 
 // Reports Routes (SalesWizard 16:9 Slide Layout & PDF Export)
 Route::get('/reports/prompts', [ReportController::class, 'promptReportData']);

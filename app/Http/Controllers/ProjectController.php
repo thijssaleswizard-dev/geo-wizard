@@ -29,15 +29,20 @@ class ProjectController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $userId = $request->query('userId');
-        $role = $request->query('role');
+        $authUser = $request->user();
+        $userId = $authUser?->id ?? $request->query('userId');
+        $dbUser = $authUser ?: ($userId ? User::find((int) $userId) : null);
+        $role = strtolower(trim((string) ($dbUser?->role ?? $request->query('role') ?? '')));
 
         $query = Project::query()->withCount(['keywords', 'prompts']);
 
-        if ($role === 'klant' && $userId) {
-            $query->whereHas('users', function ($q) use ($userId) {
-                $q->where('users.id', $userId);
-            });
+        if ($role === 'klant') {
+            $allowedIds = $dbUser ? ($dbUser->getAllowedProjectIds() ?? []) : [];
+            if (!empty($allowedIds)) {
+                $query->whereIn('id', $allowedIds);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
         }
 
         // Auto-recover stale prompts: active 'processing'/'crawling' > 10m, queued 'pending' > 30m

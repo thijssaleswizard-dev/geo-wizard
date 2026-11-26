@@ -63,19 +63,37 @@ class AuthApiController extends Controller
             ], 402);
         }
 
+        $normalizedRole = strtolower(trim((string) ($user->role ?: 'klant')));
         $companyName = $user->company_name ?: 'Saleswizard B.V.';
         $resolvedSubscription = $user->subscription ?: 'AI Pro';
-        if ($user->role === 'klant') {
-            $firstProject = $user->projects()->first();
-            if ($firstProject) {
-                $companyName = $firstProject->company;
-                if (!empty($firstProject->subscription)) {
-                    $resolvedSubscription = $firstProject->subscription;
-                }
+        $allowedProjectsPayload = [];
+
+        if ($normalizedRole === 'klant') {
+            $allowedIds = $user->getAllowedProjectIds() ?? [];
+            $allowedProjects = !empty($allowedIds)
+                ? \App\Models\Project::whereIn('id', $allowedIds)->orderBy('company')->get(['id', 'company', 'subscription'])
+                : collect();
+
+            if ($allowedProjects->isEmpty()) {
+                return response()->json([
+                    'error' => 'Aan dit klantaccount is nog geen project gekoppeld. Neem contact op met Saleswizard.',
+                ], 403);
             }
+
+            $firstProject = $allowedProjects->first();
+            $companyName = $firstProject->company;
+            if (!empty($firstProject->subscription)) {
+                $resolvedSubscription = $firstProject->subscription;
+            }
+            $allowedProjectsPayload = $allowedProjects->map(fn($p) => [
+                'id' => (int) $p->id,
+                'company' => $p->company,
+                'subscription' => $p->subscription ?: 'AI Pro',
+            ])->values()->all();
         }
 
-        $avatar = !empty($companyName) ? strtoupper($companyName[0]) : 'U';
+        $avatarSource = $normalizedRole === 'klant' ? $companyName : ($user->name ?: 'S');
+        $avatar = !empty($avatarSource) ? strtoupper($avatarSource[0]) : 'U';
 
         // Create Sanctum Token
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -85,13 +103,14 @@ class AuthApiController extends Controller
             'token' => $token,
             'user' => [
                 'id' => $user->id,
-                'role' => $user->role ?: 'klant',
+                'role' => $normalizedRole,
                 'name' => $user->name,
-                'company' => $user->role === 'klant' ? $companyName : 'Saleswizard B.V.',
+                'company' => $normalizedRole === 'klant' ? $companyName : 'Saleswizard B.V.',
                 'email' => $user->email,
                 'subscription' => $resolvedSubscription,
                 'addonPrompts' => $user->addon_prompts ?: 0,
                 'avatar' => $avatar,
+                'allowedProjects' => $allowedProjectsPayload,
             ],
         ]);
     }

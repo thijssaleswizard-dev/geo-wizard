@@ -88,6 +88,7 @@ const SlideChrome = ({ pageNum, totalPagesLabel, reportTitle, periodLabel, title
 
 export default function PromptReport({
   activeWorkspace,
+  currentUser = null,
   initialKeywordId = null,
   keywordsList = [],
   isModal = false,
@@ -131,6 +132,8 @@ export default function PromptReport({
   const buildQueryParams = useCallback((extra = {}) => {
     const params = new URLSearchParams();
     if (activeWorkspace) params.set('company', activeWorkspace);
+    if (currentUser?.id) params.set('userId', String(currentUser.id));
+    if (currentUser?.role) params.set('role', String(currentUser.role));
     if (keywordFilterId) params.set('keyword_id', keywordFilterId);
     if (customTitle.trim()) params.set('title', customTitle.trim());
     if (customPeriod.trim()) params.set('period', customPeriod.trim());
@@ -141,7 +144,7 @@ export default function PromptReport({
       params.set(k, String(v));
     });
     return params.toString();
-  }, [activeWorkspace, keywordFilterId, customTitle, customPeriod, sections]);
+  }, [activeWorkspace, currentUser, keywordFilterId, customTitle, customPeriod, sections]);
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
@@ -748,43 +751,44 @@ export default function PromptReport({
             width: '36px',
             height: '36px',
             borderRadius: '8px',
-            backgroundColor: '#f3e8ff',
-            color: '#440099',
+            backgroundColor: '#f1f5f9',
+            color: '#334155',
+            border: '1px solid #e2e8f0',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center'
           }}>
-            <FileText size={18} />
+            <FileText size={17} />
           </div>
           <div>
-            <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
-              SalesWizard Rapportage Uitdraai
+            <h2 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0f172a', fontFamily: "'Outfit', sans-serif" }}>
+              Rapportage Uitdraai
             </h2>
-            <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>
-              Duidelijk overzicht van prompts, stijgers t.o.v. nulmeting, AI zoekmachines &amp; concurrentie ({activeWorkspace || 'Actief project'}).
+            <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>
+              Overzicht van prompts, stijgers t.o.v. nulmeting, AI-zoekmachines &amp; concurrentie ({activeWorkspace || 'Actief project'}).
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <button
             type="button"
             onClick={() => setShowSettings(s => !s)}
             style={{
               padding: '8px 14px',
-              borderRadius: '20px',
-              border: '1px solid #d1d5db',
-              backgroundColor: showSettings ? '#f3f4f6' : '#ffffff',
-              color: '#374151',
-              fontSize: '12px',
-              fontWeight: 700,
+              borderRadius: '8px',
+              border: '1px solid #e2e8f0',
+              backgroundColor: showSettings ? '#f1f5f9' : '#ffffff',
+              color: '#334155',
+              fontSize: '12.5px',
+              fontWeight: 600,
               cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px'
             }}
           >
-            <SlidersHorizontal size={13} />
+            <SlidersHorizontal size={13} style={{ color: '#64748b' }} />
             Instellingen
           </button>
 
@@ -793,20 +797,20 @@ export default function PromptReport({
             onClick={() => handleDownloadPdf(true)}
             disabled={loading || downloadingPdf || !report}
             style={{
-              padding: '8px 16px',
-              borderRadius: '20px',
-              border: '1px solid #d8b4fe',
-              backgroundColor: '#faf5ff',
-              color: '#440099',
-              fontSize: '12px',
-              fontWeight: 700,
+              padding: '8px 14px',
+              borderRadius: '8px',
+              border: '1px solid #e2e8f0',
+              backgroundColor: '#ffffff',
+              color: '#334155',
+              fontSize: '12.5px',
+              fontWeight: 600,
               cursor: (loading || downloadingPdf || !report) ? 'not-allowed' : 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px'
             }}
           >
-            <ExternalLink size={13} />
+            <ExternalLink size={13} style={{ color: '#64748b' }} />
             Open PDF Preview
           </button>
 
@@ -815,18 +819,17 @@ export default function PromptReport({
             onClick={() => handleDownloadPdf(false)}
             disabled={loading || downloadingPdf || !report}
             style={{
-              padding: '9px 18px',
-              borderRadius: '20px',
+              padding: '8px 16px',
+              borderRadius: '8px',
               border: 'none',
-              backgroundColor: '#3E008A',
+              backgroundColor: '#440099',
               color: '#ffffff',
               fontSize: '12.5px',
-              fontWeight: 700,
+              fontWeight: 600,
               cursor: (loading || downloadingPdf || !report) ? 'not-allowed' : 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '7px',
-              boxShadow: '0 2px 8px rgba(62, 0, 138, 0.25)'
+              gap: '7px'
             }}
           >
             {downloadingPdf ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
@@ -924,12 +927,12 @@ export default function PromptReport({
                     onClick={() => toggleSection(item.key)}
                     style={{
                       padding: '5px 10px',
-                      borderRadius: '14px',
-                      border: `1px solid ${active ? '#3E008A' : '#d1d5db'}`,
-                      backgroundColor: active ? '#f3e8ff' : '#ffffff',
-                      color: active ? '#3E008A' : '#6b7280',
-                      fontSize: '11px',
-                      fontWeight: 700,
+                      borderRadius: '6px',
+                      border: `1px solid ${active ? '#0f172a' : '#e2e8f0'}`,
+                      backgroundColor: active ? '#0f172a' : '#ffffff',
+                      color: active ? '#ffffff' : '#64748b',
+                      fontSize: '11.5px',
+                      fontWeight: 600,
                       cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -950,7 +953,7 @@ export default function PromptReport({
       <div style={{
         flex: 1,
         overflowY: 'auto',
-        backgroundColor: '#e5e7eb',
+        backgroundColor: '#f1f5f9',
         padding: '28px 24px 48px 24px',
         display: 'flex',
         flexDirection: 'column',
@@ -958,8 +961,8 @@ export default function PromptReport({
       }}>
         {loading ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '360px', gap: '12px' }}>
-            <Loader2 size={32} className="spin" style={{ color: '#3E008A' }} />
-            <span style={{ fontSize: '14px', fontWeight: 700, color: '#374151' }}>Rapportage wordt samengesteld...</span>
+            <Loader2 size={28} className="spin" style={{ color: '#0f172a' }} />
+            <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569' }}>Rapportage wordt samengesteld...</span>
           </div>
         ) : error ? (
           <div style={{

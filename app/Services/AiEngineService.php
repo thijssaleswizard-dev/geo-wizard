@@ -30,8 +30,9 @@ class AiEngineService
     public static function getApiHistory(): array
     {
         try {
+            LlmCostService::purgeLegacyNonDataForSeoLogs();
             $logs = LlmCostLog::with('project')
-                ->whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+                ->whereNotIn('operation', ['manual_invoice', 'dataforseo_topup', 'google_ai_studio_billing'])
                 ->orderBy('id', 'desc')
                 ->limit(50)
                 ->get();
@@ -307,8 +308,8 @@ class AiEngineService
                 'key' => 'gemini',
                 'apiKey' => $useDfs ? ($dfsConfigured ? 'dataforseo' : null) : self::getApiKey('gemini'),
                 'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : 'GEMINI_API_KEY',
-                'name' => $useDfs ? 'Google Gemini Web UI (DataForSEO)' : 'Google AI Studio (Gemini Flash)',
-                'shortName' => $useDfs ? 'Gemini Web' : 'Google AI Studio',
+                'name' => 'Google Gemini Web UI (DataForSEO)',
+                'shortName' => 'Gemini Web',
                 'alwaysAvailable' => true,
                 'viaDataForSeo' => $useDfs,
                 'check' => $useDfs ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
@@ -445,8 +446,8 @@ class AiEngineService
             ],
             [
                 'key' => 'gemini',
-                'name' => $useDfs ? 'Google Suite Web & SERP (DataForSEO)' : 'Google AI Studio (Gemini Flash)',
-                'envKey' => $useDfs ? 'DATAFORSEO_LOGIN' : 'GEMINI_API_KEY',
+                'name' => 'Google Suite Web & SERP (DataForSEO)',
+                'envKey' => 'DATAFORSEO_LOGIN',
                 'viaDataForSeo' => $useDfs,
                 'check' => $useDfs ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
             ],
@@ -464,24 +465,20 @@ class AiEngineService
                 'viaDataForSeo' => $dfsClaude,
                 'check' => $dfsClaude ? fn($k) => $dfsConfigured : fn($k) => !empty($k),
             ],
-            [
-                'key' => 'copilot',
-                'name' => 'Microsoft Copilot',
-                'envKey' => 'COPILOT_API_KEY',
-                'viaDataForSeo' => false,
-                'check' => fn($k) => !empty($k),
-            ],
         ];
 
         $costsByEngine = [];
         $liveCostsByEngine = [];
         try {
-            $costsByEngine = LlmCostLog::selectRaw('engine, SUM(cost_eur) as total_eur, SUM(total_tokens) as total_tokens, COUNT(*) as total_calls')
+            LlmCostService::purgeLegacyNonDataForSeoLogs();
+
+            $costsByEngine = LlmCostLog::whereNotIn('operation', ['manual_invoice', 'dataforseo_topup', 'google_ai_studio_billing'])
+                ->selectRaw('engine, SUM(cost_eur) as total_eur, SUM(total_tokens) as total_tokens, COUNT(*) as total_calls')
                 ->groupBy('engine')
                 ->get()
                 ->keyBy('engine');
 
-            $liveCostsByEngine = LlmCostLog::whereNotIn('operation', ['manual_invoice', 'google_ai_studio_billing'])
+            $liveCostsByEngine = LlmCostLog::whereNotIn('operation', ['manual_invoice', 'dataforseo_topup', 'google_ai_studio_billing'])
                 ->selectRaw("engine, SUM(cost_eur) as live_eur, SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as ok_calls, SUM(CASE WHEN status = 'ERROR' THEN 1 ELSE 0 END) as err_calls")
                 ->groupBy('engine')
                 ->get()

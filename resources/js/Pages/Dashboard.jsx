@@ -10,13 +10,15 @@ import AuditTools from '@/Components/AuditTools';
 import Login from '@/Components/Login';
 import AccountManagement from '@/Components/AccountManagement';
 import ClientAdmin from '@/Components/ClientAdmin';
+import UserManagement from '@/Components/UserManagement';
 import Keywords from '@/Components/Keywords';
 import PromptReport from '@/Components/PromptReport';
 import PaymentSimulator from '@/Components/PaymentSimulator';
 import LlmCosts from '@/Components/LlmCosts';
+import WhatsNew from '@/Components/WhatsNew';
 import WalkthroughGuide from '@/Components/WalkthroughGuide';
-import { 
-  Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut, BookOpen 
+import {
+  Bell, HelpCircle, MessageSquare, ShieldAlert, Sparkles, User, LogOut, BookOpen, NewReleases
 } from 'lucide-react';
 
 export default function Dashboard({ auth, projects: initialProjects, enabledEngines: initialEnabledEngines }) {
@@ -129,7 +131,7 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       .then(res => res.json())
       .then(data => {
         if (data.success && data.clients) {
-          setClients(data.clients.map(c => ({
+          const mappedClients = data.clients.map(c => ({
             id: c.id,
             company: c.company,
             name: c.name,
@@ -141,7 +143,22 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
             visibilityIndex: c.visibility_index,
             setup_status: c.setup_status,
             setup_progress: c.setup_progress
-          })));
+          }));
+          setClients(mappedClients);
+
+          // Strict client workspace lock: ensure a 'klant' ONLY ever has their own assigned project active
+          if (userToUse.role === 'klant') {
+            if (mappedClients.length === 0) {
+              setActiveWorkspace(null);
+            } else {
+              setActiveWorkspace(prevWs => {
+                const isAllowed = prevWs && mappedClients.some(
+                  mc => mc.company.toLowerCase() === prevWs.toLowerCase()
+                );
+                return isAllowed ? prevWs : mappedClients[0].company;
+              });
+            }
+          }
         }
       })
       .catch(console.error);
@@ -152,7 +169,8 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       fetchProjects(currentUser);
     }
 
-    fetch('/api/notifications')
+    const notifWs = currentUser?.role === 'klant' ? (activeWorkspace || currentUser?.company || '') : (activeWorkspace || 'all');
+    fetch(`/api/notifications?company=${encodeURIComponent(notifWs)}`)
       .then(res => res.json())
       .then(data => {
         if (data.success && data.notifications) {
@@ -287,9 +305,15 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
 
   const getTabTitle = () => {
     if (activeTab === 'llm_costs') {
-      return 'LLM Kosten & Verbruik';
+      return 'DataForSEO Kosten & Verbruik';
     }
-    if (currentUser.role === 'medewerker' && !activeWorkspace) {
+    if (activeTab === 'users') {
+      return 'Gebruikers & Toegang';
+    }
+    if (activeTab === 'whats_new') {
+      return "What's New & Patch Notes";
+    }
+    if ((currentUser.role === 'medewerker' || currentUser.role === 'admin') && !activeWorkspace) {
       return 'Projects';
     }
     switch (activeTab) {
@@ -301,7 +325,8 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       case 'agents': return 'Agents Analytics';
       case 'prompt_research': return 'AI Prompt Research';
       case 'audit_tools': return 'GEO Audit Tools';
-      case 'llm_costs': return 'LLM Kosten & Verbruik';
+      case 'llm_costs': return 'DataForSEO Kosten & Verbruik';
+      case 'users': return 'Gebruikers & Toegang';
       case 'account_plan': return 'Account & Plan';
       case 'client_admin': return 'Projects';
       default: return activeTab;
@@ -320,22 +345,36 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
       if (activeTab === 'account_plan') {
         return <AccountManagement currentUser={currentUser} activeClient={activeClient} onUpdateSubscription={handleUpdateSubscription} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       }
+      if (!activeWorkspace) {
+        return (
+          <div className="fade-in" style={{ padding: '64px 24px', textAlign: 'center', color: '#475569' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a' }}>Nog geen project gekoppeld</h3>
+            <p style={{ fontSize: '13px', marginTop: '6px' }}>Neem contact op met Saleswizard om uw project te activeren.</p>
+          </div>
+        );
+      }
       if (activeTab === 'report') {
-        return <PromptReport key={`report_${activeWorkspace}`} activeWorkspace={activeWorkspace} />;
+        return <PromptReport key={`report_${activeWorkspace}`} activeWorkspace={activeWorkspace} currentUser={currentUser} />;
       }
       return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
     }
     if (activeTab === 'llm_costs') {
       return <LlmCosts currentUser={currentUser} enabledEngines={enabledEngines} />;
     }
-    if ( (currentUser.role === 'medewerker' || currentUser.role === 'admin') && !activeWorkspace) {
+    if (activeTab === 'users') {
+      return <UserManagement currentUser={currentUser} clients={clients} onSelectClient={handleSelectClient} />;
+    }
+    if (activeTab === 'whats_new') {
+      return <WhatsNew currentUser={currentUser} />;
+    }
+    if ((currentUser.role === 'medewerker' || currentUser.role === 'admin') && !activeWorkspace) {
       return <ClientAdmin currentUser={currentUser} clients={clients} onNavigateTab={setActiveTab} onSelectClient={handleSelectClient} onUpdateClientPlan={handleUpdateClientPlan} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onUpdateClient={handleUpdateClient} />;
     }
     switch (activeTab) {
       case 'overview':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'report':
-        return <PromptReport key={`report_${activeWorkspace}`} activeWorkspace={activeWorkspace} />;
+        return <PromptReport key={`report_${activeWorkspace}`} activeWorkspace={activeWorkspace} currentUser={currentUser} />;
       case 'keywords':
         return <Keywords key={activeWorkspace} currentUser={currentUser} activeWorkspace={activeWorkspace} activeClient={activeClient} enabledEngines={enabledEngines} onUpdateAddonPrompts={handleUpdateAddonPrompts} />;
       case 'citations':
@@ -443,23 +482,23 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
           </div>
 
           {/* Quick actions */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
 
             {activeWorkspace && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                padding: '6px 12px',
-                borderRadius: '20px',
-                backgroundColor: 'rgba(68, 0, 153, 0.05)',
-                border: '1px solid var(--brand-light-border)',
+                padding: '5px 11px',
+                borderRadius: '8px',
+                backgroundColor: '#f8fafc',
+                border: '1px solid #e2e8f0',
                 fontSize: '12px',
-                fontWeight: 700,
-                color: 'var(--brand-primary)'
+                fontWeight: 600,
+                color: '#334155'
               }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }}></span>
-                Client: {activeWorkspace}
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#47ca9b' }}></span>
+                {activeWorkspace}
               </div>
             )}
 
@@ -468,26 +507,27 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
                 style={{
-                  padding: '8px',
-                  borderRadius: '50%',
-                  color: 'var(--text-secondary)',
+                  padding: '7px',
+                  borderRadius: '8px',
+                  color: '#64748b',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: showNotifications ? 'var(--border-light)' : 'transparent'
+                  backgroundColor: showNotifications ? '#f1f5f9' : 'transparent'
                 }}
               >
                 <Bell size={18} />
-                <span style={{
-                  position: 'absolute',
-                  top: '6px',
-                  right: '6px',
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  backgroundColor: '#ef4444',
-                  border: '1.5px solid var(--bg-card)'
-                }}></span>
+                {notifications.length > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '6px',
+                    right: '6px',
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    backgroundColor: '#64748b'
+                  }}></span>
+                )}
               </button>
 
               {showNotifications && (
@@ -540,6 +580,31 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
               )}
             </div>
 
+            {/* Staff What's New / Patch Notes shortcut */}
+            {(currentUser.role === 'medewerker' || currentUser.role === 'admin') && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('whats_new')}
+                title="Bekijk What's New & Patch Notes"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  backgroundColor: activeTab === 'whats_new' ? '#f1f5f9' : '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  color: '#334155',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                <NewReleases size={15} style={{ color: '#64748b' }} />
+                Patch Notes
+              </button>
+            )}
+
             {/* Handleiding & Rondleiding button */}
             <button
               type="button"
@@ -547,57 +612,56 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
               onClick={() => setIsGuideOpen(true)}
               title="Open de Handleiding, Begrippenlijst & Interactieve Rondleiding"
               style={{
-                padding: '7px 14px',
-                borderRadius: '20px',
-                backgroundColor: '#faf5ff',
-                border: '1px solid #d8b4fe',
-                color: '#6b21a8',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                color: '#334155',
                 fontSize: '12px',
-                fontWeight: 700,
+                fontWeight: 600,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
+                cursor: 'pointer'
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f3e8ff'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#faf5ff'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#f8fafc'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ffffff'; }}
             >
-              <BookOpen size={14} />
+              <BookOpen size={15} style={{ color: '#64748b' }} />
               Handleiding
             </button>
 
-            <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--border-medium)', margin: '0 8px' }}></div>
+            <div style={{ width: '1px', height: '22px', backgroundColor: '#e2e8f0', margin: '0 4px' }}></div>
 
             {/* User Profile */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{
                 width: '32px',
                 height: '32px',
                 borderRadius: '50%',
-                background: currentUser.role === 'medewerker' ? 'linear-gradient(135deg, #ec4899, #ec4899)' : 'linear-gradient(135deg, #a78bfa, #818cf8)',
+                backgroundColor: '#1e293b',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: 'white',
-                fontWeight: 800,
+                fontWeight: 700,
                 fontSize: '13px'
               }}>
                 {currentUser.avatar}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{currentUser.name}</span>
-                <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                  {currentUser.role === 'medewerker' ? 'SW Medewerker' : currentUser.subscription}
+                <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{currentUser.name}</span>
+                <span style={{ fontSize: '11px', color: '#64748b' }}>
+                  {currentUser.role === 'admin' ? 'Beheerder' : (currentUser.role === 'medewerker' ? 'Medewerker' : currentUser.subscription)}
                 </span>
               </div>
               <button
                 onClick={handleLogout}
                 title="Uitloggen"
                 style={{
-                  padding: '8px',
-                  borderRadius: '50%',
-                  color: 'var(--text-secondary)',
+                  padding: '7px',
+                  borderRadius: '8px',
+                  color: '#64748b',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -617,33 +681,6 @@ export default function Dashboard({ auth, projects: initialProjects, enabledEngi
         </div>
 
       </main>
-
-      {/* Floating Action Help & Walkthrough Button */}
-      <button
-        type="button"
-        onClick={() => setIsGuideOpen(true)}
-        title="Open Handleiding & Rondleiding"
-        style={{
-          position: 'fixed',
-          bottom: '24px',
-          right: '24px',
-          width: '56px',
-          height: '56px',
-          borderRadius: '50%',
-          backgroundColor: 'var(--brand-primary)',
-          boxShadow: '0 8px 24px rgba(68, 0, 153, 0.3)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'white',
-          zIndex: 1000,
-          transition: 'all 0.2s',
-          border: 'none',
-          cursor: 'pointer'
-        }}
-      >
-        <HelpCircle size={24} />
-      </button>
 
       {/* Interactive Walkthrough Tour & Non-Technical Guide Modal */}
       <WalkthroughGuide

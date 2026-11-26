@@ -469,7 +469,7 @@ export default function Login({ onLogin }) {
                       }}>
                         {p.features.slice(0, 4).map((f, idx) => (
                           <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.6)' }}>
-                            <Check size={12} style={{ color: '#10b981' }} />
+                            <Check size={12} style={{ color: '#47ca9b' }} />
                             {f}
                           </div>
                         ))}

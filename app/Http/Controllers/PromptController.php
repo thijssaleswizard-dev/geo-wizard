@@ -589,6 +589,102 @@ STRIKTE REGELS:
         ]);
     }
 
+    /**
+     * Re-scrape all active prompts (and optional linked keywords) of a project WITHOUT resetting the 0-meting / history.
+     */
+    public function rescrapeAll(Request $request): JsonResponse
+    {
+        if (!$this->isStaffOrAdmin($request)) {
+            return response()->json(['error' => 'Alleen admins en Saleswizard medewerkers kunnen alle prompts opnieuw scrapen.'], 403);
+        }
+
+        $projectId = $request->input('project_id');
+        $company = $request->input('company');
+        $keywordId = $request->input('keyword_id');
+        $promptIds = $request->input('prompt_ids', []);
+
+        $project = null;
+        if ($projectId) {
+            $project = Project::find($projectId);
+        } elseif ($company) {
+            $decoded = trim(urldecode((string) $company));
+            $companyKey = AiEngineService::cleanBrandKey($decoded);
+            $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.com")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
+                ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
+                ->first();
+        }
+
+        $promptQuery = Prompt::query();
+        $keywordQuery = Keyword::query();
+
+        if (!empty($promptIds) && is_array($promptIds)) {
+            $promptQuery->whereIn('id', $promptIds);
+            $kwIdsFromPrompts = Prompt::whereIn('id', $promptIds)->whereNotNull('keyword_id')->pluck('keyword_id')->unique()->toArray();
+            if (!empty($kwIdsFromPrompts)) {
+                $keywordQuery->whereIn('id', $kwIdsFromPrompts);
+            } else {
+                $keywordQuery->whereRaw('1 = 0');
+            }
+        } elseif ($keywordId) {
+            $promptQuery->where('keyword_id', (int) $keywordId);
+            $keywordQuery->where('id', (int) $keywordId);
+        } elseif ($project) {
+            $activeKeywords = Keyword::where('project_id', $project->id)
+                ->where(function ($q) {
+                    $q->where('is_archived', false)->orWhereNull('is_archived');
+                })
+                ->pluck('id')
+                ->toArray();
+
+            $promptQuery->where('project_id', $project->id)
+                ->where(function ($q) use ($activeKeywords) {
+                    $q->whereNull('keyword_id');
+                    if (!empty($activeKeywords)) {
+                        $q->orWhereIn('keyword_id', $activeKeywords);
+                    }
+                });
+
+            $keywordQuery->where('project_id', $project->id)
+                ->where(function ($q) {
+                    $q->where('is_archived', false)->orWhereNull('is_archived');
+                });
+        } else {
+            return response()->json(['error' => 'Geef een geldig project op om alle prompts opnieuw te scrapen.'], 400);
+        }
+
+        $promptsToScan = $promptQuery->get();
+        $keywordsToScan = $keywordQuery->get();
+
+        if ($promptsToScan->isEmpty() && $keywordsToScan->isEmpty()) {
+            return response()->json(['error' => 'Er zijn nog geen actieve prompts om te scrapen.'], 400);
+        }
+
+        foreach ($promptsToScan as $p) {
+            $p->update([
+                'status' => 'pending',
+                'updated_at' => now(),
+            ]);
+            ProcessPromptJob::dispatch($p->id);
+        }
+
+        foreach ($keywordsToScan as $kw) {
+            \App\Jobs\ProcessKeywordCompetitorsJob::dispatch($kw->id, $kw->keyword, $kw->company_key, true);
+        }
+
+        GeoLog::info("🔄 [BULK PROMPT RESCRAPE] Alle actieve prompts opnieuw ingepland: " . $promptsToScan->count() . " prompt(s) en " . $keywordsToScan->count() . " zoekterm(en) (0-meting behouden).");
+
+        return response()->json([
+            'success' => true,
+            'promptsCount' => $promptsToScan->count(),
+            'keywordsCount' => $keywordsToScan->count(),
+            'promptIds' => $promptsToScan->pluck('id')->values()->all(),
+            'message' => "{$promptsToScan->count()} prompt(s) worden nu opnieuw gescrapet! De bestaande 0-meting en historie blijven behouden.",
+        ]);
+    }
+
     public function scan(int $id): JsonResponse
     {
         $promptRecord = Prompt::find($id);

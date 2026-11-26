@@ -25,17 +25,22 @@ class KeywordController extends Controller
     {
         $company = $request->query('company');
         $projectId = $request->query('project_id');
-        $project = null;
+        $authUser = $request->user();
+        $userId = $authUser?->id ?? $request->query('userId');
+        $dbUser = $authUser ?: ($userId ? \App\Models\User::find((int) $userId) : null);
+        $role = strtolower(trim((string) ($dbUser?->role ?? $request->query('role') ?? '')));
+        $allowedProjectIds = ($role === 'klant')
+            ? ($dbUser ? ($dbUser->getAllowedProjectIds() ?? []) : [])
+            : null;
 
+        $project = null;
         $query = Keyword::query()->with('prompts')->orderBy('id', 'desc');
 
         if ($projectId) {
             $project = Project::find($projectId);
-            $query->where('project_id', $projectId);
         } elseif ($company) {
             $decoded = trim(urldecode($company));
             $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
-            $cleanKey = strtolower(preg_replace('/[^a-z0-9]/', '', $companyKey));
 
             $project = Project::whereRaw('LOWER(company) = ?', [strtolower($decoded)])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
@@ -43,16 +48,43 @@ class KeywordController extends Controller
                 ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.eu")])
                 ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)])
                 ->first();
+        }
 
-            if ($project) {
-                $query->where('project_id', $project->id);
-            } else {
-                $query->where(function ($q) use ($companyKey, $cleanKey, $decoded) {
-                    $q->where('company_key', $companyKey)
-                        ->orWhere('company_key', $cleanKey)
-                        ->orWhere('company_key', strtolower($decoded));
-                });
+        // Strict tenant isolation: a 'klant' can ONLY ever access their own assigned project(s)
+        if ($allowedProjectIds !== null) {
+            if (empty($allowedProjectIds)) {
+                return response()->json([
+                    'success' => true,
+                    'project' => null,
+                    'totalUsedPrompts' => 0,
+                    'keywords' => [],
+                    'standalonePrompts' => [],
+                ]);
             }
+            if (!$project || !in_array((int) $project->id, $allowedProjectIds, true)) {
+                $project = Project::find($allowedProjectIds[0]);
+            }
+            if (!$project) {
+                return response()->json([
+                    'success' => true,
+                    'project' => null,
+                    'totalUsedPrompts' => 0,
+                    'keywords' => [],
+                    'standalonePrompts' => [],
+                ]);
+            }
+            $query->where('project_id', $project->id);
+        } elseif ($project) {
+            $query->where('project_id', $project->id);
+        } elseif ($company) {
+            $decoded = trim(urldecode($company));
+            $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
+            $cleanKey = strtolower(preg_replace('/[^a-z0-9]/', '', $companyKey));
+            $query->where(function ($q) use ($companyKey, $cleanKey, $decoded) {
+                $q->where('company_key', $companyKey)
+                    ->orWhere('company_key', $cleanKey)
+                    ->orWhere('company_key', strtolower($decoded));
+            });
         }
 
         // Auto-recover stale prompts: active 'processing'/'crawling' > 10m, queued 'pending' > 30m

@@ -17,6 +17,38 @@ class ReportController extends Controller
         $periodLabel = $request->query('period');
         $reportTitle = $request->query('title');
 
+        // Enforce strict tenant isolation for client accounts on reports & PDF exports
+        $authUser = $request->user();
+        $userId = $authUser?->id ?? $request->query('userId');
+        $dbUser = $authUser ?: ($userId ? \App\Models\User::find((int) $userId) : null);
+        $role = strtolower(trim((string) ($dbUser?->role ?? $request->query('role') ?? '')));
+
+        if ($role === 'klant') {
+            $allowedIds = $dbUser ? ($dbUser->getAllowedProjectIds() ?? []) : [];
+            if (empty($allowedIds)) {
+                abort(403, 'Geen toegang tot dit projectrapport.');
+            }
+            if ($projectId && !in_array($projectId, $allowedIds, true)) {
+                $projectId = $allowedIds[0];
+                $company = null;
+            } elseif (!$projectId) {
+                $matched = null;
+                if ($company) {
+                    $decoded = trim(urldecode((string) $company));
+                    $companyKey = \App\Services\AiEngineService::cleanBrandKey($decoded);
+                    $matched = \App\Models\Project::whereIn('id', $allowedIds)
+                        ->where(function ($q) use ($decoded, $companyKey) {
+                            $q->whereRaw('LOWER(company) = ?', [strtolower($decoded)])
+                              ->orWhereRaw('LOWER(company) = ?', [strtolower("{$companyKey}.nl")])
+                              ->orWhereRaw('LOWER(company) = ?', [strtolower($companyKey)]);
+                        })
+                        ->first();
+                }
+                $projectId = $matched ? (int) $matched->id : $allowedIds[0];
+                $company = null;
+            }
+        }
+
         $sections = [];
         foreach (['kpis', 'highlights', 'timeline', 'prompts', 'engines', 'competitors'] as $sec) {
             if ($request->has("show_{$sec}")) {

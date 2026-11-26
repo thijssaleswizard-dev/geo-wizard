@@ -100,12 +100,12 @@ export default function PromptResearch({ activeWorkspace, enabledEngines }) {
           if (part.match(regex)) {
             out.push(
               <strong key={`${k}_${i}`} style={{
-                backgroundColor: 'rgba(68, 0, 153, 0.12)',
-                color: 'var(--brand-primary)',
-                padding: '2px 6px',
+                backgroundColor: '#f1f5f9',
+                color: '#0f172a',
+                padding: '1px 6px',
                 borderRadius: '4px',
-                border: '1px solid rgba(68, 0, 153, 0.25)',
-                fontWeight: 800
+                border: '1px solid #cbd5e1',
+                fontWeight: 700
               }}>
                 {part}
               </strong>
@@ -283,8 +283,8 @@ export default function PromptResearch({ activeWorkspace, enabledEngines }) {
           
           {/* Terminal log window */}
           <div style={{
-            backgroundColor: '#0f172a',
-            color: '#38bdf8',
+            backgroundColor: '#440099',
+            color: '#e2e8f0',
             fontFamily: 'monospace',
             fontSize: '12px',
             padding: '16px',
@@ -320,30 +320,30 @@ export default function PromptResearch({ activeWorkspace, enabledEngines }) {
             
             {/* Overall Mentions Score */}
             <div style={{ textAlign: 'center', borderRight: '1px solid var(--border-light)', paddingRight: '24px' }} className="no-border-mobile">
-              <h3 style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <h3 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 AI Model Vermeldingen Score
               </h3>
-              <div style={{ fontSize: '52px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: results.overallScore >= 50 ? 'var(--status-positive-text)' : 'var(--status-warning-text)', margin: '8px 0' }}>
-                {results.totalMentions}<span style={{ fontSize: '20px', color: 'var(--text-muted)' }}>/{results.totalModels} Modellen</span>
+              <div style={{ fontSize: '48px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#0f172a', margin: '8px 0' }}>
+                {results.totalMentions}<span style={{ fontSize: '18px', color: 'var(--text-muted)' }}>/{results.totalModels} Modellen</span>
               </div>
-              <span className={results.overallScore >= 50 ? 'badge badge-positive' : 'badge badge-warning'}>
-                {results.overallScore}% Zichtbaarheid in AI antwoorden
+              <span className="badge badge-neutral">
+                {results.overallScore}% zichtbaarheid in AI antwoorden
               </span>
             </div>
 
             {/* AI Scraper Summary */}
             <div>
               <h4 style={{ fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Sparkles size={16} style={{ color: '#a78bfa' }} />
+                <Sparkles size={16} style={{ color: '#64748b' }} />
                 Scraper Conclusie & Database Status
               </h4>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '8px', lineHeight: '1.5' }}>
-                De prompt <strong>"{results.prompt}"</strong> is succesvol gescand. Het merk <strong>{results.company}</strong> wordt door <strong>{results.totalMentions} van de {results.totalModels} AI modellen</strong> aanbevolen. Alle gedetecteerde bronnen en citaties zijn opgeslagen in SQLite.
+                De prompt <strong>"{results.prompt}"</strong> is succesvol gescand. Het merk <strong>{results.company}</strong> wordt door <strong>{results.totalMentions} van de {results.totalModels} AI modellen</strong> aanbevolen. Alle gedetecteerde bronnen en citaties zijn opgeslagen.
               </p>
               
-              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#22c55e', fontWeight: 700 }}>
-                <ShieldCheck size={14} />
-                Resultaten & {results.citations.length} citaties automatisch opgeslagen in SQLite database!
+              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: '#475569', fontWeight: 600 }}>
+                <ShieldCheck size={14} style={{ color: '#47ca9b' }} />
+                Resultaten & {results.citations.length} citaties automatisch opgeslagen
               </div>
             </div>
 

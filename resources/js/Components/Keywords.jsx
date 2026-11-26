@@ -3,7 +3,7 @@ import PromptReport from './PromptReport';
 import {
   ChevronRight, ChevronDown, ChevronUp, Plus, Search, Trash2, Archive, RotateCcw,
   Sparkles, Play, Edit2, X, AlertTriangle, Loader2,
-  ArrowLeft, Download, Share2, RotateCw, RefreshCw, FileText
+  ArrowLeft, ArrowRight, Download, Share2, RotateCw, RefreshCw, FileText, History, Check
 } from 'lucide-react';
 
 const FaviconImage = ({ domain, fallbackLabel, fallbackBg, fallbackColor, size = 20, style = {} }) => {
@@ -582,6 +582,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const [reportKeywordId, setReportKeywordId] = useState(null);
   const [addingPromptsBusy, setAddingPromptsBusy] = useState(false);
   const [bulkRescrapingBusy, setBulkRescrapingBusy] = useState(false);
+  const [rescrapingAllPrompts, setRescrapingAllPrompts] = useState(false);
   const [progressTick, setProgressTick] = useState(() => Date.now());
   const [crawlFinishedFlash, setCrawlFinishedFlash] = useState(null);
 
@@ -938,6 +939,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
   const hasAnyActionInFlight = Boolean(
     addingPromptsBusy ||
     bulkRescrapingBusy ||
+    rescrapingAllPrompts ||
     resettingNulmeting ||
     savingEditedPrompt ||
     Object.values(scanningPrompts || {}).some(Boolean) ||
@@ -1026,11 +1028,19 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
   }, [isAnyWorkActive]);
 
+  const buildKeywordsApiUrl = (workspaceName) => {
+    const params = new URLSearchParams();
+    if (workspaceName) params.set('company', workspaceName);
+    if (currentUser?.id) params.set('userId', String(currentUser.id));
+    if (currentUser?.role) params.set('role', String(currentUser.role));
+    return `/api/keywords?${params.toString()}`;
+  };
+
   const pollWorkspaceKeywords = async (workspaceName) => {
     if (pollInFlightRef.current) return;
     pollInFlightRef.current = true;
     try {
-      const res = await fetch(`/api/keywords?company=${encodeURIComponent(workspaceName)}`);
+      const res = await fetch(buildKeywordsApiUrl(workspaceName));
       const data = await res.json();
       if (data.success) {
         if (data.project) {
@@ -1090,8 +1100,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     wasWorkActiveRef.current = false;
     setCrawlFinishedFlash(null);
 
-    const workspace = activeWorkspace || 'Saleswizard.nl';
-    fetch(`/api/keywords?company=${encodeURIComponent(workspace)}`)
+    const workspace = activeWorkspace || (currentUser?.role === 'klant' ? (currentUser?.company || '') : 'Saleswizard.nl');
+    fetch(buildKeywordsApiUrl(workspace))
       .then(res => res.json())
       .then(data => {
         if (data.success) {
@@ -2008,6 +2018,50 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     }
   };
 
+  const handleRescrapeAllPrompts = async () => {
+    if (!isStaffOrAdmin || allPromptsList.length === 0) return;
+    setRescrapingAllPrompts(true);
+    const workspace = activeWorkspace || 'Saleswizard.nl';
+    try {
+      const res = await fetch('/api/prompts/rescrape-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company: workspace,
+          userId: currentUser?.id,
+          role: currentUser?.role
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setKeywords(prev => prev.map(k => {
+          if (k.is_archived) return k;
+          const hasPrompts = (k.prompts || []).length > 0;
+          return {
+            ...k,
+            is_crawling: hasPrompts ? true : k.is_crawling,
+            prompts: (k.prompts || []).map(p => ({ ...p, status: 'pending', processingElapsedSec: 0 }))
+          };
+        }));
+        setStandalonePrompts(prev => prev.map(p => ({ ...p, status: 'pending', processingElapsedSec: 0 })));
+        if (selectedKeyword && !selectedKeyword.is_archived) {
+          setSelectedKeyword(prev => ({
+            ...prev,
+            is_crawling: true,
+            prompts: (prev.prompts || []).map(p => ({ ...p, status: 'pending', processingElapsedSec: 0 }))
+          }));
+        }
+      } else {
+        alert(data.error || 'Fout bij opnieuw scrapen van alle prompts.');
+      }
+    } catch (err) {
+      console.error('Failed to rescrape all prompts:', err);
+      alert('Kan geen verbinding maken met de server.');
+    } finally {
+      setRescrapingAllPrompts(false);
+    }
+  };
+
   const handleStartNewNulmeting = async ({ keywordId = null, promptIds = null, label = 'dit project' } = {}) => {
     if (!isStaffOrAdmin) return;
     if (!window.confirm(`Weet u zeker dat u handmatig een nieuwe 0-meting wilt starten voor ${label}?\n\nDe bestaande metingshistorie wordt gereset en de prompts worden direct opnieuw gescand als nieuw startpunt (Nulmeting).`)) {
@@ -2158,26 +2212,25 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     if (!nulmetingBanner) return null;
     return (
       <div style={{
-        backgroundColor: '#f5f0ff',
-        border: '1px solid #d8b4fe',
-        borderRadius: '12px',
-        padding: '14px 20px',
+        backgroundColor: '#f8fafc',
+        border: '1px solid #e2e8f0',
+        borderRadius: '10px',
+        padding: '12px 18px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: '12px',
-        boxShadow: '0 2px 8px rgba(68, 0, 153, 0.08)'
+        gap: '12px'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#440099', fontSize: '13px', fontWeight: 700 }}>
-          <RefreshCw size={16} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#0f172a', fontSize: '13px', fontWeight: 600 }}>
+          <RefreshCw size={15} style={{ color: '#64748b' }} />
           <span>{nulmetingBanner.message}</span>
         </div>
         <button
           type="button"
           onClick={() => setNulmetingBanner(null)}
-          style={{ background: 'none', border: 'none', color: '#6b21a8', cursor: 'pointer', padding: '4px' }}
+          style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: '4px' }}
         >
-          <X size={16} />
+          <X size={15} />
         </button>
       </div>
     );
@@ -2192,34 +2245,24 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           position: 'sticky',
           top: '12px',
           zIndex: 30,
-          backgroundColor: '#f0fdf4',
-          border: '1px solid #86efac',
-          borderRadius: '12px',
+          backgroundColor: '#ffffff',
+          border: '1px solid #cbd5e1',
+          borderRadius: '10px',
           padding: '14px 20px',
           display: 'flex',
           flexDirection: 'column',
           gap: '10px',
-          boxShadow: '0 4px 14px rgba(22, 163, 74, 0.12)'
+          boxShadow: '0 4px 14px rgba(15, 23, 42, 0.06)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#15803d', fontSize: '13px', fontWeight: 800 }}>
-              <span style={{
-                width: '24px',
-                height: '24px',
-                borderRadius: '50%',
-                backgroundColor: '#dcfce7',
-                color: '#16a34a',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 900
-              }}>✓</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a', fontSize: '13px', fontWeight: 600 }}>
+              <Check size={16} style={{ color: '#47ca9b' }} />
               <span>{crawlFinishedFlash.message}</span>
             </div>
             <span style={{
-              fontSize: '14px',
-              fontWeight: 900,
-              color: '#15803d',
+              fontSize: '13.5px',
+              fontWeight: 700,
+              color: '#0f172a',
               fontVariantNumeric: 'tabular-nums'
             }}>
               100%
@@ -2227,16 +2270,16 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           </div>
           <div style={{
             width: '100%',
-            height: '8px',
+            height: '5px',
             borderRadius: '999px',
-            backgroundColor: '#dcfce7',
+            backgroundColor: '#f1f5f9',
             overflow: 'hidden'
           }}>
             <div style={{
               width: '100%',
               height: '100%',
               borderRadius: '999px',
-              background: 'linear-gradient(90deg, #22c55e 0%, #16a34a 100%)',
+              backgroundColor: '#47ca9b',
               transition: 'width 0.35s ease'
             }} />
           </div>
@@ -2283,26 +2326,28 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
     const displayPct = Math.min(96, Math.max(sessionMaxPctRef.current, computedPct));
     sessionMaxPctRef.current = displayPct;
 
-    let headline = 'Live AI Crawl & Scrape bezig...';
-    let subline = 'ChatGPT, Gemini, Google AI Mode, AI Overviews, Perplexity & Claude analyseren live het web. Resultaten worden elke 2s automatisch bijgewerkt.';
+    let headline = 'Live AI crawl & scrape bezig...';
+    let subline = 'ChatGPT, Gemini, Google AI Mode, AI Overviews, Perplexity en Claude analyseren het web. Resultaten worden elke 2s bijgewerkt.';
 
     if (sessionTotal === 0) {
       if (resettingNulmeting) {
-        headline = 'Nieuwe 0-meting wordt gestart & ingepland...';
+        headline = 'Nieuwe 0-meting wordt ingepland...';
+      } else if (rescrapingAllPrompts) {
+        headline = 'Alle prompts worden ingepland voor een nieuwe scrape...';
       } else if (addingPromptsBusy || Object.values(generatingPromptsForKw || {}).some(Boolean)) {
-        headline = 'Prompts & SERP-concurrenten worden voorbereid en ingepland...';
+        headline = 'Prompts en concurrenten worden voorbereid...';
       } else if (bulkRescrapingBusy || Object.values(rescrapingKeywords || {}).some(Boolean)) {
-        headline = 'Zoektermen & AI-prompts worden opnieuw ingeladen voor live scan...';
+        headline = 'Zoektermen en prompts worden ingeladen...';
       }
     } else if (sessionTotal === 1) {
       headline = processingCount > 0
-        ? '1 prompt wordt nu live gecrawld & gescrapet in de AI-zoekmachines'
-        : '1 prompt staat in de wachtrij en start elk moment met crawlen';
+        ? '1 prompt wordt nu live gescand in de AI-zoekmachines'
+        : '1 prompt staat klaar in de wachtrij';
     } else {
       const parts = [];
-      if (processingCount > 0) parts.push(`${processingCount} nu live aan het scannen`);
+      if (processingCount > 0) parts.push(`${processingCount} aan het scannen`);
       if (pendingCount > 0) parts.push(`${pendingCount} in wachtrij`);
-      headline = `AI Crawl & Scrape bezig — ${completedInSession} van ${sessionTotal} prompts voltooid${parts.length ? ` (${parts.join(' · ')})` : ''}`;
+      headline = `Crawl bezig — ${completedInSession} van ${sessionTotal} prompts voltooid${parts.length ? ` (${parts.join(' · ')})` : ''}`;
     }
 
     return (
@@ -2310,43 +2355,30 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         position: 'sticky',
         top: '12px',
         zIndex: 30,
-        backgroundColor: '#eff6ff',
-        border: '1px solid #93c5fd',
-        borderRadius: '12px',
+        backgroundColor: '#ffffff',
+        border: '1px solid #cbd5e1',
+        borderRadius: '10px',
         padding: '14px 20px',
         display: 'flex',
         flexDirection: 'column',
         gap: '10px',
-        boxShadow: '0 4px 16px rgba(37, 99, 235, 0.12)'
+        boxShadow: '0 4px 16px rgba(15, 23, 42, 0.06)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '240px' }}>
-            <div style={{
-              width: '34px',
-              height: '34px',
-              borderRadius: '50%',
-              backgroundColor: '#dbeafe',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#2563eb',
-              flexShrink: 0
-            }}>
-              <Loader2 size={18} className="spin" />
-            </div>
+            <Loader2 size={18} className="spin" style={{ color: '#0f172a', flexShrink: 0 }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '13px', fontWeight: 800, color: '#1e3a8a' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
                   {headline}
                 </span>
                 <span style={{
-                  fontSize: '10px',
-                  fontWeight: 800,
-                  color: '#1d4ed8',
-                  backgroundColor: '#ffffff',
-                  padding: '2px 9px',
+                  fontSize: '10.5px',
+                  fontWeight: 600,
+                  color: '#475569',
+                  backgroundColor: '#f1f5f9',
+                  padding: '1px 8px',
                   borderRadius: '999px',
-                  border: '1px solid #bfdbfe',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '5px'
@@ -2355,13 +2387,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     width: '6px',
                     height: '6px',
                     borderRadius: '50%',
-                    backgroundColor: '#2563eb',
+                    backgroundColor: '#47ca9b',
                     display: 'inline-block'
                   }} />
-                  Live polling actief
+                  Live polling
                 </span>
               </div>
-              <span style={{ fontSize: '11.5px', color: '#3b82f6', fontWeight: 500 }}>
+              <span style={{ fontSize: '11.5px', color: '#64748b' }}>
                 {subline}
               </span>
             </div>
@@ -2370,23 +2402,23 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
             {sessionTotal > 1 && (
               <span style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: '#1e40af',
-                backgroundColor: '#dbeafe',
-                padding: '3px 10px',
-                borderRadius: '999px',
+                fontSize: '11.5px',
+                fontWeight: 600,
+                color: '#475569',
+                backgroundColor: '#f1f5f9',
+                padding: '2px 9px',
+                borderRadius: '6px',
                 fontVariantNumeric: 'tabular-nums'
               }}>
-                {completedInSession} / {sessionTotal} gereed
+                {completedInSession} / {sessionTotal}
               </span>
             )}
             <span style={{
-              fontSize: '18px',
-              fontWeight: 900,
-              color: '#1d4ed8',
+              fontSize: '17px',
+              fontWeight: 800,
+              color: '#0f172a',
               fontVariantNumeric: 'tabular-nums',
-              minWidth: '46px',
+              minWidth: '44px',
               textAlign: 'right'
             }}>
               {displayPct}%
@@ -2396,16 +2428,16 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
         <div style={{
           width: '100%',
-          height: '8px',
+          height: '5px',
           borderRadius: '999px',
-          backgroundColor: '#dbeafe',
+          backgroundColor: '#f1f5f9',
           overflow: 'hidden'
         }}>
           <div style={{
             width: `${displayPct}%`,
             height: '100%',
             borderRadius: '999px',
-            background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 55%, #3b82f6 100%)',
+            backgroundColor: '#440099',
             transition: 'width 0.45s ease'
           }} />
         </div>
@@ -2500,21 +2532,20 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         key={promptKey}
         style={{
           backgroundColor: '#ffffff',
-          border: isCrawling ? '1px solid #93c5fd' : '1px solid #e5e7eb',
+          border: isCrawling ? '1px solid #cbd5e1' : '1px solid #e5e7eb',
           borderRadius: '10px',
           overflow: 'hidden',
-          boxShadow: isCrawling ? '0 2px 8px rgba(37, 99, 235, 0.08)' : '0 1px 3px rgba(0,0,0,0.02)',
-          transition: 'all 0.2s ease'
+          transition: 'border-color 0.15s ease'
         }}
       >
         {/* Prompt Card Header */}
         <div
           style={{
-            padding: '14px 20px',
+            padding: '13px 18px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            backgroundColor: isCrawling ? '#f0f7ff' : '#f9fafb',
+            backgroundColor: '#ffffff',
             cursor: isEditingThis ? 'default' : 'pointer',
             userSelect: 'none',
             gap: '12px',
@@ -2536,10 +2567,10 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     width: '100%',
                     padding: '8px 12px',
                     borderRadius: '6px',
-                    border: '1px solid #440099',
+                    border: '1px solid #64748b',
                     fontSize: '13px',
                     fontWeight: 600,
-                    color: '#111827'
+                    color: '#0f172a'
                   }}
                   autoFocus
                 />
@@ -2553,13 +2584,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                       borderRadius: '6px',
                       backgroundColor: '#440099',
                       color: '#ffffff',
-                      fontSize: '11px',
-                      fontWeight: 700,
+                      fontSize: '11.5px',
+                      fontWeight: 600,
                       border: 'none',
                       cursor: 'pointer'
                     }}
                   >
-                    {savingEditedPrompt ? 'Opslaan...' : 'Opslaan & Nieuwe 0-meting starten'}
+                    {savingEditedPrompt ? 'Opslaan...' : 'Opslaan & nieuwe 0-meting'}
                   </button>
                   <button
                     type="button"
@@ -2644,19 +2675,19 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 {isCrawling && (
                   <span style={{
                     fontSize: '11px',
-                    padding: '3px 10px',
-                    borderRadius: '16px',
-                    backgroundColor: '#dbeafe',
-                    color: '#1d4ed8',
-                    fontWeight: 700,
+                    padding: '2px 9px',
+                    borderRadius: '6px',
+                    backgroundColor: '#f8fafc',
+                    color: '#334155',
+                    fontWeight: 600,
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '5px',
-                    border: '1px solid #bfdbfe',
+                    border: '1px solid #e2e8f0',
                     fontVariantNumeric: 'tabular-nums'
                   }}>
-                    <Loader2 size={11} className="spin" />
-                    {liveProg.mode === 'processing' ? `Live crawlen · ${liveProg.pct}%` : `In wachtrij · ${liveProg.pct}%`}
+                    <Loader2 size={11} className="spin" style={{ color: '#475569' }} />
+                    {liveProg.mode === 'processing' ? `Crawlen · ${liveProg.pct}%` : `Wachtrij · ${liveProg.pct}%`}
                   </span>
                 )}
               </>
@@ -2669,30 +2700,30 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '8px',
-                backgroundColor: '#eff6ff',
-                padding: '4px 12px',
-                borderRadius: '16px',
-                border: '1px solid #bfdbfe'
+                backgroundColor: '#ffffff',
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: '1px solid #e2e8f0'
               }}>
                 <div style={{
                   width: '64px',
-                  height: '6px',
+                  height: '5px',
                   borderRadius: '999px',
-                  backgroundColor: '#dbeafe',
+                  backgroundColor: '#e2e8f0',
                   overflow: 'hidden'
                 }}>
                   <div style={{
                     width: `${liveProg.pct}%`,
                     height: '100%',
                     borderRadius: '999px',
-                    background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 100%)',
+                    backgroundColor: '#440099',
                     transition: 'width 0.45s ease'
                   }} />
                 </div>
                 <span style={{
                   fontSize: '11px',
-                  fontWeight: 800,
-                  color: '#1d4ed8',
+                  fontWeight: 700,
+                  color: '#0f172a',
                   fontVariantNumeric: 'tabular-nums'
                 }}>
                   {liveProg.pct}%
@@ -2702,76 +2733,67 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               <>
                 {p.status === 'failed' ? (
                   <span style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    color: '#dc2626',
-                    backgroundColor: '#fee2e2',
-                    padding: '3px 10px',
-                    borderRadius: '16px',
-                    display: 'flex',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    color: '#475569',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    padding: '2px 9px',
+                    borderRadius: '6px',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '4px'
+                    gap: '6px'
                   }}>
-                    ✕ Mislukt
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                    Mislukt
                   </span>
                 ) : isMentioned ? (
                   <span style={{
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    color: '#16a34a',
-                    backgroundColor: '#dcfce7',
-                    padding: '3px 10px',
-                    borderRadius: '16px',
-                    display: 'flex',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    color: '#0f172a',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    padding: '2px 10px',
+                    borderRadius: '6px',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '4px'
+                    gap: '6px'
                   }}>
-                    ✓ Mentioned {p.position && p.position !== '-' ? `(${p.position})` : ''}
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#47ca9b' }} />
+                    Vermeld {p.position && p.position !== '-' ? `(${p.position})` : ''}
                   </span>
                 ) : (
                   <span style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: '#6b7280',
-                    backgroundColor: '#f3f4f6',
-                    padding: '3px 10px',
-                    borderRadius: '16px'
+                    fontSize: '11.5px',
+                    fontWeight: 500,
+                    color: '#64748b',
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    padding: '2px 10px',
+                    borderRadius: '6px'
                   }}>
-                    Not Mentioned
+                    Niet vermeld
                   </span>
                 )}
 
                 <span style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#6b21a8',
-                  backgroundColor: '#f3e8ff',
-                  padding: '3px 10px',
-                  borderRadius: '16px'
+                  fontSize: '11.5px',
+                  fontWeight: 500,
+                  color: '#64748b',
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  padding: '2px 10px',
+                  borderRadius: '999px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
                 }}>
-                  Nulmeting: {promptBaseline?.mentioned ? (promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : 'Vermeld') : 'Niet vermeld'}
-                </span>
-
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#2563eb',
-                  backgroundColor: '#eff6ff',
-                  padding: '3px 10px',
-                  borderRadius: '16px'
-                }}>
-                  • {brandsCount} Brands
-                </span>
-
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#ea580c',
-                  backgroundColor: '#fff7ed',
-                  padding: '3px 10px',
-                  borderRadius: '16px'
-                }}>
-                  • {sourcesCount} Sources
+                  <span>0-meting: <strong style={{ color: '#334155', fontWeight: 600 }}>{promptBaseline?.mentioned ? (promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : 'Vermeld') : '—'}</strong></span>
+                  <span style={{ color: '#cbd5e1' }}>·</span>
+                  <span>{brandsCount} merken</span>
+                  <span style={{ color: '#cbd5e1' }}>·</span>
+                  <span>{sourcesCount} bronnen</span>
                 </span>
               </>
             )}
@@ -2805,45 +2827,44 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   type="button"
                   disabled={isCrawling || resettingNulmeting}
                   onClick={() => handleStartNewNulmeting({ promptIds: [p.id], label: `prompt "${p.text}"` })}
-                  title="Start handmatig een nieuwe 0-meting voor deze prompt"
+                  title="Optioneel: nieuwe 0-meting starten voor deze prompt (wist bestaande historie)"
                   style={{
-                    padding: '5px 9px',
+                    padding: '5px 7px',
                     borderRadius: '6px',
-                    border: '1px solid #d8b4fe',
-                    backgroundColor: '#faf5ff',
-                    color: '#440099',
+                    border: '1px solid #e5e7eb',
+                    backgroundColor: '#f9fafb',
+                    color: '#6b7280',
                     fontSize: '11px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     cursor: (isCrawling || resettingNulmeting) ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '4px'
+                    gap: '3px'
                   }}
                 >
                   <RefreshCw size={11} />
-                  0-meting
                 </button>
                 <button
                   type="button"
                   disabled={isCrawling}
                   onClick={() => handleRunPromptScan(p.id, p.text)}
+                  title="Deze prompt opnieuw scrapen (behoudt 0-meting)"
                   style={{
                     padding: '5px 11px',
                     borderRadius: '6px',
-                    backgroundColor: isCrawling ? '#2563eb' : '#000000',
+                    backgroundColor: isCrawling ? '#334155' : '#0f172a',
                     color: '#ffffff',
                     fontSize: '11px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
                     gap: '5px',
                     cursor: isCrawling ? 'not-allowed' : 'pointer',
                     border: 'none',
-                    opacity: isCrawling ? 0.9 : 1,
                     fontVariantNumeric: 'tabular-nums'
                   }}
                 >
-                  {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={10} />}
+                  {isCrawling ? <Loader2 size={12} className="spin" /> : <Play size={11} />}
                   {isCrawling ? `${liveProg.pct}%` : 'Crawl'}
                 </button>
                 <button
@@ -2851,16 +2872,18 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                   onClick={() => handleDeletePrompt(kwContext?.id || null, p.id)}
                   title="Prompt definitief verwijderen"
                   style={{
-                    padding: '6px',
+                    padding: '5px',
                     borderRadius: '6px',
-                    color: '#ef4444',
+                    color: '#94a3b8',
                     cursor: 'pointer',
-                    backgroundColor: showEditActions ? '#fef2f2' : 'transparent',
-                    border: showEditActions ? '1px solid #fecaca' : 'none',
+                    backgroundColor: 'transparent',
+                    border: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#dc2626'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
                 >
                   <Trash2 size={15} />
                 </button>
@@ -2877,14 +2900,14 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         {isCrawling && (
           <div style={{
             width: '100%',
-            height: '4px',
-            backgroundColor: '#dbeafe',
+            height: '3px',
+            backgroundColor: '#f1f5f9',
             overflow: 'hidden'
           }}>
             <div style={{
               width: `${liveProg.pct}%`,
               height: '100%',
-              background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 60%, #3b82f6 100%)',
+              backgroundColor: '#440099',
               transition: 'width 0.45s ease'
             }} />
           </div>
@@ -2893,101 +2916,96 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         {/* Engine Breakdown Rows + Per-Prompt History */}
         {isOpen && (
           <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: '#ffffff', padding: '4px 0' }}>
+            {/* Calm Minimalist Nulmeting & Resultaten Historie Strip */}
             <div style={{
               margin: '12px 20px',
-              padding: '16px',
-              backgroundColor: '#fafafa',
-              border: '1px solid #e5e7eb',
-              borderRadius: '10px',
+              padding: '12px 16px',
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
               display: 'flex',
               flexDirection: 'column',
-              gap: '12px'
+              gap: '10px'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 800, color: '#111827' }}>
-                    Nulmeting & Resultaten Historie (Prompt)
-                  </span>
-                  <span style={{
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    backgroundColor: '#f3e8ff',
-                    color: '#6b21a8'
-                  }}>
-                    Nulmeting ({promptBaseline?.displayDate || promptBaseline?.date}): {promptBaseline?.mentioned ? `Vermeld (${promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : `${promptBaseline.totalMentions || 1}/${promptBaseline.totalModels || 4} AI`})` : 'Niet vermeld'}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px', color: '#334155', fontSize: '12px', fontWeight: 600 }}>
+                  <History size={15} style={{ color: '#64748b' }} />
+                  <span>Nulmeting &amp; resultaten historie</span>
+                  <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 500 }}>
+                    ({promptHistory.length} {promptHistory.length === 1 ? 'meting' : 'metingen'})
                   </span>
                 </div>
-                <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
-                  Huidig: {isMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : `${p.totalMentions || 1}/${p.totalModels || 4} AI`})` : 'Niet vermeld'}
-                </span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11.5px', color: '#475569' }}>
+                  <span>
+                    0-meting:{' '}
+                    <strong style={{ color: '#0f172a', fontWeight: 600 }}>
+                      {promptBaseline?.mentioned
+                        ? `Vermeld (${promptBaseline?.position && promptBaseline.position !== '-' ? promptBaseline.position : `${promptBaseline.totalMentions || 1}/${promptBaseline.totalModels || 6} AI`})`
+                        : 'Niet vermeld'}
+                    </strong>
+                  </span>
+                  <ArrowRight size={13} style={{ color: '#94a3b8' }} />
+                  <span>
+                    Actueel:{' '}
+                    <strong style={{ color: isMentioned ? '#047857' : '#475569', fontWeight: 600 }}>
+                      {isMentioned
+                        ? `Vermeld (${p.position && p.position !== '-' ? p.position : `${p.totalMentions || 1}/${p.totalModels || 6} AI`})`
+                        : 'Niet vermeld'}
+                    </strong>
+                  </span>
+                </div>
               </div>
 
               <div style={{
-                minHeight: '100px',
                 display: 'flex',
-                alignItems: 'flex-end',
-                gap: '6px',
-                padding: '10px 8px 6px 8px',
-                backgroundColor: '#ffffff',
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb',
-                overflowX: 'auto'
+                alignItems: 'center',
+                gap: '8px',
+                overflowX: 'auto',
+                paddingBottom: '2px'
               }}>
                 {promptHistory.map((hItem, hIdx) => {
                   const isBase = hIdx === 0 || !!hItem.isBaseline;
-                  const scoreVal = typeof hItem.overallScore === 'number' && hItem.overallScore > 0
-                    ? hItem.overallScore
-                    : (hItem.mentioned ? 65 : 12);
-                  const barPx = Math.max(14, Math.round((Math.min(100, Math.max(15, scoreVal)) / 100) * 54));
+                  const posLabel = hItem.position && hItem.position !== '-'
+                    ? hItem.position
+                    : (hItem.mentioned ? `${hItem.totalMentions || 1}/${hItem.totalModels || 6} AI` : 'Niet vermeld');
 
                   return (
-                    <div
-                      key={hIdx}
-                      style={{
-                        flex: '0 0 auto',
-                        width: '32px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'flex-end',
-                        gap: '3px'
-                      }}
-                    >
-                      <span style={{ fontSize: '9px', fontWeight: 800, color: hItem.mentioned ? '#15803d' : '#9ca3af', whiteSpace: 'nowrap' }}>
-                        {hItem.position && hItem.position !== '-' ? hItem.position : (hItem.mentioned ? '✓' : '✕')}
-                      </span>
+                    <React.Fragment key={hIdx}>
+                      {hIdx > 0 && (
+                        <div style={{ width: '14px', height: '1px', backgroundColor: '#cbd5e1', flexShrink: 0 }} />
+                      )}
                       <div
-                        title={`${isBase ? 'Nulmeting' : `Meting #${hIdx + 1}`}: ${hItem.displayDate || hItem.date}\nStatus: ${hItem.mentioned ? 'Vermeld' : 'Niet vermeld'}\nPositie: ${hItem.position || '-'}\nModellen: ${hItem.totalMentions ?? (hItem.mentioned ? 1 : 0)}/${hItem.totalModels ?? 4} AI`}
+                        title={`${isBase ? '0-meting' : `Meting ${hIdx + 1}`}: ${hItem.displayDate || hItem.date}`}
                         style={{
-                          width: '12px',
-                          height: `${barPx}px`,
-                          borderRadius: '4px 4px 2px 2px',
-                          background: isBase
-                            ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
-                            : (hItem.mentioned
-                              ? 'linear-gradient(180deg, #22c55e 0%, #16a34a 100%)'
-                              : '#e5e7eb'),
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                          cursor: 'pointer'
+                          flex: '0 0 auto',
+                          padding: '6px 11px',
+                          backgroundColor: '#ffffff',
+                          border: isBase ? '1px solid #cbd5e1' : '1px solid #e2e8f0',
+                          borderRadius: '7px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          fontSize: '11.5px'
                         }}
-                      />
-                      <span style={{ fontSize: '8px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
-                        {formatCompactDate(hItem.displayDate || hItem.date)}
-                      </span>
-                      <span style={{
-                        fontSize: '7px',
-                        fontWeight: 800,
-                        padding: '1px 3px',
-                        borderRadius: '3px',
-                        backgroundColor: isBase ? '#f3e8ff' : '#f3f4f6',
-                        color: isBase ? '#6b21a8' : '#6b7280',
-                        lineHeight: 1
-                      }}>
-                        {isBase ? 'NUL' : `#${hIdx + 1}`}
-                      </span>
-                    </div>
+                      >
+                        <span style={{
+                          width: '7px',
+                          height: '7px',
+                          borderRadius: '50%',
+                          backgroundColor: hItem.mentioned ? '#47ca9b' : '#cbd5e1',
+                          flexShrink: 0
+                        }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+                          <span style={{ fontSize: '10.5px', color: '#64748b', fontWeight: 500 }}>
+                            {isBase ? '0-meting · ' : ''}{formatCompactDate(hItem.displayDate || hItem.date)}
+                          </span>
+                          <span style={{ fontSize: '11.5px', fontWeight: 600, color: hItem.mentioned ? '#0f172a' : '#64748b', fontVariantNumeric: 'tabular-nums' }}>
+                            {posLabel}
+                          </span>
+                        </div>
+                      </div>
+                    </React.Fragment>
                   );
                 })}
               </div>
@@ -2996,43 +3014,43 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             {isCrawling && (
               <div style={{
                 margin: '12px 20px',
-                padding: '16px 18px',
+                padding: '14px 16px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '10px',
-                backgroundColor: '#eff6ff',
-                border: '1px solid #bfdbfe',
-                borderRadius: '10px'
+                gap: '8px',
+                backgroundColor: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px'
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Loader2 size={18} className="spin" style={{ color: '#2563eb', flexShrink: 0 }} />
-                    <span style={{ fontSize: '13px', fontWeight: 800, color: '#1e3a8a' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Loader2 size={15} className="spin" style={{ color: '#0f172a', flexShrink: 0 }} />
+                    <span style={{ fontSize: '12.5px', fontWeight: 600, color: '#0f172a' }}>
                       {liveProg.mode === 'processing'
                         ? 'Prompt wordt nu live uitgevoerd over alle gekoppelde AI-zoekmachines...'
                         : 'Prompt staat in de wachtrij en wordt zo dadelijk live gecrawld...'}
                     </span>
                   </div>
-                  <span style={{ fontSize: '14px', fontWeight: 900, color: '#1d4ed8', fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
                     {liveProg.pct}%
                   </span>
                 </div>
                 <div style={{
                   width: '100%',
-                  height: '7px',
+                  height: '5px',
                   borderRadius: '999px',
-                  backgroundColor: '#dbeafe',
+                  backgroundColor: '#e2e8f0',
                   overflow: 'hidden'
                 }}>
                   <div style={{
                     width: `${liveProg.pct}%`,
                     height: '100%',
                     borderRadius: '999px',
-                    background: 'linear-gradient(90deg, #2563eb 0%, #7c3aed 60%, #3b82f6 100%)',
+                    backgroundColor: '#440099',
                     transition: 'width 0.45s ease'
                   }} />
                 </div>
-                <span style={{ fontSize: '11.5px', color: '#3b82f6' }}>
+                <span style={{ fontSize: '11.5px', color: '#64748b' }}>
                   ChatGPT, Gemini, Google AI Mode, AI Overviews, Perplexity en Claude analyseren actuele citaties en merkvermeldingen.{p.modelMentions ? ' Hieronder ziet u nog de vorige meting tot de nieuwe scan op 100% staat.' : ' Resultaten verschijnen automatisch zodra de scan op 100% staat.'}
                 </span>
               </div>
@@ -3057,77 +3075,53 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                         padding: '10px 20px',
                         cursor: eng.summary ? 'pointer' : 'default',
                         userSelect: 'none',
-                        backgroundColor: isEngExpanded ? '#f9fafb' : 'transparent'
+                        backgroundColor: isEngExpanded ? '#f8fafc' : 'transparent'
                       }}
                       onClick={() => eng.summary && toggleExpandedEngine(promptKey, eng.id)}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         {EngineLogos[eng.id]}
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
                           {eng.name}
                         </span>
-                        {eng.summary && (
-                          <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: 500 }}>
-                            {isEngExpanded ? '(klik om antwoord te verbergen)' : '(klik om antwoord te tonen)'}
-                          </span>
-                        )}
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px' }}>
                         {eng.unavailable ? (
                           <span
                             title={eng.errorMsg || 'Engine niet beschikbaar tijdens deze scan; telt niet mee in scores.'}
                             style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: '#b45309',
-                              backgroundColor: '#fef3c7',
-                              border: '1px solid #fde68a',
-                              padding: '2px 10px',
-                              borderRadius: '12px',
+                              fontSize: '11.5px',
+                              fontWeight: 500,
+                              color: '#94a3b8',
                               cursor: 'help'
                             }}
                           >
-                            Niet gemeten (telt niet mee)
+                            Niet gemeten
                           </span>
                         ) : (
                           <>
-                            {eng.mentioned && (
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 800,
-                                color: '#16a34a',
-                                backgroundColor: '#dcfce7',
-                                padding: '2px 8px',
-                                borderRadius: '12px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '2px'
-                              }}>
-                                ✓
-                              </span>
-                            )}
                             <span style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: '#2563eb',
-                              backgroundColor: '#eff6ff',
-                              padding: '2px 8px',
-                              borderRadius: '12px'
+                              fontSize: '11.5px',
+                              fontWeight: eng.mentioned ? 600 : 500,
+                              color: eng.mentioned ? '#047857' : '#94a3b8',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
                             }}>
-                              • {eng.brands} Brands
+                              {eng.mentioned && <Check size={13} />}
+                              {eng.mentioned ? 'Vermeld' : 'Niet vermeld'}
                             </span>
-                            <span style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: '#ea580c',
-                              backgroundColor: '#fff7ed',
-                              padding: '2px 8px',
-                              borderRadius: '12px'
-                            }}>
-                              • {eng.sources} Sources
+                            <span style={{ color: '#cbd5e1' }}>·</span>
+                            <span style={{ fontSize: '11.5px', color: '#64748b' }}>
+                              {eng.brands} merken · {eng.sources} bronnen
                             </span>
                           </>
+                        )}
+                        {eng.summary && (
+                          <span style={{ color: '#94a3b8', display: 'inline-flex', alignItems: 'center' }}>
+                            {isEngExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -3379,90 +3373,86 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             </span>
             {kw.baseline && (
               <span style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                padding: '3px 10px',
-                borderRadius: '12px',
-                backgroundColor: '#f3e8ff',
-                color: '#6b21a8',
-                border: '1px solid #d8b4fe'
+                fontSize: '11.5px',
+                fontWeight: 500,
+                padding: '2px 9px',
+                borderRadius: '6px',
+                backgroundColor: '#f8fafc',
+                color: '#475569',
+                border: '1px solid #e2e8f0'
               }}>
-                Nulmeting: {kw.baseline.displayDate || kw.baseline.date}
+                0-meting: {kw.baseline.displayDate || kw.baseline.date}
               </span>
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             {!isReadOnly && (
               <>
                 <button
                   type="button"
                   onClick={() => handleStartNewNulmeting({ keywordId: kw.id, label: `zoekterm "${kw.text}"` })}
                   disabled={resettingNulmeting}
-                  title="Start handmatig een nieuwe 0-meting voor dit zoekwoord en de bijbehorende prompts"
+                  title="Optioneel: reset de historie en start een nieuwe 0-meting voor dit zoekwoord"
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: '1px solid #d8b4fe',
-                    backgroundColor: '#faf5ff',
-                    color: '#440099',
+                    padding: '7px 11px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    backgroundColor: '#ffffff',
+                    color: '#64748b',
                     fontSize: '12px',
-                    fontWeight: 700,
+                    fontWeight: 500,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    cursor: resettingNulmeting ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.15s ease'
+                    gap: '5px',
+                    cursor: resettingNulmeting ? 'not-allowed' : 'pointer'
                   }}
                 >
                   <RefreshCw size={13} className={resettingNulmeting ? 'spin' : ''} />
-                  Nieuwe 0-meting
+                  0-meting
                 </button>
                 <button
                   type="button"
                   onClick={(e) => handleRescrapeKeyword(kw.id, e)}
                   disabled={rescrapingKeywords[kw.id]}
-                  title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
+                  title="Alle prompts en concurrentierankings van deze zoekterm opnieuw scrapen (behoudt 0-meting)"
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: '1px solid #bfdbfe',
-                    backgroundColor: rescrapingKeywords[kw.id] ? '#eff6ff' : '#f0f7ff',
-                    color: '#1d4ed8',
+                    padding: '7px 13px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    color: '#0f172a',
                     fontSize: '12px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
-                    cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.15s ease'
+                    cursor: rescrapingKeywords[kw.id] ? 'not-allowed' : 'pointer'
                   }}
-                  onMouseEnter={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#dbeafe'; }}
-                  onMouseLeave={(e) => { if (!rescrapingKeywords[kw.id]) e.currentTarget.style.backgroundColor = '#f0f7ff'; }}
                 >
                   <RotateCw size={13} className={rescrapingKeywords[kw.id] ? 'spin' : ''} />
-                  {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw Scrapen'}
+                  {rescrapingKeywords[kw.id] ? 'Scrapen bezig...' : 'Opnieuw scrapen'}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleDeleteKeyword(kw)}
                   title="Zoekterm en gekoppelde prompts definitief verwijderen"
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: '1px solid #fecaca',
-                    backgroundColor: '#fef2f2',
-                    color: '#dc2626',
+                    padding: '7px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #e2e8f0',
+                    backgroundColor: '#ffffff',
+                    color: '#b91c1c',
                     fontSize: '12px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '5px',
                     cursor: 'pointer'
                   }}
                 >
                   <Trash2 size={13} />
-                  Zoekterm Verwijderen
+                  Verwijderen
                 </button>
               </>
             )}
@@ -3474,28 +3464,9 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               }}
               title="Open SalesWizard PDF Rapportage voor dit zoekwoord"
               style={{
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: '1px solid #d8b4fe',
-                backgroundColor: '#3E008A',
-                fontSize: '12px',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                cursor: 'pointer',
-                color: '#ffffff'
-              }}
-            >
-              <FileText size={12} />
-              Rapportage
-            </button>
-            <button
-              type="button"
-              style={{
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: '1px solid #e5e7eb',
+                padding: '7px 13px',
+                borderRadius: '8px',
+                border: '1px solid #e2e8f0',
                 backgroundColor: '#ffffff',
                 fontSize: '12px',
                 fontWeight: 600,
@@ -3503,34 +3474,52 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 alignItems: 'center',
                 gap: '6px',
                 cursor: 'pointer',
-                color: '#374151'
+                color: '#334155'
               }}
-              onClick={() => handleExportKeywordCsv(kw)}
-              title="Exporteer nulmeting, historie, rankings en prompts naar CSV (Excel)"
             >
-              <Download size={12} />
-              Export CSV
+              <FileText size={13} />
+              Rapportage
             </button>
             <button
               type="button"
               style={{
-                padding: '6px 16px',
-                borderRadius: '20px',
-                backgroundColor: shareCopied ? '#16a34a' : '#000000',
-                color: '#ffffff',
+                padding: '7px 13px',
+                borderRadius: '8px',
+                border: '1px solid #e2e8f0',
+                backgroundColor: '#ffffff',
                 fontSize: '12px',
-                fontWeight: 700,
+                fontWeight: 600,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 cursor: 'pointer',
-                border: 'none',
-                transition: 'background-color 0.15s ease'
+                color: '#334155'
+              }}
+              onClick={() => handleExportKeywordCsv(kw)}
+              title="Exporteer nulmeting, historie, rankings en prompts naar CSV (Excel)"
+            >
+              <Download size={13} />
+              CSV
+            </button>
+            <button
+              type="button"
+              style={{
+                padding: '7px 14px',
+                borderRadius: '8px',
+                backgroundColor: shareCopied ? '#047857' : '#0f172a',
+                color: '#ffffff',
+                fontSize: '12px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer',
+                border: 'none'
               }}
               onClick={() => handleShareKeyword(kw)}
             >
-              <Share2 size={12} />
-              {shareCopied ? 'Gekopieerd!' : 'Share'}
+              <Share2 size={13} />
+              {shareCopied ? 'Gekopieerd' : 'Delen'}
             </button>
           </div>
         </div>
@@ -3552,8 +3541,8 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               style={{
                 padding: '12px 20px',
                 fontSize: '13px',
-                fontWeight: detailTab === t.id ? 700 : 500,
-                color: detailTab === t.id ? '#440099' : '#6b7280',
+                fontWeight: detailTab === t.id ? 600 : 500,
+                color: detailTab === t.id ? '#440099' : '#64748b',
                 borderBottom: detailTab === t.id ? '2px solid #440099' : '2px solid transparent',
                 cursor: 'pointer',
                 backgroundColor: 'transparent',
@@ -3617,136 +3606,88 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
               return (
                 <div style={{
-                  padding: '16px 20px',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '12px',
-                  backgroundColor: '#fafafa',
+                  padding: '14px 18px',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  backgroundColor: '#f8fafc',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '12px'
+                  gap: '10px'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 800, color: '#111827' }}>
-                        Position & Share of Voice Historie
-                      </span>
-                      <span style={{
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        backgroundColor: '#f3e8ff',
-                        color: '#440099'
-                      }}>
-                        {rawHistory.length} {rawHistory.length === 1 ? 'meetpunt' : 'meetpunten'}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                      <History size={15} style={{ color: '#64748b' }} />
+                      <span>Positie &amp; Share of Voice historie</span>
+                      <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 500 }}>
+                        ({rawHistory.length} {rawHistory.length === 1 ? 'meetpunt' : 'meetpunten'})
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#440099', display: 'inline-block' }} />
-                        <span>Nulmeting</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#2563eb', display: 'inline-block' }} />
-                        <span>Vervolgmeting</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDetailTab('nulmeting')}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#440099',
-                          fontWeight: 700,
-                          fontSize: '11px',
-                          cursor: 'pointer',
-                          padding: 0,
-                          textDecoration: 'underline'
-                        }}
-                      >
-                        Bekijk Nulmeting details →
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDetailTab('nulmeting')}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#475569',
+                        fontWeight: 600,
+                        fontSize: '11.5px',
+                        cursor: 'pointer',
+                        padding: 0,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <span>Nulmeting overzicht</span>
+                      <ArrowRight size={13} />
+                    </button>
                   </div>
 
-                  {/* Compact Candle Strip */}
                   <div style={{
-                    minHeight: '105px',
-                    width: '100%',
                     display: 'flex',
-                    alignItems: 'flex-end',
-                    gap: '6px',
-                    padding: '12px 10px 8px 10px',
-                    backgroundColor: '#ffffff',
-                    borderRadius: '10px',
-                    border: '1px solid #e5e7eb',
-                    overflowX: 'auto'
+                    alignItems: 'center',
+                    gap: '8px',
+                    overflowX: 'auto',
+                    paddingBottom: '2px'
                   }}>
                     {rawHistory.map((item, i) => {
                       const isFirst = i === 0 || !!item.isBaseline;
-                      const posNum = parseNumericPos(item.position);
                       const itemSov = Number(item.sov ?? 0);
-                      let scorePct = 20;
-                      if (posNum !== null && posNum > 0) {
-                        scorePct = Math.max(15, Math.min(100, Math.round(((21 - Math.min(posNum, 20)) / 20) * 100)));
-                      } else if (itemSov > 0) {
-                        scorePct = Math.max(18, Math.min(100, itemSov));
-                      }
-                      const barHeightPx = Math.max(14, Math.round((scorePct / 100) * 58));
 
                       return (
-                        <div
-                          key={i}
-                          style={{
-                            flex: '0 0 auto',
-                            width: '32px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'flex-end',
-                            gap: '4px'
-                          }}
-                        >
-                          {/* Value above candle */}
-                          <span style={{ fontSize: '9px', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>
-                            {item.position && item.position !== '-' ? item.position : `${itemSov}%`}
-                          </span>
-
-                          {/* Candle Stick */}
+                        <React.Fragment key={i}>
+                          {i > 0 && (
+                            <div style={{ width: '16px', height: '1px', backgroundColor: '#cbd5e1', flexShrink: 0 }} />
+                          )}
                           <div
-                            title={`${isFirst ? 'Nulmeting' : `Meting #${i + 1}`}: ${item.displayDate || item.date}\nAI Positie: ${item.position || '-'}\nShare of Voice: ${itemSov}%\nGoogle Rank: ${item.rank || '-'}`}
+                            title={`${isFirst ? '0-meting' : `Meting ${i + 1}`}: ${item.displayDate || item.date}`}
                             style={{
-                              width: '12px',
-                              height: `${barHeightPx}px`,
-                              background: isFirst
-                                ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
-                                : 'linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)',
-                              borderRadius: '4px 4px 2px 2px',
-                              boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                              cursor: 'pointer',
-                              transition: 'height 0.25s ease'
+                              flex: '0 0 auto',
+                              minWidth: '125px',
+                              padding: '8px 12px',
+                              backgroundColor: '#ffffff',
+                              border: '1px solid #e2e8f0',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '4px'
                             }}
-                          />
-
-                          {/* Date below candle */}
-                          <span style={{ fontSize: '9px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
-                            {formatCompactDate(item.displayDate || item.date)}
-                          </span>
-
-                          {/* Metric tag */}
-                          <span style={{
-                            fontSize: '8px',
-                            fontWeight: 800,
-                            padding: '1px 3px',
-                            borderRadius: '3px',
-                            backgroundColor: isFirst ? '#f3e8ff' : '#eff6ff',
-                            color: isFirst ? '#6b21a8' : '#1d4ed8',
-                            lineHeight: 1
-                          }}>
-                            {isFirst ? 'NUL' : `#${i + 1}`}
-                          </span>
-                        </div>
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', fontSize: '10.5px', color: '#64748b' }}>
+                              <span>{formatCompactDate(item.displayDate || item.date)}</span>
+                              {isFirst && <span style={{ fontWeight: 600, color: '#475569' }}>0-meting</span>}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                                {item.position && item.position !== '-' ? item.position : '—'}
+                              </span>
+                              <span style={{ fontSize: '11.5px', fontWeight: 600, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>
+                                {itemSov}% SOV
+                              </span>
+                            </div>
+                          </div>
+                        </React.Fragment>
                       );
                     })}
                   </div>
@@ -3976,341 +3917,184 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               const sovDiff = currSov - baseSov;
 
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  {/* Header Card */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                  {/* Calm Header & Side-by-Side Comparison */}
                   <div style={{
                     backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb',
+                    border: '1px solid #e2e8f0',
                     borderRadius: '12px',
                     padding: '20px 24px',
                     display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '16px'
-                  }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <h3 style={{ fontSize: '18px', fontWeight: 800, color: '#111827', margin: 0 }}>
-                          Nulmeting & Voortgangsanalyse
-                        </h3>
-                        <span style={{
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          color: '#440099',
-                          backgroundColor: '#f5f0ff',
-                          border: '1px solid #e8d9ff',
-                          padding: '2px 10px',
-                          borderRadius: '12px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.4px'
-                        }}>
-                          Vastgelegd Startpunt
-                        </span>
-                      </div>
-                      <p style={{ fontSize: '13px', color: '#6b7280', marginTop: '4px', maxWidth: '640px', lineHeight: 1.5 }}>
-                        Het initiële startpunt van <strong>{kw.text}</strong> bij aanvang. Alle scans en AI-optimalisaties worden afgezet tegen deze referentiedatum.
-                      </p>
-                    </div>
-
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '14px',
-                      backgroundColor: '#fafafa',
-                      border: '1px solid #e5e7eb',
-                      padding: '10px 18px',
-                      borderRadius: '10px'
-                    }}>
-                      <div>
-                        <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Startdatum Nulmeting</div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>
-                          {baselinePoint?.displayDate || baselinePoint?.date || '-'}
-                        </div>
-                      </div>
-                      <div style={{ width: '1px', height: '24px', backgroundColor: '#e5e7eb' }} />
-                      <div>
-                        <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Totaal Scans</div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#440099' }}>
-                          {rawHistory.length} {rawHistory.length === 1 ? 'meting' : 'metingen'}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* KPI Comparison Grid */}
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: '16px'
-                  }}>
-                    {/* Nulmeting Card */}
-                    <div style={{
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #e9d5ff',
-                      borderRadius: '12px',
-                      padding: '20px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '14px',
-                      boxShadow: '0 1px 3px rgba(68, 0, 153, 0.04)'
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          color: '#440099',
-                          backgroundColor: '#f3e8ff',
-                          padding: '3px 10px',
-                          borderRadius: '12px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.3px'
-                        }}>
-                          Nulmeting (Start)
-                        </span>
-                        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
-                          {baselinePoint?.displayDate || baselinePoint?.date || '-'}
-                        </span>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', paddingTop: '4px' }}>
-                        <div>
-                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>AI Positie</div>
-                          <div style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
-                            {baselinePoint?.position && baselinePoint.position !== '-' ? baselinePoint.position : (kw.position || '-')}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Share of Voice</div>
-                          <div style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
-                            {baseSov}%
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Google Rank</div>
-                          <div style={{ fontSize: '20px', fontWeight: 700, color: '#4b5563', paddingTop: '2px' }}>
-                            {baselinePoint?.rank || kw.rank || '-'}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Current Measurement Card */}
-                    <div style={{
-                      backgroundColor: '#ffffff',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '12px',
-                      padding: '20px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '14px',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{
-                          fontSize: '11px',
-                          fontWeight: 800,
-                          color: '#1e40af',
-                          backgroundColor: '#dbeafe',
-                          padding: '3px 10px',
-                          borderRadius: '12px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.3px'
-                        }}>
-                          Huidige Meting
-                        </span>
-                        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
-                          {latestPoint?.displayDate || kw.last_updated || 'Actueel'}
-                        </span>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', paddingTop: '4px' }}>
-                        <div>
-                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>AI Positie</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
-                              {kw.position || latestPoint?.position || '-'}
-                            </span>
-                            {posDiff !== null && posDiff !== 0 && (
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                padding: '1px 6px',
-                                borderRadius: '8px',
-                                backgroundColor: posDiff > 0 ? '#dcfce7' : '#fee2e2',
-                                color: posDiff > 0 ? '#15803d' : '#dc2626'
-                              }}>
-                                {posDiff > 0 ? `+${posDiff}` : `${posDiff}`}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Share of Voice</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ fontSize: '24px', fontWeight: 800, color: '#111827', fontFamily: "'Outfit', sans-serif" }}>
-                              {currSov}%
-                            </span>
-                            {sovDiff !== 0 && (
-                              <span style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                padding: '1px 6px',
-                                borderRadius: '8px',
-                                backgroundColor: sovDiff > 0 ? '#dcfce7' : '#fee2e2',
-                                color: sovDiff > 0 ? '#15803d' : '#dc2626'
-                              }}>
-                                {sovDiff > 0 ? `+${sovDiff}%` : `${sovDiff}%`}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>Google Rank</div>
-                          <div style={{ fontSize: '20px', fontWeight: 700, color: '#4b5563', paddingTop: '2px' }}>
-                            {kw.rank || latestPoint?.rank || '-'}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Compact Historical Timeline since Nulmeting */}
-                  <div style={{
-                    backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '12px',
-                    padding: '20px',
-                    display: 'flex',
                     flexDirection: 'column',
-                    gap: '12px'
+                    gap: '18px'
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                      <span style={{ fontSize: '14px', fontWeight: 800, color: '#111827' }}>
-                        Historisch Verloop sinds Nulmeting
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                          Nulmeting &amp; voortgang
+                        </h3>
+                        <p style={{ fontSize: '12.5px', color: '#64748b', margin: '4px 0 0 0' }}>
+                          Vergelijking van <strong>{kw.text}</strong> tussen het vastgelegde startpunt en de meest recente meting.
+                        </p>
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 500 }}>
+                        Startpunt: <strong style={{ color: '#334155' }}>{baselinePoint?.displayDate || baselinePoint?.date || '—'}</strong> · {rawHistory.length} {rawHistory.length === 1 ? 'meting' : 'metingen'}
                       </span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: '#6b7280', fontWeight: 600 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#440099', display: 'inline-block' }} />
-                          <span>Nulmeting</span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '14px' }}>
+                      {/* Baseline Box */}
+                      <div style={{
+                        padding: '16px 18px',
+                        borderRadius: '10px',
+                        backgroundColor: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', color: '#64748b', fontWeight: 600 }}>
+                          <span>0-meting (Startpunt)</span>
+                          <span>{baselinePoint?.displayDate || baselinePoint?.date || '—'}</span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: '#2563eb', display: 'inline-block' }} />
-                          <span>Vervolgmeting</span>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>AI Positie</div>
+                            <div style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                              {baselinePoint?.position && baselinePoint.position !== '-' ? baselinePoint.position : (kw.position || '—')}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>Share of Voice</div>
+                            <div style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a', marginTop: '2px' }}>
+                              {baseSov}%
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>Google Rank</div>
+                            <div style={{ fontSize: '20px', fontWeight: 700, color: '#475569', marginTop: '2px' }}>
+                              {baselinePoint?.rank || kw.rank || '—'}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Current Box */}
+                      <div style={{
+                        padding: '16px 18px',
+                        borderRadius: '10px',
+                        backgroundColor: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', color: '#334155', fontWeight: 600 }}>
+                          <span>Actuele meting</span>
+                          <span style={{ color: '#64748b', fontWeight: 500 }}>{latestPoint?.displayDate || kw.last_updated || 'Actueel'}</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>AI Positie</div>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '2px' }}>
+                              <span style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>
+                                {kw.position || latestPoint?.position || '—'}
+                              </span>
+                              {posDiff !== null && posDiff !== 0 && (
+                                <span style={{ fontSize: '11px', fontWeight: 600, color: posDiff > 0 ? '#059669' : '#dc2626' }}>
+                                  {posDiff > 0 ? `+${posDiff}` : `${posDiff}`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>Share of Voice</div>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginTop: '2px' }}>
+                              <span style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a' }}>
+                                {currSov}%
+                              </span>
+                              {sovDiff !== 0 && (
+                                <span style={{ fontSize: '11px', fontWeight: 600, color: sovDiff > 0 ? '#059669' : '#dc2626' }}>
+                                  {sovDiff > 0 ? `+${sovDiff}%` : `${sovDiff}%`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>Google Rank</div>
+                            <div style={{ fontSize: '20px', fontWeight: 700, color: '#475569', marginTop: '2px' }}>
+                              {kw.rank || latestPoint?.rank || '—'}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    <div style={{
-                      minHeight: '105px',
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'flex-end',
-                      gap: '6px',
-                      padding: '12px 10px 8px 10px',
-                      backgroundColor: '#fafafa',
-                      borderRadius: '10px',
-                      border: '1px solid #e5e7eb',
-                      overflowX: 'auto'
-                    }}>
+                    {/* Calm Horizontal Measurement Strip */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflowX: 'auto', paddingTop: '4px' }}>
                       {rawHistory.map((item, i) => {
                         const isFirst = i === 0 || !!item.isBaseline;
-                        const posNum = parseNumericPos(item.position);
                         const itemSov = Number(item.sov ?? 0);
-                        let scorePct = 20;
-                        if (posNum !== null && posNum > 0) {
-                          scorePct = Math.max(15, Math.min(100, Math.round(((21 - Math.min(posNum, 20)) / 20) * 100)));
-                        } else if (itemSov > 0) {
-                          scorePct = Math.max(18, Math.min(100, itemSov));
-                        }
-                        const barHeightPx = Math.max(14, Math.round((scorePct / 100) * 58));
-
                         return (
-                          <div
-                            key={i}
-                            style={{
+                          <React.Fragment key={i}>
+                            {i > 0 && <div style={{ width: '16px', height: '1px', backgroundColor: '#cbd5e1', flexShrink: 0 }} />}
+                            <div style={{
                               flex: '0 0 auto',
-                              width: '32px',
-                              display: 'flex',
-                              flexDirection: 'column',
+                              padding: '7px 12px',
+                              borderRadius: '8px',
+                              backgroundColor: '#f8fafc',
+                              border: '1px solid #e2e8f0',
+                              display: 'inline-flex',
                               alignItems: 'center',
-                              justifyContent: 'flex-end',
-                              gap: '4px'
-                            }}
-                          >
-                            <span style={{ fontSize: '9px', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>
-                              {item.position && item.position !== '-' ? item.position : `${itemSov}%`}
-                            </span>
-                            <div
-                              title={`${isFirst ? 'Nulmeting' : `Meting #${i + 1}`}: ${item.displayDate || item.date}\nAI Positie: ${item.position || '-'}\nShare of Voice: ${itemSov}%\nGoogle Rank: ${item.rank || '-'}`}
-                              style={{
-                                width: '12px',
-                                height: `${barHeightPx}px`,
-                                background: isFirst
-                                  ? 'linear-gradient(180deg, #7c3aed 0%, #440099 100%)'
-                                  : 'linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)',
-                                borderRadius: '4px 4px 2px 2px',
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                                cursor: 'pointer',
-                                transition: 'height 0.25s ease'
-                              }}
-                            />
-                            <span style={{ fontSize: '9px', fontWeight: 600, color: '#6b7280', whiteSpace: 'nowrap' }}>
-                              {formatCompactDate(item.displayDate || item.date)}
-                            </span>
-                            <span style={{
-                              fontSize: '8px',
-                              fontWeight: 800,
-                              padding: '1px 3px',
-                              borderRadius: '3px',
-                              backgroundColor: isFirst ? '#f3e8ff' : '#eff6ff',
-                              color: isFirst ? '#6b21a8' : '#1d4ed8',
-                              lineHeight: 1
+                              gap: '10px',
+                              fontSize: '12px'
                             }}>
-                              {isFirst ? 'NUL' : `#${i + 1}`}
-                            </span>
-                          </div>
+                              <span style={{ color: '#64748b', fontSize: '11px' }}>
+                                {isFirst ? '0-meting · ' : ''}{formatCompactDate(item.displayDate || item.date)}
+                              </span>
+                              <span style={{ fontWeight: 600, color: '#0f172a' }}>
+                                {item.position && item.position !== '-' ? item.position : '—'}
+                              </span>
+                              <span style={{ color: '#64748b', fontSize: '11px' }}>
+                                {itemSov}% SOV
+                              </span>
+                            </div>
+                          </React.Fragment>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* Prompts Nulmeting vs Huidig overzicht */}
+                  {/* Calm Prompts Comparison Table */}
                   <div style={{
                     backgroundColor: '#ffffff',
-                    border: '1px solid #e5e7eb',
+                    border: '1px solid #e2e8f0',
                     borderRadius: '12px',
                     overflow: 'hidden'
                   }}>
                     <div style={{
-                      padding: '16px 20px',
-                      borderBottom: '1px solid #e5e7eb',
-                      backgroundColor: '#f9fafb',
+                      padding: '14px 20px',
+                      borderBottom: '1px solid #e2e8f0',
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center'
                     }}>
-                      <div>
-                        <h4 style={{ fontSize: '14px', fontWeight: 800, color: '#111827', margin: 0 }}>
-                          Zoekvragen (Prompts) – Nulmeting vs. Huidig
-                        </h4>
-                        <p style={{ fontSize: '12px', color: '#6b7280', margin: '2px 0 0 0' }}>
-                          Vergelijking van merkvermeldingen per zoekvraag tussen het startpunt en actueel.
-                        </p>
-                      </div>
-                      <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
-                        {(kw.prompts || []).length} zoekvragen
+                      <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0f172a' }}>
+                        Prompts vergelijking (0-meting vs. actueel)
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#64748b' }}>
+                        {(kw.prompts || []).length} prompts
                       </span>
                     </div>
 
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                         <thead>
-                          <tr style={{ backgroundColor: '#fafafa', borderBottom: '1px solid #e5e7eb', textAlign: 'left' }}>
-                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563' }}>Prompt / Zoekvraag</th>
-                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563', width: '170px' }}>Bij Nulmeting</th>
-                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563', width: '170px' }}>Huidige Status</th>
-                            <th style={{ padding: '10px 16px', fontWeight: 700, color: '#4b5563', width: '130px' }}>Voortgang</th>
+                          <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', textAlign: 'left', fontSize: '11.5px', color: '#64748b' }}>
+                            <th style={{ padding: '10px 18px', fontWeight: 600 }}>Prompt</th>
+                            <th style={{ padding: '10px 18px', fontWeight: 600, width: '160px' }}>0-meting</th>
+                            <th style={{ padding: '10px 18px', fontWeight: 600, width: '160px' }}>Actueel</th>
+                            <th style={{ padding: '10px 18px', fontWeight: 600, width: '130px' }}>Verloop</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -4320,62 +4104,32 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                             const baseMentioned = Boolean(pBase?.mentioned);
                             const currMentioned = Boolean(p.brand_mentioned || p.status === 'Cited' || p.mentioned);
 
-                            let statusBadge = (
-                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', backgroundColor: '#f3f4f6', padding: '2px 8px', borderRadius: '10px' }}>
-                                Gelijk
-                              </span>
-                            );
+                            let deltaText = 'Gelijk';
+                            let deltaColor = '#64748b';
                             if (!baseMentioned && currMentioned) {
-                              statusBadge = (
-                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#15803d', backgroundColor: '#dcfce7', padding: '2px 8px', borderRadius: '10px' }}>
-                                  ↑ Gewonnen
-                                </span>
-                              );
+                              deltaText = 'Nieuw vermeld';
+                              deltaColor = '#059669';
                             } else if (baseMentioned && !currMentioned) {
-                              statusBadge = (
-                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#b91c1c', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '10px' }}>
-                                  ↓ Aandacht
-                                </span>
-                              );
+                              deltaText = 'Niet meer vermeld';
+                              deltaColor = '#dc2626';
                             } else if (baseMentioned && currMentioned) {
-                              statusBadge = (
-                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#15803d', backgroundColor: '#f0fdf4', padding: '2px 8px', borderRadius: '10px' }}>
-                                  ✓ Behouden
-                                </span>
-                              );
+                              deltaText = 'Behouden';
+                              deltaColor = '#059669';
                             }
 
                             return (
-                              <tr key={pIdx} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                <td style={{ padding: '12px 16px', fontWeight: 600, color: '#111827' }}>
+                              <tr key={pIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                <td style={{ padding: '12px 18px', fontWeight: 500, color: '#0f172a' }}>
                                   {p.text}
                                 </td>
-                                <td style={{ padding: '12px 16px' }}>
-                                  <span style={{
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    padding: '2px 8px',
-                                    borderRadius: '10px',
-                                    backgroundColor: baseMentioned ? '#f3e8ff' : '#f3f4f6',
-                                    color: baseMentioned ? '#6b21a8' : '#6b7280'
-                                  }}>
-                                    {baseMentioned ? `Vermeld (${pBase?.position || '#1'})` : 'Niet vermeld'}
-                                  </span>
+                                <td style={{ padding: '12px 18px', color: baseMentioned ? '#334155' : '#94a3b8', fontSize: '12.5px' }}>
+                                  {baseMentioned ? `Vermeld (${pBase?.position || '#1'})` : 'Niet vermeld'}
                                 </td>
-                                <td style={{ padding: '12px 16px' }}>
-                                  <span style={{
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    padding: '2px 8px',
-                                    borderRadius: '10px',
-                                    backgroundColor: currMentioned ? '#dcfce7' : '#fee2e2',
-                                    color: currMentioned ? '#15803d' : '#991b1b'
-                                  }}>
-                                    {currMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : 'AI'})` : 'Niet vermeld'}
-                                  </span>
+                                <td style={{ padding: '12px 18px', color: currMentioned ? '#047857' : '#64748b', fontWeight: currMentioned ? 600 : 400, fontSize: '12.5px' }}>
+                                  {currMentioned ? `Vermeld (${p.position && p.position !== '-' ? p.position : 'AI'})` : 'Niet vermeld'}
                                 </td>
-                                <td style={{ padding: '12px 16px' }}>
-                                  {statusBadge}
+                                <td style={{ padding: '12px 18px', fontSize: '12px', fontWeight: 600, color: deltaColor }}>
+                                  {deltaText}
                                 </td>
                               </tr>
                             );
@@ -4649,13 +4403,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             <span
               title="Geen harde promptlimiet. Extra prompts buiten uw pakket brengen extra API-/scankosten met zich mee."
               style={{
-                fontSize: '11px',
-                fontWeight: 700,
+                fontSize: '11.5px',
+                fontWeight: 500,
                 padding: '3px 10px',
-                borderRadius: '12px',
-                backgroundColor: totalUsedPrompts > activeLimit ? '#fffbeb' : '#f3f4f6',
-                color: totalUsedPrompts > activeLimit ? '#92400e' : '#4b5563',
-                border: `1px solid ${totalUsedPrompts > activeLimit ? '#fde68a' : '#e5e7eb'}`,
+                borderRadius: '6px',
+                backgroundColor: '#f4f4f5',
+                color: '#3f3f46',
+                border: '1px solid #e4e4e7',
                 cursor: 'help'
               }}
             >
@@ -4663,12 +4417,13 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             </span>
             {isReadOnly && (
               <span style={{
-                fontSize: '11px',
-                fontWeight: 700,
+                fontSize: '11.5px',
+                fontWeight: 500,
                 padding: '3px 9px',
-                borderRadius: '12px',
-                backgroundColor: '#f3e8ff',
-                color: '#6b21a8'
+                borderRadius: '6px',
+                backgroundColor: '#f4f4f5',
+                color: '#52525b',
+                border: '1px solid #e4e4e7'
               }}>
                 Klantweergave
               </span>
@@ -4682,41 +4437,41 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={() => {
-              setReportKeywordId(null);
-              setReportModalOpen(true);
-            }}
-            style={{
-              backgroundColor: '#3E008A',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '20px',
-              padding: '8px 14px',
-              fontSize: '12px',
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-            title="Bekijk en download de SalesWizard PDF Rapportage voor al uw prompts en stijgingen"
-          >
-            <FileText size={13} />
-            Rapportage
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              disabled={resettingNulmeting || allPromptsList.length === 0}
+              onClick={() => handleStartNewNulmeting({ label: activeWorkspace || 'dit project' })}
+              title="Optioneel: wis de bestaande historie en start handmatig een nieuwe 0-meting"
+              style={{
+                backgroundColor: '#ffffff',
+                color: '#64748b',
+                border: '1px solid #e2e8f0',
+                borderRadius: '8px',
+                padding: '7px 11px',
+                fontSize: '12px',
+                fontWeight: 500,
+                cursor: (resettingNulmeting || allPromptsList.length === 0) ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px'
+              }}
+            >
+              <RefreshCw size={13} className={resettingNulmeting ? 'spin' : ''} />
+              0-meting
+            </button>
+          )}
           <button
             type="button"
             onClick={handleExportProjectCsv}
             style={{
               backgroundColor: '#ffffff',
-              color: '#374151',
-              border: '1px solid #d1d5db',
-              borderRadius: '20px',
-              padding: '8px 13px',
+              color: '#334155',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              padding: '7px 12px',
               fontSize: '12px',
-              fontWeight: 700,
+              fontWeight: 600,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
@@ -4724,57 +4479,80 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             }}
             title="Exporteer alle prompts, nulmeting en zoektermen naar CSV (Excel)"
           >
-            <Download size={13} />
+            <Download size={14} style={{ color: '#64748b' }} />
             CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setReportKeywordId(null);
+              setReportModalOpen(true);
+            }}
+            style={{
+              backgroundColor: '#ffffff',
+              color: '#334155',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              padding: '7px 13px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Bekijk en download de SalesWizard PDF Rapportage voor al uw prompts en stijgingen"
+          >
+            <FileText size={14} style={{ color: '#64748b' }} />
+            Rapportage
           </button>
           {!isReadOnly && (
             <>
               <button
                 type="button"
-                disabled={resettingNulmeting || allPromptsList.length === 0}
-                onClick={() => handleStartNewNulmeting({ label: activeWorkspace || 'dit project' })}
-                title="Start handmatig een nieuwe 0-meting voor alle prompts van dit project (handig na het wijzigen van prompts)"
+                disabled={rescrapingAllPrompts || activeCrawlingPrompts.length > 0 || allPromptsList.length === 0}
+                onClick={handleRescrapeAllPrompts}
+                title="Scrape direct alle actieve prompts opnieuw (behoudt de bestaande 0-meting en historie)"
                 style={{
-                  backgroundColor: '#faf5ff',
-                  color: '#440099',
-                  border: '1px solid #d8b4fe',
-                  borderRadius: '20px',
-                  padding: '8px 13px',
+                  backgroundColor: '#f8fafc',
+                  color: '#0f172a',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                  padding: '7px 13px',
                   fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: (resettingNulmeting || allPromptsList.length === 0) ? 'not-allowed' : 'pointer',
+                  fontWeight: 600,
+                  cursor: (rescrapingAllPrompts || activeCrawlingPrompts.length > 0 || allPromptsList.length === 0) ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <RotateCw size={14} className={(rescrapingAllPrompts || activeCrawlingPrompts.length > 0) ? 'spin' : ''} />
+                {(rescrapingAllPrompts || activeCrawlingPrompts.length > 0)
+                  ? 'Scrapen bezig...'
+                  : 'Alle prompts opnieuw scrapen'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAdding(!isAdding)}
+                style={{
+                  backgroundColor: '#440099',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 15px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '5px'
                 }}
+                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#5a1bb8'}
+                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#440099'}
               >
-                <RefreshCw size={13} className={resettingNulmeting ? 'spin' : ''} />
-                Nieuwe 0-meting
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAdding(!isAdding);
-                }}
-                style={{
-                  backgroundColor: '#000000',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: '20px',
-                  padding: '8px 15px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  transition: 'background-color 0.15s ease'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1f2937'}
-                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#000000'}
-              >
-                <Plus size={13} strokeWidth={3} />
-                Prompts Toevoegen
+                <Plus size={15} />
+                Prompts toevoegen
               </button>
             </>
           )}
@@ -4787,26 +4565,17 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           display: 'flex',
           flexDirection: 'column',
           gap: '16px',
-          padding: '24px',
-          border: '1px solid #e5e7eb',
-          borderRadius: '12px',
-          backgroundColor: '#f9fafb'
+          padding: '22px',
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
+          backgroundColor: '#f8fafc'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: '#111827', margin: 0 }}>
-              <Sparkles size={16} style={{ color: 'var(--brand-primary)' }} />
-              Prompts toevoegen (Zoektermen zijn optioneel)
+            <h3 style={{ fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: '#0f172a', margin: 0 }}>
+              Prompts toevoegen (zoektermen zijn optioneel)
             </h3>
-            <span style={{
-              fontSize: '11px',
-              fontWeight: 700,
-              padding: '3px 10px',
-              borderRadius: '12px',
-              backgroundColor: '#fffbeb',
-              color: '#92400e',
-              border: '1px solid #fde68a'
-            }}>
-              Geen limiet op aantal prompts · Extra prompts brengen extra kosten met zich mee
+            <span style={{ fontSize: '11.5px', color: '#64748b' }}>
+              Extra prompts boven uw pakketbundel zijn mogelijk tegen meerkosten
             </span>
           </div>
 
@@ -4816,15 +4585,15 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             flexDirection: 'column',
             gap: '8px',
             padding: '14px 16px',
-            borderRadius: '10px',
+            borderRadius: '8px',
             backgroundColor: '#ffffff',
-            border: '2px solid #e9d5ff'
+            border: '1px solid #e2e8f0'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-              <label style={{ fontSize: '13px', fontWeight: 800, color: '#111827' }}>
+              <label style={{ fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>
                 1. Prompts opgeven (1 prompt per regel)
               </label>
-              <span style={{ fontSize: '11px', fontWeight: 700, color: '#440099' }}>
+              <span style={{ fontSize: '11.5px', color: '#64748b' }}>
                 Prompts vormen de basis van de AI-meting
               </span>
             </div>
@@ -4844,7 +4613,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             />
             {activeKeywords.length > 0 && !keywordInput.trim() && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginTop: '4px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>
+                <label style={{ fontSize: '12px', fontWeight: 500, color: '#475569' }}>
                   Optioneel koppelen aan bestaande zoekterm:
                 </label>
                 <select
@@ -4856,11 +4625,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     border: '1px solid #d1d5db',
                     fontSize: '12px',
                     backgroundColor: '#ffffff',
-                    color: '#111827',
-                    fontWeight: 600
+                    color: '#0f172a',
+                    fontWeight: 500
                   }}
                 >
-                  <option value="">— Niet koppelen (Opslaan als losse prompts) —</option>
+                  <option value="">— Niet koppelen (losse prompts) —</option>
                   {activeKeywords.map(k => (
                     <option key={k.id} value={k.id}>{k.text}</option>
                   ))}
@@ -4877,39 +4646,39 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             padding: '12px 14px',
             borderRadius: '8px',
             backgroundColor: '#ffffff',
-            border: '1px solid #e5e7eb'
+            border: '1px solid #e2e8f0'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563' }}>
-                2. Optioneel: Nieuwe zoektermen toevoegen (komma-gescheiden, niet verplicht)
+              <label style={{ fontSize: '12.5px', fontWeight: 600, color: '#334155' }}>
+                2. Optioneel: nieuwe zoektermen toevoegen (komma-gescheiden)
               </label>
               <button
                 type="button"
                 onClick={handleRecommendKeywords}
                 disabled={recommending}
                 style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#440099',
-                  backgroundColor: '#f3e8ff',
-                  border: '1px solid #d8b4fe',
-                  borderRadius: '16px',
-                  padding: '3px 10px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
                   cursor: recommending ? 'not-allowed' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px'
+                  gap: '5px'
                 }}
               >
                 {recommending ? (
                   <>
-                    <Loader2 size={11} className="spin" />
-                    Zoektermen aanbevelen...
+                    <Loader2 size={12} className="spin" />
+                    Aanbevelen...
                   </>
                 ) : (
                   <>
-                    <Sparkles size={11} />
-                    Recommend zoektermen
+                    <Sparkles size={12} style={{ color: '#64748b' }} />
+                    Suggesties ophalen
                   </>
                 )}
               </button>
@@ -4935,22 +4704,12 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                     type="checkbox"
                     checked={generateAiPromptsOnAdd}
                     onChange={(e) => setGenerateAiPromptsOnAdd(e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#440099', cursor: 'pointer' }}
+                    style={{ width: '15px', height: '15px', accentColor: '#18181b', cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#111827' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#0f172a' }}>
                     Automatisch 3 AI prompts per nieuwe zoekterm genereren
                   </span>
                 </div>
-                <span style={{
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  padding: '2px 8px',
-                  borderRadius: '10px',
-                  backgroundColor: generateAiPromptsOnAdd ? '#440099' : '#e2e8f0',
-                  color: generateAiPromptsOnAdd ? '#ffffff' : '#475569'
-                }}>
-                  {generateAiPromptsOnAdd ? 'AAN' : 'UIT'}
-                </span>
               </label>
             )}
           </div>
@@ -4969,25 +4728,21 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                 justifyContent: 'space-between',
                 padding: '10px 14px',
                 borderRadius: '8px',
-                backgroundColor: extraBeyondPlan > 0 ? '#fffbeb' : '#f0fdf4',
-                border: `1px solid ${extraBeyondPlan > 0 ? '#fde68a' : '#bbf7d0'}`,
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
                 fontSize: '12px',
-                color: extraBeyondPlan > 0 ? '#92400e' : '#166534',
-                fontWeight: 600,
+                color: '#475569',
                 flexWrap: 'wrap',
                 gap: '8px'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {extraBeyondPlan > 0 ? <AlertTriangle size={14} color="#d97706" /> : <Sparkles size={14} color="#16a34a" />}
-                  <span>
-                    Toe te voegen: <strong>{countPrompts} prompt(s)</strong>
-                    {enteredKws.length > 0 ? ` en ${enteredKws.length} zoekterm(en)` : ' (zonder nieuwe zoekterm)'}
-                  </span>
-                </div>
+                <span>
+                  Toe te voegen: <strong style={{ color: '#0f172a' }}>{countPrompts} prompt(s)</strong>
+                  {enteredKws.length > 0 ? ` en ${enteredKws.length} zoekterm(en)` : ''}
+                </span>
                 <span>
                   {extraBeyondPlan > 0
-                    ? `Let op: na toevoegen heeft u ${newTotal} prompts (${extraBeyondPlan} extra boven pakketbundel van ${activeLimit} — brengt extra kosten met zich mee).`
-                    : `Totaal na toevoegen: ${newTotal} prompts (${activeLimit} inbegrepen in pakket).`}
+                    ? `Na toevoegen: ${newTotal} prompts (${extraBeyondPlan} extra boven bundel van ${activeLimit}).`
+                    : `Totaal na toevoegen: ${newTotal} / ${activeLimit} prompts.`}
                 </span>
               </div>
             );
@@ -5036,20 +4791,20 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        borderBottom: '1px solid #e5e7eb',
+        borderBottom: '1px solid #e2e8f0',
         gap: '12px',
         flexWrap: 'wrap'
       }}>
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '6px' }}>
           <button
             type="button"
             onClick={() => setMainViewTab('all_prompts')}
             style={{
-              padding: '12px 20px',
-              fontSize: '14px',
-              fontWeight: mainViewTab === 'all_prompts' ? 800 : 600,
-              color: mainViewTab === 'all_prompts' ? '#440099' : '#6b7280',
-              borderBottom: mainViewTab === 'all_prompts' ? '3px solid #440099' : '3px solid transparent',
+              padding: '11px 16px',
+              fontSize: '13.5px',
+              fontWeight: mainViewTab === 'all_prompts' ? 700 : 500,
+              color: mainViewTab === 'all_prompts' ? '#0f172a' : '#64748b',
+              borderBottom: mainViewTab === 'all_prompts' ? '2px solid #440099' : '2px solid transparent',
               backgroundColor: 'transparent',
               borderTop: 'none',
               borderLeft: 'none',
@@ -5060,14 +4815,14 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               gap: '8px'
             }}
           >
-            <span>Alle Prompts</span>
+            <span>Alle prompts</span>
             <span style={{
               fontSize: '11px',
-              fontWeight: 800,
-              padding: '2px 8px',
-              borderRadius: '12px',
-              backgroundColor: mainViewTab === 'all_prompts' ? '#f3e8ff' : '#f3f4f6',
-              color: mainViewTab === 'all_prompts' ? '#440099' : '#4b5563'
+              fontWeight: 600,
+              padding: '1px 7px',
+              borderRadius: '999px',
+              backgroundColor: mainViewTab === 'all_prompts' ? '#f1f5f9' : '#f8fafc',
+              color: mainViewTab === 'all_prompts' ? '#0f172a' : '#64748b'
             }}>
               {allPromptsList.length}
             </span>
@@ -5076,11 +4831,11 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
             type="button"
             onClick={() => setMainViewTab('keywords')}
             style={{
-              padding: '12px 20px',
-              fontSize: '14px',
-              fontWeight: mainViewTab === 'keywords' ? 800 : 600,
-              color: mainViewTab === 'keywords' ? '#440099' : '#6b7280',
-              borderBottom: mainViewTab === 'keywords' ? '3px solid #440099' : '3px solid transparent',
+              padding: '11px 16px',
+              fontSize: '13.5px',
+              fontWeight: mainViewTab === 'keywords' ? 700 : 500,
+              color: mainViewTab === 'keywords' ? '#0f172a' : '#64748b',
+              borderBottom: mainViewTab === 'keywords' ? '2px solid #440099' : '2px solid transparent',
               backgroundColor: 'transparent',
               borderTop: 'none',
               borderLeft: 'none',
@@ -5091,30 +4846,24 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               gap: '8px'
             }}
           >
-            <span>Zoektermen & Concurrenten</span>
+            <span>Zoektermen &amp; concurrenten</span>
             <span style={{
               fontSize: '11px',
-              fontWeight: 800,
-              padding: '2px 8px',
-              borderRadius: '12px',
-              backgroundColor: mainViewTab === 'keywords' ? '#f3e8ff' : '#f3f4f6',
-              color: mainViewTab === 'keywords' ? '#440099' : '#4b5563'
+              fontWeight: 600,
+              padding: '1px 7px',
+              borderRadius: '999px',
+              backgroundColor: mainViewTab === 'keywords' ? '#f1f5f9' : '#f8fafc',
+              color: mainViewTab === 'keywords' ? '#0f172a' : '#64748b'
             }}>
               {activeKeywords.length}
             </span>
           </button>
         </div>
-
-        <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 500, paddingBottom: '8px' }}>
-          {mainViewTab === 'all_prompts'
-            ? 'Klik op een prompt om de nulmeting, historie en volledige AI-antwoorden te bekijken of direct te bewerken.'
-            : 'Beheer gekoppelde zoektermen, bekijk concurrentierankings of verwijder zoektermen definitief.'}
-        </span>
       </div>
 
       {/* Filter box */}
       <div style={{ position: 'relative', width: '100%' }}>
-        <Search size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+        <Search size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
         <input
           type="text"
           placeholder={mainViewTab === 'all_prompts' ? 'Filter door alle prompts of zoektermen...' : 'Filter zoektermen...'}
@@ -5122,46 +4871,43 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
           onChange={(e) => setSearchQuery(e.target.value)}
           style={{
             width: '100%',
-            padding: '10px 16px 10px 42px',
-            borderRadius: '24px',
-            border: '1px solid #e5e7eb',
-            fontSize: '14px',
+            padding: '9px 14px 9px 40px',
+            borderRadius: '8px',
+            border: '1px solid #e2e8f0',
+            fontSize: '13.5px',
             backgroundColor: '#ffffff',
-            color: '#1f2937',
-            outline: 'none',
-            transition: 'border-color 0.15s ease'
+            color: '#0f172a',
+            outline: 'none'
           }}
-          onFocus={(e) => e.currentTarget.style.borderColor = 'var(--brand-primary)'}
-          onBlur={(e) => e.currentTarget.style.borderColor = '#e5e7eb'}
         />
       </div>
 
       {/* VIEW 1: ALLE PROMPTS (TOTAALOVERZICHT) */}
       {mainViewTab === 'all_prompts' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {/* Quick Summary Strip */}
+          {/* Calm Uniform Summary Strip */}
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
             gap: '12px'
           }}>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Totaal Prompts</div>
-              <div style={{ fontSize: '22px', fontWeight: 800, color: '#111827', marginTop: '2px' }}>{allPromptsList.length}</div>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <div style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Totaal prompts</div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#0f172a', marginTop: '3px' }}>{allPromptsList.length}</div>
             </div>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #dcfce7', backgroundColor: '#f0fdf4' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#15803d', textTransform: 'uppercase' }}>Vermeld in AI</div>
-              <div style={{ fontSize: '22px', fontWeight: 800, color: '#166534', marginTop: '2px' }}>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <div style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Vermeld in AI</div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#047857', marginTop: '3px' }}>
                 {allPromptsList.filter(p => p.status === 'Cited' || p.mentioned).length}
               </div>
             </div>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Losse Prompts (Zonder zoekterm)</div>
-              <div style={{ fontSize: '22px', fontWeight: 800, color: '#111827', marginTop: '2px' }}>{standalonePrompts.length}</div>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <div style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Losse prompts</div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#0f172a', marginTop: '3px' }}>{standalonePrompts.length}</div>
             </div>
-            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e5e7eb', backgroundColor: '#fafafa' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>Actieve Zoektermen</div>
-              <div style={{ fontSize: '22px', fontWeight: 800, color: '#111827', marginTop: '2px' }}>{activeKeywords.length}</div>
+            <div style={{ padding: '14px 18px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff' }}>
+              <div style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Actieve zoektermen</div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#0f172a', marginTop: '3px' }}>{activeKeywords.length}</div>
             </div>
           </div>
 
@@ -5195,78 +4941,76 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              backgroundColor: '#eff6ff',
-              border: '1px solid #bfdbfe',
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
               borderRadius: '8px',
               padding: '10px 16px',
               marginTop: '12px',
               width: '100%'
             }}>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>
-                {selectedKeywordIds.length} keywords geselecteerd
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#334155' }}>
+                {selectedKeywordIds.length} zoektermen geselecteerd
               </span>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <button
                   type="button"
                   onClick={handleBulkRescrapeKeywords}
-                  title="Alleen handmatig scannen bij status 'Mislukt'. Reguliere scans draaien dagelijks automatisch."
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: '1px solid #93c5fd',
-                    backgroundColor: '#2563eb',
-                    color: 'white',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: '#ffffff',
+                    color: '#0f172a',
                     fontSize: '12px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '5px',
                     cursor: 'pointer'
                   }}
                 >
-                  <RotateCw size={12} />
-                  Opnieuw Scrapen
+                  <RotateCw size={13} />
+                  Opnieuw scrapen
                 </button>
                 <button
                   type="button"
                   onClick={handleBulkArchiveKeywords}
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: 'none',
-                    backgroundColor: '#f59e0b',
-                    color: 'white',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #e2e8f0',
+                    backgroundColor: '#ffffff',
+                    color: '#475569',
                     fontSize: '12px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '5px',
                     cursor: 'pointer'
                   }}
                 >
-                  <Archive size={12} />
-                  Archiveer Geselecteerde
+                  <Archive size={13} />
+                  Archiveren
                 </button>
                 <button
                   type="button"
                   onClick={handleBulkDeleteKeywords}
-                  title="Verwijder geselecteerde keywords en bijbehorende prompts definitief en geef de promptlimiet vrij"
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    border: 'none',
-                    backgroundColor: '#ef4444',
-                    color: 'white',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #fecaca',
+                    backgroundColor: '#fef2f2',
+                    color: '#dc2626',
                     fontSize: '12px',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '5px',
                     cursor: 'pointer'
                   }}
                 >
-                  <Trash2 size={12} />
-                  Verwijder & Reset Limiet
+                  <Trash2 size={13} />
+                  Verwijderen
                 </button>
               </div>
             </div>
@@ -5329,7 +5073,7 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                       )}
                       <td style={{ padding: '16px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: 600, color: '#111827', fontSize: '14px' }}>{kw.text}</span>
+                          <span style={{ fontWeight: 600, color: '#0f172a', fontSize: '14px' }}>{kw.text}</span>
                           {isKwScanning && (
                             <span style={{
                               fontSize: '11px',
@@ -5337,24 +5081,21 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                               borderRadius: '12px',
                               backgroundColor: '#eff6ff',
                               color: '#2563eb',
-                              fontWeight: 700,
+                              fontWeight: 600,
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: '4px',
                               border: '1px solid #bfdbfe'
                             }}>
-                              <Loader2 size={10} className="spin" /> AI Crawl
+                              <Loader2 size={10} className="spin" /> Scannen
                             </span>
                           )}
-                          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f3f4f6', color: '#6b7280', fontWeight: 700 }}>
-                            🇳🇱 NL
-                          </span>
                         </div>
                       </td>
 
-                      <td style={{ padding: '16px', fontWeight: 700, color: kw.rank !== '-' ? '#111827' : '#9ca3af' }}>
+                      <td style={{ padding: '16px', fontWeight: 600, color: kw.rank !== '-' ? '#0f172a' : '#94a3b8' }}>
                         {isKwScanning ? (
-                          <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
+                          <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 500 }}>
                             <Loader2 size={12} className="spin" /> Scannen...
                           </span>
                         ) : (
@@ -5364,17 +5105,17 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
 
                       <td style={{ padding: '16px' }}>
                         {isKwScanning ? (
-                          <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 600 }}>
+                          <span style={{ color: '#2563eb', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 500 }}>
                             <Loader2 size={12} className="spin" /> Analyseren...
                           </span>
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '13px', fontWeight: 700, minWidth: '32px', color: '#111827' }}>{kw.sov}%</span>
-                            <div style={{ width: '80px', height: '4px', borderRadius: '2px', backgroundColor: '#e5e7eb', overflow: 'hidden' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 600, minWidth: '32px', color: '#0f172a' }}>{kw.sov}%</span>
+                            <div style={{ width: '72px', height: '4px', borderRadius: '2px', backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
                               <div style={{
                                 width: `${kw.sov}%`,
                                 height: '100%',
-                                backgroundColor: '#f59e0b',
+                                backgroundColor: '#475569',
                                 borderRadius: '2px'
                               }}></div>
                             </div>
@@ -5456,23 +5197,19 @@ export default function Keywords({ currentUser, activeWorkspace, activeClient, e
                               onClick={(e) => { e.stopPropagation(); handleDeleteKeyword(kw); }}
                               title="Zoekterm & gekoppelde prompts definitief verwijderen"
                               style={{
-                                padding: '5px 10px',
-                                borderRadius: '6px',
-                                border: '1px solid #fecaca',
-                                backgroundColor: '#fef2f2',
+                                padding: '6px',
+                                borderRadius: '4px',
+                                border: 'none',
+                                background: 'none',
                                 cursor: 'pointer',
-                                color: '#dc2626',
-                                fontSize: '11px',
-                                fontWeight: 700,
+                                color: '#94a3b8',
                                 display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px'
+                                alignItems: 'center'
                               }}
-                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fef2f2'; }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = '#dc2626'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
                             >
-                              <Trash2 size={13} />
-                              Verwijderen
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         )}

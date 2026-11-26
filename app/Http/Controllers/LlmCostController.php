@@ -10,7 +10,7 @@ use Illuminate\Http\Request;
 class LlmCostController extends Controller
 {
     /**
-     * Authorize that only administrators / medewerkers can view or manage LLM costs.
+     * Authorize that only administrators / medewerkers can view or manage DataForSEO costs.
      */
     protected function authorizeMedewerker(Request $request): ?JsonResponse
     {
@@ -31,7 +31,7 @@ class LlmCostController extends Controller
         if ($role === 'klant' || ($user && $user->role === 'klant')) {
             return response()->json([
                 'success' => false,
-                'error' => 'Geen toegang. LLM- en inkoopkosten zijn uitsluitend inzichtelijk voor medewerkers en beheerders.'
+                'error' => 'Geen toegang. DataForSEO inkoopkosten zijn uitsluitend inzichtelijk voor medewerkers en beheerders.',
             ], 403);
         }
 
@@ -39,7 +39,7 @@ class LlmCostController extends Controller
     }
 
     /**
-     * Get generic LLM usage and total tool cost analytics (global tool overview).
+     * Get DataForSEO usage, live balance, per-channel breakdown and per-project spend.
      */
     public function index(Request $request): JsonResponse
     {
@@ -50,6 +50,7 @@ class LlmCostController extends Controller
         $projectId = $request->query('project_id');
         $company = $request->query('company');
         $period = $request->query('period', 'all');
+        $refreshBalance = $request->boolean('refresh', false);
 
         if (!$projectId && $company) {
             $decoded = trim(urldecode($company));
@@ -67,14 +68,15 @@ class LlmCostController extends Controller
 
         $analytics = LlmCostService::getSummary(
             $projectId ? (int) $projectId : null,
-            $period
+            $period,
+            $refreshBalance
         );
 
         return response()->json(array_merge(['success' => true], $analytics));
     }
 
     /**
-     * Store a manual invoice or payment (e.g. Google AI Studio / Google Cloud).
+     * Store a manual DataForSEO invoice or balance top-up record.
      */
     public function storeInvoice(Request $request): JsonResponse
     {
@@ -83,7 +85,6 @@ class LlmCostController extends Controller
         }
 
         $validated = $request->validate([
-            'engine' => 'required|string',
             'amount_eur' => 'required|numeric|min:0.01',
             'description' => 'required|string|max:255',
             'invoice_ref' => 'nullable|string|max:100',
@@ -92,7 +93,7 @@ class LlmCostController extends Controller
         ]);
 
         $log = LlmCostService::recordManualInvoice(
-            $validated['engine'],
+            'dataforseo',
             (float) $validated['amount_eur'],
             $validated['description'],
             $validated['invoice_ref'] ?? null,
@@ -102,25 +103,28 @@ class LlmCostController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Factuur / betaling succesvol toegevoegd en verwerkt.',
+            'message' => 'DataForSEO factuur / opwaardering succesvol geregistreerd.',
             'log' => $log,
         ]);
     }
 
     /**
-     * Force synchronize Google AI Studio statement charges (€250,00).
+     * Purge legacy non-DataForSEO logs (old Google AI Studio / direct LLM test logs) from database.
      */
-    public function syncAiStudio(Request $request): JsonResponse
+    public function cleanupLegacy(Request $request): JsonResponse
     {
         if ($deny = $this->authorizeMedewerker($request)) {
             return $deny;
         }
 
-        LlmCostService::syncGoogleAiStudioBilling(true);
+        $deleted = LlmCostService::purgeLegacyNonDataForSeoLogs();
 
         return response()->json([
             'success' => true,
-            'message' => 'Google AI Studio Mastercard afschrijvingen (€ 250,00) succesvol gesynchroniseerd.',
+            'deletedCount' => $deleted,
+            'message' => $deleted > 0
+                ? "{$deleted} oude niet-DataForSEO logregel(s) zijn definitief opgeruimd."
+                : 'Database bevat alleen nog schone DataForSEO logs.',
         ]);
     }
 }

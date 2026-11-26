@@ -909,7 +909,7 @@ class CompetitorScraperService
             $costUsd = (float) ($task['cost'] ?? $json['cost'] ?? 0.0);
             if ($costUsd > 0) {
                 LlmCostService::recordUsage(
-                    'gemini',
+                    'dataforseo_serp',
                     'dataforseo-google-serp-competitors',
                     'competitor_serp_scan',
                     0,

@@ -1,46 +1,44 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Coins, Receipt, Cpu, Activity, TrendingUp, RefreshCw,
-  Download, Search, CheckCircle2, Layers, Plus, X, CreditCard, ShieldCheck
+  RefreshCw, Download, Search, CheckCircle2, Plus, X,
+  ShieldCheck, Wallet, AlertTriangle, Layers, Building2
 } from 'lucide-react';
 
-export default function LlmCosts({ currentUser, enabledEngines }) {
+export default function LlmCosts({ currentUser }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [period, setPeriod] = useState('all');
-  const [selectedEngineFilter, setSelectedEngineFilter] = useState('all');
+  const [selectedChannel, setSelectedChannel] = useState('all');
   const [searchLogQuery, setSearchLogQuery] = useState('');
 
-  // Modal state for manual invoice / payment entry
+  // Modal state for optional DataForSEO top-up / invoice note
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
-  const [syncingStudio, setSyncingStudio] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({
-    engine: 'gemini',
-    amount_eur: '25.00',
-    description: 'Automatische betaling Google AI Studio (Mastercard ••••3171)',
+    amount_eur: '50.00',
+    description: 'DataForSEO tegoed opwaardering',
     invoice_ref: '',
     date: new Date().toISOString().slice(0, 10),
   });
 
-  const formatEur = (val) => {
+  const formatEur = (val, decimals = 2) => {
     const num = typeof val === 'number' ? val : parseFloat(val || 0);
-    return '€ ' + num.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '€ ' + num.toLocaleString('nl-NL', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   };
 
-  const formatUsd = (val) => {
+  const formatUsd = (val, decimals = 2) => {
     const num = typeof val === 'number' ? val : parseFloat(val || 0);
-    return '$ ' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '$ ' + num.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
   };
 
-  // Always fetch generic tool-wide costs
-  const fetchCostData = async (selectedPeriod = period) => {
+  const fetchCostData = async (selectedPeriod = period, forceRefresh = false) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (selectedPeriod) params.append('period', selectedPeriod);
+      if (forceRefresh) params.append('refresh', '1');
       if (currentUser?.role) params.append('role', currentUser.role);
-      if (currentUser?.id) params.append('userId', currentUser.id);
+      if (currentUser?.id) params.append('userId', String(currentUser.id));
 
       const res = await fetch(`/api/llm-costs?${params.toString()}`);
       const json = await res.json();
@@ -48,7 +46,7 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
         setData(json);
       }
     } catch (err) {
-      console.error('Fout bij ophalen LLM kosten:', err);
+      console.error('Fout bij ophalen DataForSEO kosten:', err);
     } finally {
       setLoading(false);
     }
@@ -58,27 +56,6 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
     fetchCostData(period);
   }, [period]);
 
-  const handleSyncAiStudio = async () => {
-    setSyncingStudio(true);
-    try {
-      const res = await fetch('/api/llm-costs/sync-ai-studio', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        }
-      });
-      const json = await res.json();
-      if (json.success) {
-        await fetchCostData(period);
-      }
-    } catch (err) {
-      console.error('Fout bij synchroniseren Google AI Studio:', err);
-    } finally {
-      setSyncingStudio(false);
-    }
-  };
-
   const handleStoreInvoice = async (e) => {
     e.preventDefault();
     if (!invoiceForm.amount_eur || parseFloat(invoiceForm.amount_eur) <= 0) return;
@@ -87,32 +64,29 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
     try {
       const res = await fetch('/api/llm-costs/invoice', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
-          engine: invoiceForm.engine,
           amount_eur: parseFloat(invoiceForm.amount_eur),
           description: invoiceForm.description,
           invoice_ref: invoiceForm.invoice_ref || null,
           date: invoiceForm.date || null,
+          userId: currentUser?.id,
+          role: currentUser?.role
         })
       });
       const json = await res.json();
       if (json.success) {
         setShowInvoiceModal(false);
         setInvoiceForm({
-          engine: 'gemini',
-          amount_eur: '25.00',
-          description: 'Automatische betaling Google AI Studio (Mastercard ••••3171)',
+          amount_eur: '50.00',
+          description: 'DataForSEO tegoed opwaardering',
           invoice_ref: '',
           date: new Date().toISOString().slice(0, 10),
         });
-        await fetchCostData(period);
+        await fetchCostData(period, true);
       }
     } catch (err) {
-      console.error('Fout bij toevoegen factuur:', err);
+      console.error('Fout bij toevoegen DataForSEO factuur:', err);
     } finally {
       setInvoiceSubmitting(false);
     }
@@ -121,21 +95,16 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
   const handleExportCsv = () => {
     if (!data?.recentLogs || data.recentLogs.length === 0) return;
 
-    const headers = ['ID', 'Tijdstip', 'Engine', 'Model', 'Bron / Project', 'Operatie', 'Factuur Referentie', 'Input Tokens', 'Output Tokens', 'Totaal Tokens', 'Kosten EUR', 'Kosten USD', 'Latency', 'Status'];
+    const headers = ['ID', 'Tijdstip', 'DataForSEO Kanaal', 'Endpoint', 'Project', 'Latency', 'Kosten EUR', 'Kosten USD', 'Status'];
     const rows = data.recentLogs.map(l => [
       l.id,
       `"${l.timestamp || ''}"`,
       `"${l.engineLabel || l.engine}"`,
-      `"${l.model}"`,
-      `"${l.projectName || 'Generiek / Tool'}"`,
-      `"${l.operation}"`,
-      `"${l.invoiceRef || ''}"`,
-      l.inputTokens,
-      l.outputTokens,
-      l.totalTokens,
-      Number(l.costEur).toFixed(2),
-      Number(l.costUsd).toFixed(2),
-      `"${l.latency}"`,
+      `"${l.endpoint || l.operation}"`,
+      `"${l.projectName || 'Algemeen'}"`,
+      `"${l.latency || ''}"`,
+      Number(l.costEur).toFixed(4),
+      Number(l.costUsd).toFixed(4),
       `"${l.status}"`
     ]);
 
@@ -143,43 +112,16 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `llm_kosten_generiek_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `dataforseo_kosten_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Restrict access for client accounts
   if (currentUser?.role === 'klant') {
     return (
-      <div style={{
-        padding: '60px 24px',
-        textAlign: 'center',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '60vh',
-        gap: '12px'
-      }}>
-        <div style={{
-          width: '48px',
-          height: '48px',
-          borderRadius: '50%',
-          backgroundColor: '#fee2e2',
-          color: '#dc2626',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}>
-          <X size={24} />
-        </div>
-        <h3 style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
-          Geen toegang
-        </h3>
-        <p style={{ fontSize: '13px', color: 'var(--text-secondary, #475569)', maxWidth: '420px', lineHeight: 1.5 }}>
-          Inkoop- en LLM-kosten zijn vertrouwelijk en uitsluitend inzichtelijk voor medewerkers en beheerders.
-        </p>
+      <div style={{ padding: '60px 24px', textAlign: 'center', color: '#475569' }}>
+        Geen toegang. DataForSEO inkoopkosten zijn uitsluitend inzichtelijk voor medewerkers en beheerders.
       </div>
     );
   }
@@ -187,78 +129,74 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
   const summary = data?.summary || {
     totalCostEur: 0,
     totalCostUsd: 0,
-    totalTokens: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
+    topupCostEur: 0,
     totalRequests: 0,
     successfulRequests: 0,
+    failedRequests: 0,
     avgCostPerRequestEur: 0,
+    estimatedCostPerPromptEur: 0,
+    dataforseo: null,
   };
 
+  const dfsAccount = summary.dataforseo || {};
   const byEngine = data?.byEngine || [];
+  const byProject = data?.byProject || [];
   const recentLogs = data?.recentLogs || [];
 
   const filteredLogs = recentLogs.filter(log => {
-    const matchesEngine = selectedEngineFilter === 'all' ||
-      log.engine === selectedEngineFilter ||
-      (selectedEngineFilter === 'gemini' && (log.engine === 'gemini' || log.engineLabel === 'Google AI Studio'));
+    const matchesChannel = selectedChannel === 'all' ||
+      log.channel === selectedChannel ||
+      (selectedChannel === 'google_aio' && (log.channel === 'aimode' || log.channel === 'aioverviews'));
 
-    const matchesSearch = !searchLogQuery ||
-      log.engine.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
-      (log.engineLabel && log.engineLabel.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
-      log.model.toLowerCase().includes(searchLogQuery.toLowerCase()) ||
-      (log.projectName && log.projectName.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
-      (log.invoiceRef && log.invoiceRef.toLowerCase().includes(searchLogQuery.toLowerCase())) ||
-      log.operation.toLowerCase().includes(searchLogQuery.toLowerCase());
-    return matchesEngine && matchesSearch;
+    const q = searchLogQuery.trim().toLowerCase();
+    const matchesSearch = !q ||
+      (log.engineLabel || '').toLowerCase().includes(q) ||
+      (log.endpoint || '').toLowerCase().includes(q) ||
+      (log.projectName || '').toLowerCase().includes(q) ||
+      (log.operation || '').toLowerCase().includes(q) ||
+      (log.invoiceRef || '').toLowerCase().includes(q);
+
+    return matchesChannel && matchesSearch;
   });
 
   return (
     <div className="fade-in" style={{ padding: '32px 40px', display: 'flex', flexDirection: 'column', gap: '24px', backgroundColor: '#ffffff', minHeight: '100%' }}>
 
       {/* Top Header */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        flexWrap: 'wrap',
-        gap: '16px'
-      }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h2 style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)', margin: 0 }}>
-              LLM Kosten & Verbruik
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: '24px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#0f172a', margin: 0 }}>
+              DataForSEO Kosten & Verbruik
             </h2>
             <span style={{
               fontSize: '11px',
-              fontWeight: 700,
-              padding: '3px 8px',
-              borderRadius: '12px',
-              backgroundColor: '#fee2e2',
-              color: '#b91c1c',
-              border: '1px solid #fecaca',
+              fontWeight: 600,
+              padding: '3px 9px',
+              borderRadius: '6px',
+              backgroundColor: '#f1f5f9',
+              color: '#475569',
+              border: '1px solid #e2e8f0',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '4px'
             }}>
-              🔒 Generiek Tool Overzicht
+              <ShieldCheck size={13} /> Intern overzicht
             </span>
           </div>
-          <p style={{ color: 'var(--text-secondary, #475569)', fontSize: '13px', marginTop: '4px', margin: 0 }}>
-            Centraal overzicht van alle API-kosten, tokenverbruik en facturen voor het draaien van de GEO Wizard.
+          <p style={{ color: '#475569', fontSize: '13px', margin: '4px 0 0 0' }}>
+            Overzicht van het actuele DataForSEO tegoed en exacte kosten per AI-kanaal (ChatGPT, Gemini, AI Mode, AI Overviews, Perplexity, Claude & Google.nl SERP) en per klantproject.
           </p>
         </div>
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-
-          {/* Period selector */}
           <div style={{
             display: 'flex',
-            backgroundColor: 'var(--bg-app, #f8fafc)',
+            backgroundColor: '#f8fafc',
             padding: '2px',
             borderRadius: '8px',
-            border: '1px solid var(--border-medium, #e2e8f0)'
+            border: '1px solid #e2e8f0'
           }}>
             {[
               { id: 'all', label: 'Alles' },
@@ -268,18 +206,18 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
             ].map(item => (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => setPeriod(item.id)}
                 style={{
                   padding: '6px 12px',
                   borderRadius: '6px',
                   fontSize: '12px',
-                  fontWeight: period === item.id ? 700 : 500,
+                  fontWeight: period === item.id ? 600 : 500,
                   backgroundColor: period === item.id ? '#ffffff' : 'transparent',
-                  color: period === item.id ? 'var(--brand-primary, #440099)' : 'var(--text-secondary, #475569)',
+                  color: period === item.id ? '#0f172a' : '#64748b',
                   border: 'none',
                   cursor: 'pointer',
-                  boxShadow: period === item.id ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
-                  transition: 'all 0.15s ease'
+                  boxShadow: period === item.id ? '0 1px 2px rgba(0,0,0,0.05)' : 'none'
                 }}
               >
                 {item.label}
@@ -288,448 +226,364 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
           </div>
 
           <button
-            onClick={handleSyncAiStudio}
-            disabled={syncingStudio}
+            type="button"
+            onClick={() => setShowInvoiceModal(true)}
             style={{
-              padding: '7px 14px',
+              padding: '7px 13px',
               borderRadius: '8px',
               backgroundColor: '#ffffff',
-              border: '1px solid var(--border-medium, #e2e8f0)',
-              color: 'var(--text-primary, #0f172a)',
+              border: '1px solid #e2e8f0',
+              color: '#334155',
               fontSize: '12px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
-              cursor: syncingStudio ? 'wait' : 'pointer'
-            }}
-          >
-            <RefreshCw size={13} className={syncingStudio ? 'animate-spin' : ''} />
-            {syncingStudio ? 'Syncing...' : 'AI Studio Sync'}
-          </button>
-
-          <button
-            onClick={() => setShowInvoiceModal(true)}
-            style={{
-              padding: '7px 14px',
-              borderRadius: '8px',
-              backgroundColor: '#ffffff',
-              border: '1px solid var(--brand-light-border, #e8d9ff)',
-              color: 'var(--brand-primary, #440099)',
-              fontSize: '12px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
+              gap: '5px',
               cursor: 'pointer'
             }}
           >
-            <Plus size={13} />
-            Factuur
+            <Plus size={14} />
+            Opwaardering noteren
           </button>
 
           <button
+            type="button"
             onClick={handleExportCsv}
             disabled={recentLogs.length === 0}
             style={{
-              padding: '7px 14px',
+              padding: '7px 13px',
               borderRadius: '8px',
               backgroundColor: '#ffffff',
-              border: '1px solid var(--border-medium, #e2e8f0)',
-              color: 'var(--text-primary, #0f172a)',
+              border: '1px solid #e2e8f0',
+              color: '#334155',
               fontSize: '12px',
               fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
-              gap: '6px',
+              gap: '5px',
               cursor: recentLogs.length === 0 ? 'not-allowed' : 'pointer'
             }}
           >
-            <Download size={13} />
+            <Download size={14} />
             CSV
           </button>
 
           <button
-            onClick={() => fetchCostData(period)}
+            type="button"
+            onClick={() => fetchCostData(period, true)}
             disabled={loading}
             style={{
               padding: '7px 14px',
               borderRadius: '8px',
-              backgroundColor: 'var(--brand-primary, #440099)',
+              backgroundColor: '#440099',
               border: 'none',
-              color: 'white',
+              color: '#ffffff',
               fontSize: '12px',
-              fontWeight: 700,
+              fontWeight: 600,
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               cursor: loading ? 'wait' : 'pointer'
             }}
           >
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={14} className={loading ? 'spin' : ''} />
             {loading ? 'Laden...' : 'Verversen'}
           </button>
         </div>
       </div>
 
-      {/* Generic Info Banner */}
-      <div style={{
-        padding: '14px 20px',
-        borderRadius: '10px',
-        backgroundColor: '#f5f0ff',
-        border: '1px solid #d8b4fe',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '12px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            backgroundColor: 'var(--brand-primary, #440099)',
-            color: '#ffffff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '15px',
-            fontWeight: 800
-          }}>
-            Σ
-          </div>
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--brand-primary, #440099)' }}>
-              Generiek Tool Kostenoverzicht
-            </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)', marginTop: '2px' }}>
-              Dit overzicht toont wat Saleswizard in totaal uitgeeft aan LLM API's en AI platforms voor alle actieve scans. Klanten hebben geen inzage in deze pagina.
-            </div>
-          </div>
+      {dfsAccount?.error && (
+        <div style={{
+          padding: '12px 18px',
+          borderRadius: '10px',
+          backgroundColor: '#fef2f2',
+          border: '1px solid #fecaca',
+          color: '#b91c1c',
+          fontSize: '13px',
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <AlertTriangle size={16} />
+          <span>DataForSEO melding: {dfsAccount.error}</span>
         </div>
+      )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="badge badge-positive" style={{ gap: '4px', fontSize: '11px' }}>
-            <ShieldCheck size={12} /> Afgeschermd voor klanten
-          </span>
-        </div>
-      </div>
-
-      {/* KPI Cards Grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-        gap: '16px'
-      }}>
-
-        {/* Card 1: Total Cost */}
+      {/* 4 Clean DataForSEO KPI Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+        {/* Card 1: Live DataForSEO Prepaid Balance */}
         <div style={{
           padding: '18px 20px',
           backgroundColor: '#ffffff',
-          border: '1px solid var(--border-medium, #e2e8f0)',
-          borderRadius: 'var(--border-radius-md, 10px)',
+          border: '1px solid #e2e8f0',
+          borderRadius: '10px',
           display: 'flex',
           flexDirection: 'column',
           gap: '6px'
         }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Totale Tool LLM Kosten
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
+              Actueel DataForSEO saldo
+            </span>
+            <Wallet size={16} color="#64748b" />
+          </div>
+          <div style={{ fontSize: '26px', fontWeight: 700, fontFamily: "'Outfit', sans-serif", color: '#0f172a' }}>
+            {dfsAccount?.balanceEur != null ? formatEur(dfsAccount.balanceEur) : 'Niet verbonden'}
+          </div>
+          <span style={{ fontSize: '11px', color: '#64748b' }}>
+            {dfsAccount?.balanceUsd != null
+              ? `${formatUsd(dfsAccount.balanceUsd)} USD · Account: ${dfsAccount.login || 'Actief'}`
+              : 'Controleer DATAFORSEO_LOGIN in .env'}
           </span>
-          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
+        </div>
+
+        {/* Card 2: Total DataForSEO Scan Spend */}
+        <div style={{
+          padding: '18px 20px',
+          backgroundColor: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px'
+        }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
+            Verbruikte DataForSEO Scan-kosten
+          </span>
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#0f172a' }}>
             {formatEur(summary.totalCostEur)}
           </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            Live API: <strong>{formatEur(summary.liveApiCostEur ?? summary.totalCostEur)}</strong>
-            {(summary.billedInvoicesCostEur || 0) > 0 && ` · Facturen: ${formatEur(summary.billedInvoicesCostEur)}`}
+          <span style={{ fontSize: '11px', color: '#64748b' }}>
+            {formatUsd(summary.totalCostUsd)} USD (koers {summary.rateUsdToEur || 0.92})
+            {(summary.topupCostEur || 0) > 0 ? ` · Opgewaardeerd: ${formatEur(summary.topupCostEur)}` : ''}
           </span>
         </div>
 
-        {/* Card 2: Total Tokens */}
+        {/* Card 3: API Requests & Reliability */}
         <div style={{
           padding: '18px 20px',
           backgroundColor: '#ffffff',
-          border: '1px solid var(--border-medium, #e2e8f0)',
-          borderRadius: 'var(--border-radius-md, 10px)',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
           display: 'flex',
           flexDirection: 'column',
           gap: '6px'
         }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Totaal Tokens Verbruikt
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
+            DataForSEO API-aanroepen
           </span>
-          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
-            {Number(summary.totalTokens).toLocaleString('nl-NL')}
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#0f172a' }}>
+            {Number(summary.totalRequests || 0).toLocaleString('nl-NL')}
           </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            {Number(summary.totalInputTokens).toLocaleString('nl-NL')} in · {Number(summary.totalOutputTokens).toLocaleString('nl-NL')} out
+          <span style={{ fontSize: '11px', color: '#64748b' }}>
+            <strong style={{ color: '#16a34a' }}>{summary.successfulRequests || 0} geslaagd</strong>
+            {' · '}
+            {summary.failedRequests || 0} mislukt (onbelast)
           </span>
         </div>
 
-        {/* Card 3: Total Requests */}
+        {/* Card 4: Avg Cost per Call & Full 6-Engine Prompt */}
         <div style={{
           padding: '18px 20px',
           backgroundColor: '#ffffff',
-          border: '1px solid var(--border-medium, #e2e8f0)',
-          borderRadius: 'var(--border-radius-md, 10px)',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
           display: 'flex',
           flexDirection: 'column',
           gap: '6px'
         }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Aanroepen & Transacties
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
+            Gem. Kosten per Volledige Prompt
           </span>
-          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
-            {summary.totalRequests}
+          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: '#0f172a' }}>
+            {formatEur(summary.estimatedCostPerPromptEur || 0, 4)}
           </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            {summary.successfulRequests} geslaagd · {summary.failedRequests || 0} mislukt ({summary.totalRequests > 0 ? Math.round((summary.successfulRequests / summary.totalRequests) * 100) : 100}%)
+          <span style={{ fontSize: '11px', color: '#64748b' }}>
+            Gem. {formatEur(summary.avgCostPerRequestEur || 0, 4)} per losse engine-call (6 engines/prompt)
           </span>
         </div>
-
-        {/* Card 4: Avg Cost */}
-        <div style={{
-          padding: '18px 20px',
-          backgroundColor: '#ffffff',
-          border: '1px solid var(--border-medium, #e2e8f0)',
-          borderRadius: 'var(--border-radius-md, 10px)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px'
-        }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted, #94a3b8)' }}>
-            Gem. Kosten per Scan
-          </span>
-          <div style={{ fontSize: '26px', fontWeight: 800, fontFamily: "'Outfit', sans-serif", color: 'var(--text-primary, #0f172a)' }}>
-            {formatEur(summary.avgCostPerRequestEur)}
-          </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-            Op basis van {summary.totalRequests} transacties
-          </span>
-        </div>
-
       </div>
 
-      {/* Provider Verdeling & Facturatie Status */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
-        gap: '20px'
-      }}>
+      {/* Side-by-Side Breakdown: 1. Per DataForSEO Channel | 2. Per Client Project */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
 
-        {/* Providers Overzicht */}
+        {/* Panel 1: Per DataForSEO Channel */}
         <div style={{
           padding: '20px',
           backgroundColor: '#ffffff',
-          border: '1px solid var(--border-medium, #e2e8f0)',
-          borderRadius: 'var(--border-radius-md, 10px)',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
           display: 'flex',
           flexDirection: 'column',
           gap: '14px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
-              Kosten per AI Provider / Engine
+            <span style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', fontFamily: "'Outfit', sans-serif", display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <Layers size={16} color="#64748b" />
+              Kosten per DataForSEO kanaal
+            </span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b' }}>
+              Pay-per-request
             </span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {byEngine.map(eng => {
-              return (
-                <div key={eng.engine} style={{
-                  padding: '12px 14px',
-                  borderRadius: 'var(--border-radius-sm, 6px)',
-                  backgroundColor: 'var(--bg-app, #f8fafc)',
-                  border: '1px solid var(--border-light, #f1f5f9)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
+            {byEngine.map(eng => (
+              <div key={eng.engine} style={{
+                padding: '11px 14px',
+                borderRadius: '8px',
+                backgroundColor: '#f8fafc',
+                border: '1px solid #f1f5f9',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
                   <div>
-                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>
                       {eng.name}
                     </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>
-                      {Number(eng.totalTokens).toLocaleString('nl-NL')} tokens • {eng.successRequests ?? eng.requests} OK{eng.failedRequests > 0 ? ` • ${eng.failedRequests} fout` : ''}
-                      {(eng.billedInvoicesCostEur || 0) > 0 && ` • Live API: ${formatEur(eng.liveCostEur ?? 0)} / Facturen: ${formatEur(eng.billedInvoicesCostEur)}`}
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                      {eng.successRequests} OK{eng.failedRequests > 0 ? ` · ${eng.failedRequests} fout` : ''}
+                      {eng.avgCostEur > 0 ? ` · gem. ${formatEur(eng.avgCostEur, 4)}/call` : ''}
+                      {eng.avgLatencyMs > 0 ? ` · ${(eng.avgLatencyMs / 1000).toFixed(1)}s` : ''}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)' }}>
-                      {formatEur(eng.costEur)}
+                    <div style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                      {formatEur(eng.costEurExact ?? eng.costEur, (eng.costEurExact && eng.costEurExact < 0.1 && eng.costEurExact > 0) ? 4 : 2)}
                     </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', fontWeight: 600 }}>
+                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>
                       {eng.percentage}%
                     </div>
                   </div>
                 </div>
-              );
-            })}
+                <div style={{ width: '100%', height: '3px', borderRadius: '999px', backgroundColor: '#e2e8f0', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, eng.percentage || 0)}%`, height: '100%', backgroundColor: '#475569' }} />
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Facturatie & Platformstatus Card */}
+        {/* Panel 2: Per Client Project */}
         <div style={{
           padding: '20px',
           backgroundColor: '#ffffff',
-          border: '1px solid var(--border-medium, #e2e8f0)',
-          borderRadius: 'var(--border-radius-md, 10px)',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
           display: 'flex',
           flexDirection: 'column',
           gap: '14px'
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
-              Facturatie & Platformstatus
+            <span style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', fontFamily: "'Outfit', sans-serif", display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <Building2 size={16} color="#64748b" />
+              Verbruik per klantproject
             </span>
-            <span className="badge badge-positive" style={{ gap: '4px', fontSize: '11px' }}>
-              <CheckCircle2 size={12} /> Actief
+            <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 500 }}>
+              Afgeschermd voor klanten
             </span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{
-              padding: '12px 14px',
-              borderRadius: 'var(--border-radius-sm, 6px)',
-              backgroundColor: 'var(--bg-app, #f8fafc)',
-              border: '1px solid var(--border-light, #f1f5f9)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                  Google AI Studio Billing
-                </span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: '#16a34a' }}>
-                  Gesynchroniseerd
-                </span>
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)' }}>
-                Mastercard ••••3171 — Automatische synchronisatie van creditcard declaraties en facturen.
-              </div>
+          {byProject.length === 0 ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+              Nog geen DataForSEO scans geregistreerd in deze periode.
             </div>
-
-            <div style={{
-              padding: '12px 14px',
-              borderRadius: 'var(--border-radius-sm, 6px)',
-              backgroundColor: 'var(--bg-app, #f8fafc)',
-              border: '1px solid var(--border-light, #f1f5f9)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                  {summary.aiDriver === 'dataforseo' ? 'DataForSEO Web-Client (Live Scans)' : 'Live API Verbruik'}
-                </span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: summary.aiDriver === 'dataforseo' ? '#047857' : 'var(--brand-primary, #440099)' }}>
-                  {summary.aiDriver === 'dataforseo'
-                    ? (summary.dataforseo?.balanceEur != null ? `Saldo: ${formatEur(summary.dataforseo.balanceEur)}` : 'Pay-per-request')
-                    : 'Pay-as-you-go'}
-                </span>
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary, #475569)' }}>
-                {summary.aiDriver === 'dataforseo'
-                  ? 'Werkelijke web-client kosten per aanroep (ChatGPT Web, Gemini Web, Google.nl AI Overviews & AI Mode, Perplexity en Claude) exact geregistreerd vanuit DataForSEO.'
-                  : 'Directe afrekening op tokenbasis voor OpenAI (gpt-4o), Perplexity (sonar) en Anthropic (claude-sonnet-5-5).'}
-              </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '420px', overflowY: 'auto' }}>
+              {byProject.map((proj, idx) => (
+                <div key={proj.projectId || `gen_${idx}`} style={{
+                  padding: '11px 14px',
+                  borderRadius: '8px',
+                  backgroundColor: '#f8fafc',
+                  border: '1px solid #f1f5f9',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '10px'
+                }}>
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+                      {proj.company}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                      {proj.successRequests} geslaagde engine-calls
+                      {proj.promptsScanned > 0 ? ` · ${proj.promptsScanned} unieke prompt(s)` : ''}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 800, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                      {formatEur(proj.costEurExact ?? proj.costEur, (proj.costEurExact && proj.costEurExact < 0.1 && proj.costEurExact > 0) ? 4 : 2)}
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 600 }}>
+                      {proj.percentage}%
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-
-            <div style={{
-              padding: '12px 14px',
-              borderRadius: 'var(--border-radius-sm, 6px)',
-              backgroundColor: 'rgba(68, 0, 153, 0.03)',
-              border: '1px solid var(--brand-light-border, #e8d9ff)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <div style={{ fontSize: '12px', color: 'var(--brand-primary, #440099)', fontWeight: 600 }}>
-                Handmatige declaratie of factuur toevoegen?
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowInvoiceModal(true)}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: '6px',
-                  backgroundColor: 'var(--brand-primary, #440099)',
-                  color: '#ffffff',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  border: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                + Factuur invoeren
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-
       </div>
 
-      {/* Logboek Tabel */}
+      {/* DataForSEO Transaction Log Table */}
       <div style={{
         padding: '20px',
         backgroundColor: '#ffffff',
-        border: '1px solid var(--border-medium, #e2e8f0)',
-        borderRadius: 'var(--border-radius-md, 10px)',
+        border: '1px solid #e2e8f0',
+        borderRadius: '12px',
         display: 'flex',
         flexDirection: 'column',
         gap: '14px'
       }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '12px'
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary, #0f172a)', fontFamily: "'Outfit', sans-serif" }}>
-              Transactielogboek
+            <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', fontFamily: "'Outfit', sans-serif" }}>
+              DataForSEO Transactielogboek
             </span>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted, #94a3b8)', margin: '2px 0 0 0' }}>
-              Overzicht van afschrijvingen en API-aanroepen over de gehele applicatie
+            <p style={{ fontSize: '12px', color: '#64748b', margin: '2px 0 0 0' }}>
+              Exacte afschrijvingen per DataForSEO API-call (laatste 100 aanroepen)
             </p>
           </div>
 
-          {/* Filters & Search */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: '4px' }}>
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
               {[
                 { id: 'all', label: 'Alle' },
-                { id: 'gemini', label: 'Google AI Studio' },
-                { id: 'openai', label: 'ChatGPT' },
+                { id: 'chatgpt', label: 'ChatGPT Web' },
+                { id: 'gemini', label: 'Gemini Web' },
+                { id: 'google_aio', label: 'AI Mode & AIO' },
                 { id: 'perplexity', label: 'Perplexity' },
-                { id: 'anthropic', label: 'Claude' }
-              ].map(eng => (
+                { id: 'claude', label: 'Claude' },
+                { id: 'serp', label: 'Google SERP' }
+              ].map(ch => (
                 <button
-                  key={eng.id}
-                  onClick={() => setSelectedEngineFilter(eng.id)}
+                  key={ch.id}
+                  type="button"
+                  onClick={() => setSelectedChannel(ch.id)}
                   style={{
                     padding: '4px 10px',
                     borderRadius: '16px',
                     fontSize: '11px',
-                    fontWeight: selectedEngineFilter === eng.id ? 700 : 500,
-                    backgroundColor: selectedEngineFilter === eng.id ? 'var(--brand-primary, #440099)' : 'var(--bg-app, #f8fafc)',
-                    color: selectedEngineFilter === eng.id ? '#ffffff' : 'var(--text-secondary, #475569)',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
+                    fontWeight: selectedChannel === ch.id ? 600 : 500,
+                    backgroundColor: selectedChannel === ch.id ? '#0f172a' : '#f8fafc',
+                    color: selectedChannel === ch.id ? '#ffffff' : '#475569',
+                    border: '1px solid #e2e8f0',
                     cursor: 'pointer'
                   }}
                 >
-                  {eng.label}
+                  {ch.label}
                 </button>
               ))}
             </div>
 
-            <div style={{ position: 'relative', width: '200px' }}>
-              <Search size={13} style={{ position: 'absolute', left: '10px', top: '8px', color: 'var(--text-muted, #94a3b8)' }} />
+            <div style={{ position: 'relative', width: '210px' }}>
+              <Search size={13} style={{ position: 'absolute', left: '10px', top: '8px', color: '#94a3b8' }} />
               <input
                 type="text"
-                placeholder="Zoeken..."
+                placeholder="Filter project of endpoint..."
                 value={searchLogQuery}
                 onChange={e => setSearchLogQuery(e.target.value)}
                 style={{
@@ -737,7 +591,7 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
                   padding: '5px 8px 5px 28px',
                   fontSize: '12px',
                   borderRadius: '6px',
-                  border: '1px solid var(--border-medium, #e2e8f0)',
+                  border: '1px solid #e2e8f0',
                   outline: 'none',
                   backgroundColor: '#ffffff'
                 }}
@@ -746,65 +600,65 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
           </div>
         </div>
 
-        {/* Logs Table */}
         <div style={{ overflowX: 'auto', maxHeight: '420px' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
             <thead style={{ position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 1 }}>
-              <tr style={{ borderBottom: '1px solid var(--border-medium, #e2e8f0)', color: 'var(--text-muted, #94a3b8)', textAlign: 'left' }}>
-                <th style={{ padding: '8px', fontWeight: 600 }}>Datum</th>
-                <th style={{ padding: '8px', fontWeight: 600 }}>Provider</th>
-                <th style={{ padding: '8px', fontWeight: 600 }}>Referentie / Operatie</th>
-                <th style={{ padding: '8px', fontWeight: 600 }}>Bron</th>
-                <th style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>Tokens</th>
-                <th style={{ padding: '8px', textAlign: 'right', fontWeight: 600 }}>Bedrag</th>
-                <th style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>Status</th>
+              <tr style={{ borderBottom: '1px solid #e2e8f0', color: '#64748b', textAlign: 'left' }}>
+                <th style={{ padding: '8px', fontWeight: 700 }}>Datum & Tijd</th>
+                <th style={{ padding: '8px', fontWeight: 700 }}>DataForSEO Kanaal</th>
+                <th style={{ padding: '8px', fontWeight: 700 }}>Endpoint / Operatie</th>
+                <th style={{ padding: '8px', fontWeight: 700 }}>Project</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>Duur</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontWeight: 700 }}>Kosten</th>
+                <th style={{ padding: '8px', textAlign: 'center', fontWeight: 700 }}>Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan="7" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
-                    Geen logs gevonden.
+                  <td colSpan="7" style={{ padding: '28px', textAlign: 'center', color: '#94a3b8' }}>
+                    Geen DataForSEO transacties gevonden voor deze selectie.
                   </td>
                 </tr>
               ) : (
                 filteredLogs.map(log => {
-                  const isAiStudio = log.engine === 'gemini' || log.engineLabel === 'Google AI Studio';
-
+                  const isSuccess = log.status === 'SUCCESS';
                   return (
-                    <tr
-                      key={log.id}
-                      style={{ borderBottom: '1px solid var(--border-light, #f1f5f9)' }}
-                    >
-                      <td style={{ padding: '9px 8px', color: 'var(--text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>
-                        {log.timestamp ? log.timestamp.slice(0, 10) : ''}
+                    <tr key={log.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '9px 8px', color: '#64748b', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                        {log.timestamp ? log.timestamp.slice(0, 16) : ''}
                       </td>
-                      <td style={{ padding: '9px 8px', fontWeight: 600, color: 'var(--text-primary, #0f172a)' }}>
-                        {log.engineLabel || (isAiStudio ? 'Google AI Studio' : log.engine)}
+                      <td style={{ padding: '9px 8px', fontWeight: 700, color: '#0f172a' }}>
+                        {log.engineLabel}
                       </td>
-                      <td style={{ padding: '9px 8px', color: 'var(--text-secondary, #475569)', fontFamily: 'monospace', fontSize: '11px' }}>
-                        {log.invoiceRef || log.operation}
+                      <td style={{ padding: '9px 8px', color: '#475569', fontFamily: 'monospace', fontSize: '11px' }} title={log.error || ''}>
+                        {log.invoiceRef ? `${log.invoiceRef} · ${log.endpoint}` : log.endpoint}
                       </td>
-                      <td style={{ padding: '9px 8px', color: 'var(--text-secondary, #475569)' }}>
-                        {log.projectName || 'Generiek / Tool'}
+                      <td style={{ padding: '9px 8px', color: '#334155', fontWeight: 600 }}>
+                        {log.projectName}
                       </td>
-                      <td style={{ padding: '9px 8px', textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-secondary, #475569)' }}>
-                        {Number(log.totalTokens).toLocaleString('nl-NL')}
+                      <td style={{ padding: '9px 8px', textAlign: 'right', color: '#64748b', fontVariantNumeric: 'tabular-nums' }}>
+                        {log.latency}
                       </td>
-                      <td style={{ padding: '9px 8px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                        {formatEur(log.costEur)}
+                      <td style={{ padding: '9px 8px', textAlign: 'right', fontWeight: 700, color: '#0f172a', fontVariantNumeric: 'tabular-nums' }}>
+                        {formatEur(log.costEur, 4)}
                       </td>
                       <td style={{ padding: '9px 8px', textAlign: 'center' }}>
                         <span style={{
-                          padding: '2px 8px',
-                          borderRadius: '10px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          backgroundColor: 'var(--bg-app, #f8fafc)',
-                          color: 'var(--text-secondary, #475569)',
-                          border: '1px solid var(--border-medium, #e2e8f0)'
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          fontSize: '11.5px',
+                          fontWeight: 500,
+                          color: isSuccess ? '#334155' : '#b91c1c'
                         }}>
-                          {log.status}
+                          <span style={{
+                            width: '6px',
+                            height: '6px',
+                            borderRadius: '50%',
+                            backgroundColor: isSuccess ? '#47ca9b' : '#ef4444'
+                          }} />
+                          {isSuccess ? 'OK' : 'Fout'}
                         </span>
                       </td>
                     </tr>
@@ -816,15 +670,12 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
         </div>
       </div>
 
-      {/* Manual Invoice Entry Modal */}
+      {/* DataForSEO Top-up / Invoice Modal */}
       {showInvoiceModal && (
         <div style={{
           position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(15, 10, 28, 0.5)',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.55)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -833,176 +684,97 @@ export default function LlmCosts({ currentUser, enabledEngines }) {
         }}>
           <div style={{
             backgroundColor: '#ffffff',
-            borderRadius: 'var(--border-radius-md, 10px)',
+            borderRadius: '12px',
             width: '100%',
-            maxWidth: '440px',
-            boxShadow: '0 20px 30px rgba(0,0,0,0.15)',
+            maxWidth: '420px',
+            boxShadow: '0 20px 30px rgba(0,0,0,0.18)',
             overflow: 'hidden',
-            border: '1px solid var(--border-medium, #e2e8f0)'
+            border: '1px solid #e2e8f0'
           }}>
-            <div style={{
-              padding: '16px 20px',
-              borderBottom: '1px solid var(--border-light, #f1f5f9)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                Factuur of Betaling Registreren
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#0f172a' }}>
+                DataForSEO Opwaardering / Factuur Noteren
               </h3>
-              <button
-                onClick={() => setShowInvoiceModal(false)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted, #94a3b8)' }}
-              >
+              <button type="button" onClick={() => setShowInvoiceModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
                 <X size={16} />
               </button>
             </div>
 
             <form onSubmit={handleStoreInvoice} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
-                  Provider / LLM Dienst
-                </label>
-                <select
-                  value={invoiceForm.engine}
-                  onChange={e => setInvoiceForm({ ...invoiceForm, engine: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
-                    fontSize: '13px',
-                    outline: 'none'
-                  }}
-                >
-                  <option value="gemini">Google AI Studio (Gemini Flash & Grounding)</option>
-                  <option value="openai">OpenAI (ChatGPT 4o)</option>
-                  <option value="perplexity">Perplexity AI</option>
-                  <option value="anthropic">Anthropic Claude</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
                   Bedrag in EUR (€)
                 </label>
                 <input
                   type="number"
                   step="0.01"
                   required
-                  placeholder="25.00"
+                  placeholder="50.00"
                   value={invoiceForm.amount_eur}
                   onChange={e => setInvoiceForm({ ...invoiceForm, amount_eur: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
-                    fontSize: '13px',
-                    outline: 'none'
-                  }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
-                  Referentie (Optioneel)
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                  Factuurnummer / Referentie (optioneel)
                 </label>
                 <input
                   type="text"
-                  placeholder="bijv. Factuur GOOG-2026-09"
+                  placeholder="bijv. DFS-2026-11"
                   value={invoiceForm.invoice_ref}
                   onChange={e => setInvoiceForm({ ...invoiceForm, invoice_ref: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
-                    fontSize: '13px',
-                    outline: 'none'
-                  }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
                   Omschrijving
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="bijv. Afschrijving Mastercard Google AI Studio"
+                  placeholder="DataForSEO tegoed opwaardering"
                   value={invoiceForm.description}
                   onChange={e => setInvoiceForm({ ...invoiceForm, description: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
-                    fontSize: '13px',
-                    outline: 'none'
-                  }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary, #475569)', marginBottom: '4px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
                   Datum
                 </label>
                 <input
                   type="date"
                   value={invoiceForm.date}
                   onChange={e => setInvoiceForm({ ...invoiceForm, date: e.target.value })}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
-                    fontSize: '13px',
-                    outline: 'none'
-                  }}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px' }}
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
                 <button
                   type="button"
                   onClick={() => setShowInvoiceModal(false)}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-medium, #e2e8f0)',
-                    backgroundColor: '#ffffff',
-                    color: 'var(--text-secondary, #475569)',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
+                  style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', color: '#475569', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
                 >
                   Annuleren
                 </button>
                 <button
                   type="submit"
                   disabled={invoiceSubmitting}
-                  style={{
-                    padding: '8px 18px',
-                    borderRadius: '6px',
-                    border: 'none',
-                    backgroundColor: 'var(--brand-primary, #440099)',
-                    color: '#ffffff',
-                    fontSize: '13px',
-                    fontWeight: 700,
-                    cursor: invoiceSubmitting ? 'wait' : 'pointer'
-                  }}
+                  style={{ padding: '8px 18px', borderRadius: '6px', border: 'none', backgroundColor: '#440099', color: '#ffffff', fontSize: '13px', fontWeight: 600, cursor: invoiceSubmitting ? 'wait' : 'pointer' }}
                 >
-                  {invoiceSubmitting ? 'Opslaan...' : 'Factuur Opslaan'}
+                  {invoiceSubmitting ? 'Opslaan...' : 'Opslaan'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
     </div>
   );
 }
